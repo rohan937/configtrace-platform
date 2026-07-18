@@ -301,8 +301,24 @@ from app.connectors.kubernetes_schema import (
 logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT_SECONDS = 30
+# Differentiated (connect, read) timeout, per the official client's own
+# support for a 2-tuple `_request_timeout` (urllib3.Timeout(connect=,
+# read=)) — a slow-to-respond API server should not be treated the same as
+# an entirely unreachable one, and neither should ever hang a sync
+# indefinitely. Every API call in this connector goes through `call_k8s()`,
+# which sets this bounded default unless a caller overrides it.
+_CONNECT_TIMEOUT_SECONDS = 10
+_READ_TIMEOUT_SECONDS = 30
+_REQUEST_TIMEOUT = (_CONNECT_TIMEOUT_SECONDS, _READ_TIMEOUT_SECONDS)
 _DEFAULT_PAGE_SIZE = 100
 _MAX_PAGES = 50  # defensive cap — prevents unbounded continuation loops
+
+# Bounded 429 (throttled) retry policy (message 8). Applies ONLY to
+# CATEGORY_THROTTLED — 401/403 are never retried as if transient, since
+# retrying an auth/permission failure wastes budget and cannot succeed.
+_MAX_THROTTLE_RETRIES = 3
+_THROTTLE_BASE_DELAY_SECONDS = 0.5
+_THROTTLE_MAX_DELAY_SECONDS = 8.0
 
 # API-server host categories. Never store the raw hostname/IP — only the
 # safe category — since the literal host string could reveal internal
@@ -376,6 +392,7 @@ CATEGORY_CONNECTION_ERROR = "connection_error"
 CATEGORY_TLS_ERROR = "tls_error"
 CATEGORY_MALFORMED_RESPONSE = "malformed_response"
 CATEGORY_API_UNAVAILABLE = "api_unavailable"
+CATEGORY_TIMEOUT = "timeout"
 
 
 def _classify_api_exception(exc: Exception) -> tuple[str, str]:
@@ -405,16 +422,31 @@ def _classify_api_exception(exc: Exception) -> tuple[str, str]:
 
     # Import lazily — these are urllib3/ssl exceptions raised by the
     # transport layer beneath the generated client, not ApiException.
+    import socket
     import ssl
 
-    from urllib3.exceptions import MaxRetryError, SSLError as Urllib3SSLError
+    from urllib3.exceptions import (
+        ConnectTimeoutError,
+        MaxRetryError,
+        ReadTimeoutError,
+        SSLError as Urllib3SSLError,
+    )
 
+    # Checked before MaxRetryError: urllib3 sometimes raises the timeout
+    # error directly, sometimes wraps it as MaxRetryError.reason — both
+    # must classify as a bounded timeout, never a generic connection error,
+    # so callers/tests can tell "server unreachable" apart from "server
+    # took too long to respond" (connect vs read timeout).
+    if isinstance(exc, (ReadTimeoutError, ConnectTimeoutError, socket.timeout, TimeoutError)):
+        return CATEGORY_TIMEOUT, "The request to the Kubernetes API server timed out."
     if isinstance(exc, (Urllib3SSLError, ssl.SSLError)):
         return CATEGORY_TLS_ERROR, "TLS certificate verification failed."
     if isinstance(exc, MaxRetryError):
         cause = str(exc.reason).lower() if exc.reason else ""
         if "certificate" in cause or "ssl" in cause:
             return CATEGORY_TLS_ERROR, "TLS certificate verification failed."
+        if "timed out" in cause or "timeout" in cause:
+            return CATEGORY_TIMEOUT, "The request to the Kubernetes API server timed out."
         return CATEGORY_CONNECTION_ERROR, "Could not connect to the Kubernetes API server."
     if isinstance(exc, (ConnectionError, OSError)):
         return CATEGORY_CONNECTION_ERROR, "Could not connect to the Kubernetes API server."
@@ -422,7 +454,45 @@ def _classify_api_exception(exc: Exception) -> tuple[str, str]:
     return CATEGORY_MALFORMED_RESPONSE, "The API server returned a response that could not be parsed."
 
 
-def call_k8s(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> CallOutcome:
+def _retry_after_seconds(exc: Exception) -> Optional[float]:
+    """Extract a ``Retry-After`` header value (seconds) from an ApiException,
+    if present and parseable. Never guesses — returns ``None`` on anything
+    that isn't a plain non-negative number of seconds."""
+    headers = getattr(exc, "headers", None)
+    if not headers:
+        return None
+    try:
+        raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+    except Exception:  # noqa: BLE001 — malformed header container
+        return None
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _throttle_backoff_seconds(attempt: int, *, retry_after: Optional[float]) -> float:
+    """Bounded exponential backoff with jitter for a 429 retry attempt
+    (0-indexed). Honors ``Retry-After`` when the server provided one and it
+    is within the configured maximum; otherwise falls back to
+    ``base * 2**attempt`` capped at the maximum, plus deterministic-bounded
+    jitter (never unboundedly long, never negative)."""
+    import random
+
+    if retry_after is not None:
+        return min(retry_after, _THROTTLE_MAX_DELAY_SECONDS)
+    base = min(_THROTTLE_BASE_DELAY_SECONDS * (2 ** attempt), _THROTTLE_MAX_DELAY_SECONDS)
+    jitter = random.uniform(0, base * 0.25)
+    return min(base + jitter, _THROTTLE_MAX_DELAY_SECONDS)
+
+
+def call_k8s(
+    fn: Callable[..., Any], *args: Any,
+    _sleep_fn: Callable[[float], None] = None, **kwargs: Any,
+) -> CallOutcome:
     """Fail-soft wrapper around any single (non-paginated) Kubernetes API call.
 
     Every list/get call made by this connector — now and in future
@@ -430,15 +500,35 @@ def call_k8s(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> CallOutcome:
     which uses it internally) rather than calling the generated client
     directly, so every caller gets the same distinguishable failure
     categories instead of an uncaught exception.
+
+    Throttled (429) responses get a bounded retry with exponential backoff
+    and jitter (honoring ``Retry-After`` when the server provides one) —
+    never an unbounded wait, and never more than ``_MAX_THROTTLE_RETRIES``
+    attempts. 401/403/other categories are never retried as if transient.
+    Tests inject ``_sleep_fn`` (a no-op) so retry tests never actually sleep.
     """
-    kwargs.setdefault("_request_timeout", _REQUEST_TIMEOUT_SECONDS)
-    try:
-        result = fn(*args, **kwargs)
-        return CallOutcome(ok=True, result=result, category=CATEGORY_SUCCESS)
-    except Exception as exc:  # noqa: BLE001 — deliberately broad; classified below
-        category, detail = _classify_api_exception(exc)
-        logger.info("Kubernetes API call failed: category=%s detail=%s", category, detail)
-        return CallOutcome(ok=False, result=None, category=category, detail=detail)
+    import time as _time
+
+    sleep_fn = _sleep_fn or _time.sleep
+    kwargs.setdefault("_request_timeout", _REQUEST_TIMEOUT)
+    attempt = 0
+    while True:
+        try:
+            result = fn(*args, **kwargs)
+            return CallOutcome(ok=True, result=result, category=CATEGORY_SUCCESS)
+        except Exception as exc:  # noqa: BLE001 — deliberately broad; classified below
+            category, detail = _classify_api_exception(exc)
+            if category == CATEGORY_THROTTLED and attempt < _MAX_THROTTLE_RETRIES:
+                delay = _throttle_backoff_seconds(attempt, retry_after=_retry_after_seconds(exc))
+                logger.info(
+                    "Kubernetes API call throttled (attempt %d/%d) — retrying in %.2fs",
+                    attempt + 1, _MAX_THROTTLE_RETRIES, delay,
+                )
+                sleep_fn(delay)
+                attempt += 1
+                continue
+            logger.info("Kubernetes API call failed: category=%s detail=%s", category, detail)
+            return CallOutcome(ok=False, result=None, category=category, detail=detail)
 
 
 # ── Pagination helper ─────────────────────────────────────────────────────────
@@ -460,6 +550,7 @@ def paginate_list(
     *,
     page_size: int = _DEFAULT_PAGE_SIZE,
     max_pages: int = _MAX_PAGES,
+    _sleep_fn: Callable[[float], None] = None,
     **kwargs: Any,
 ) -> tuple[list[Any], PageDiagnostics]:
     """Collect every item from a Kubernetes list API, following ``_continue``.
@@ -500,7 +591,7 @@ def paginate_list(
         if continue_token:
             call_kwargs["_continue"] = continue_token
 
-        outcome = call_k8s(list_fn, **call_kwargs)
+        outcome = call_k8s(list_fn, _sleep_fn=_sleep_fn, **call_kwargs)
 
         if not outcome.ok:
             if outcome.category == CATEGORY_CONTINUATION_EXPIRED and not already_restarted:
@@ -2799,6 +2890,7 @@ def _paginate_custom_objects(
     *,
     page_size: int = _DEFAULT_PAGE_SIZE,
     max_pages: int = _MAX_PAGES,
+    _sleep_fn: Callable[[float], None] = None,
     **kwargs: Any,
 ) -> tuple[list[dict], PageDiagnostics]:
     """Adapted ``paginate_list`` for ``CustomObjectsApi``, whose responses
@@ -2823,7 +2915,7 @@ def _paginate_custom_objects(
         if continue_token:
             call_kwargs["_continue"] = continue_token
 
-        outcome = call_k8s(list_fn, **call_kwargs)
+        outcome = call_k8s(list_fn, _sleep_fn=_sleep_fn, **call_kwargs)
 
         if not outcome.ok:
             if outcome.category == CATEGORY_CONTINUATION_EXPIRED and not already_restarted:
@@ -4784,6 +4876,103 @@ class KubernetesConnector(BaseConnector):
 
             collection_completeness = "complete" if not partial_permission else "partial"
 
+            # ── Family-level completeness map (message 8) ────────────────────
+            #
+            # Reliability-critical: this is the ONLY signal `compute_diff()`
+            # uses to decide whether an absent kubernetes_* record reflects a
+            # real deletion or a temporary/permission-related collection gap
+            # for that record's family. It is intentionally carried as fields
+            # on the always-present, real `kubernetes_cluster` record — never
+            # as a synthetic/fake resource record of its own — so it never
+            # shows up as if it were cluster configuration, and it diffs like
+            # any other cluster-record field (routed through the existing
+            # dedicated `_classify_cluster_change` classifier).
+            #
+            # Keyed by the exact `record_type` string so `compute_diff()` can
+            # do a simple dict lookup per candidate-removed record. Namespaced
+            # families are collected via a single cluster-wide List call in
+            # the current architecture (never one call per namespace), so
+            # "namespace partial" is not a distinct failure mode from "family
+            # partial" today — seeing DIFFERENT per-namespace outcomes would
+            # require N per-namespace API calls, which message 8 deliberately
+            # does not introduce (would multiply API calls against real
+            # clusters). Namespace-scoped safety is instead provided via
+            # `configured_namespace_allowlist` below (see 13. namespace
+            # allowlist behavior) — an allowlist shrink is a deliberate scope
+            # change, not a signal that resources in the de-scoped namespace
+            # were deleted from the cluster.
+            family_completeness: dict[str, str] = {
+                KUBERNETES_NAMESPACE: "complete" if ns_diag.complete else "partial",
+                KUBERNETES_API_CAPABILITY: discovery_status,
+                KUBERNETES_DEPLOYMENT: deployment_status,
+                KUBERNETES_STATEFULSET: statefulset_status,
+                KUBERNETES_DAEMONSET: daemonset_status,
+                KUBERNETES_JOB: job_status,
+                KUBERNETES_CRONJOB: cronjob_status,
+                KUBERNETES_POD: pod_status,
+                # Container/workload-service-account records are emitted only
+                # alongside their parent workload family, so they share its
+                # completeness rather than tracking a separate one.
+                KUBERNETES_CONTAINER_SECURITY_CONTEXT: (
+                    "partial" if "partial" in (
+                        deployment_status, statefulset_status, daemonset_status,
+                        job_status, cronjob_status, pod_status,
+                    ) else "complete"
+                ),
+                KUBERNETES_WORKLOAD_SERVICE_ACCOUNT: (
+                    "partial" if "partial" in (
+                        deployment_status, statefulset_status, daemonset_status,
+                        job_status, cronjob_status, pod_status,
+                    ) else "complete"
+                ),
+                KUBERNETES_CLUSTER_ROLE: cluster_role_status,
+                KUBERNETES_ROLE: role_status,
+                KUBERNETES_SERVICE_ACCOUNT: sa_collection_status,
+                KUBERNETES_ROLE_BINDING: role_binding_status,
+                KUBERNETES_CLUSTER_ROLE_BINDING: cluster_role_binding_status,
+                KUBERNETES_RBAC_SUBJECT_BINDING: (
+                    "partial" if "partial" in (role_binding_status, cluster_role_binding_status) else "complete"
+                ),
+                KUBERNETES_RBAC_PERMISSION_SUMMARY: (
+                    "partial" if "partial" in (
+                        cluster_role_status, role_status, sa_collection_status,
+                        role_binding_status, cluster_role_binding_status,
+                    ) else "complete"
+                ),
+                KUBERNETES_SERVICE: service_status,
+                KUBERNETES_SERVICE_PORT: service_status,
+                KUBERNETES_INGRESS: ingress_status,
+                KUBERNETES_INGRESS_RULE: ingress_status,
+                KUBERNETES_GATEWAY: gateway_status,
+                KUBERNETES_GATEWAY_LISTENER: gateway_status,
+                KUBERNETES_HTTP_ROUTE: http_route_status,
+                KUBERNETES_HTTP_ROUTE_RULE: http_route_status,
+                KUBERNETES_NETWORK_POLICY: network_policy_status,
+                KUBERNETES_NAMESPACE_NETWORK_POSTURE: (
+                    "partial" if "partial" in (network_policy_status,) else "complete"
+                ),
+                KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION: validating_status,
+                KUBERNETES_VALIDATING_WEBHOOK: validating_status,
+                KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION: mutating_status,
+                KUBERNETES_MUTATING_WEBHOOK: mutating_status,
+                KUBERNETES_POD_SECURITY_ADMISSION: "complete" if ns_diag.complete else "partial",
+                KUBERNETES_RESOURCE_QUOTA: resource_quota_status,
+                KUBERNETES_LIMIT_RANGE: limit_range_status,
+                KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE: (
+                    "partial" if "partial" in (
+                        validating_status, mutating_status, resource_quota_status,
+                        limit_range_status, network_policy_status,
+                    ) else "complete"
+                ),
+            }
+
+            # Sorted allowlist snapshot (or None = unrestricted). Lets
+            # `compute_diff()` distinguish "namespace de-scoped by an
+            # intentional allowlist change" from "namespace's resources were
+            # actually deleted" by comparing this field across two
+            # consecutive kubernetes_cluster records.
+            configured_namespace_allowlist = sorted(allowlist) if allowlist else None
+
             cluster_record = {
                 "record_type": KUBERNETES_CLUSTER,
                 "record_id": cluster_id,
@@ -4806,6 +4995,8 @@ class KubernetesConnector(BaseConnector):
                 "collection_completeness_category": collection_completeness,
                 "partial_permission_indicator": partial_permission,
                 "server_certificate_verification_enabled": tls_verify_enabled,
+                "family_completeness": family_completeness,
+                "configured_namespace_allowlist": configured_namespace_allowlist,
             }
 
             return (
@@ -4815,3 +5006,171 @@ class KubernetesConnector(BaseConnector):
             )
         finally:
             api_client.rest_client.pool_manager.clear()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Permission diagnostics (message 8)
+#
+# A redacted, human-readable summary of what ConfigTrace could and could not
+# read on a Kubernetes cluster — built entirely from the same normalized
+# records `fetch()` already returns (or, for the "live" harness below, from a
+# fresh `fetch()` call). Never re-fetches raw API responses, never includes
+# a kubeconfig/token/certificate byte, and never reproduces a raw exception
+# message (which could embed a request URL, query string, or internal host).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Friendly display names for the family_completeness keys, grouped exactly
+# as the task's example report groups them (Namespaces/Workloads/RBAC/
+# Networking/Admission). Order here defines report section order.
+_DIAGNOSTIC_FAMILY_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("Namespaces", ((KUBERNETES_NAMESPACE, "Namespaces"),)),
+    ("Workloads", (
+        (KUBERNETES_DEPLOYMENT, "Deployments"),
+        (KUBERNETES_STATEFULSET, "StatefulSets"),
+        (KUBERNETES_DAEMONSET, "DaemonSets"),
+        (KUBERNETES_JOB, "Jobs"),
+        (KUBERNETES_CRONJOB, "CronJobs"),
+        (KUBERNETES_POD, "standalone Pods"),
+    )),
+    ("RBAC", (
+        (KUBERNETES_ROLE, "Roles"),
+        (KUBERNETES_CLUSTER_ROLE, "ClusterRoles"),
+        (KUBERNETES_ROLE_BINDING, "RoleBindings"),
+        (KUBERNETES_CLUSTER_ROLE_BINDING, "ClusterRoleBindings"),
+        (KUBERNETES_SERVICE_ACCOUNT, "ServiceAccounts"),
+    )),
+    ("Networking", (
+        (KUBERNETES_SERVICE, "Services"),
+        (KUBERNETES_INGRESS, "Ingresses"),
+        (KUBERNETES_GATEWAY, "Gateway API"),
+        (KUBERNETES_HTTP_ROUTE, "HTTPRoutes"),
+        (KUBERNETES_NETWORK_POLICY, "NetworkPolicies"),
+    )),
+    ("Admission", (
+        (KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION, "Validating webhooks"),
+        (KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION, "Mutating webhooks"),
+        (KUBERNETES_POD_SECURITY_ADMISSION, "Pod Security Admission"),
+        (KUBERNETES_RESOURCE_QUOTA, "ResourceQuotas"),
+        (KUBERNETES_LIMIT_RANGE, "LimitRanges"),
+    )),
+)
+
+_DIAGNOSTIC_STATUS_LABEL = {
+    "complete": "available",
+    "partial": "partially available",
+    "unsupported": "unsupported (API group not present on this cluster)",
+    "unknown": "status unknown",
+}
+
+
+def build_permission_diagnostics(records: list[dict]) -> dict:
+    """Build a redacted, user-facing permission/coverage diagnostics report
+    from a normalized Kubernetes record list (the output of ``fetch()``).
+
+    Never includes kubeconfig content, tokens, certificate bytes, private
+    keys, Secret/ConfigMap contents, or arbitrary raw API payloads/URLs —
+    only category labels, booleans, and counts already present on the
+    ``kubernetes_cluster`` record's ``family_completeness`` map.
+    """
+    cluster_record = next((r for r in records if r.get("record_type") == KUBERNETES_CLUSTER), None)
+    if cluster_record is None:
+        return {
+            "cluster_reachable": False,
+            "coverage": "unavailable",
+            "sections": [],
+            "security_findings_note": (
+                "Security Findings were not evaluated — the cluster could not be reached."
+            ),
+            "change_detection_note": "Change detection is unavailable without a successful sync.",
+        }
+
+    family_completeness = cluster_record.get("family_completeness") or {}
+    sections: list[dict] = []
+    any_partial = cluster_record.get("partial_permission_indicator") is True
+    for section_name, families in _DIAGNOSTIC_FAMILY_GROUPS:
+        entries = []
+        for record_type, label in families:
+            status = family_completeness.get(record_type, "unknown")
+            entries.append({
+                "resource": label,
+                "status": status,
+                "status_label": _DIAGNOSTIC_STATUS_LABEL.get(status, "status unknown"),
+            })
+            if status not in ("complete",):
+                any_partial = True
+        sections.append({"name": section_name, "resources": entries})
+
+    coverage = "partial" if any_partial else "complete"
+
+    return {
+        "cluster_reachable": True,
+        "cluster_id": cluster_record.get("cluster_id"),
+        "cluster_name": cluster_record.get("cluster_name"),
+        "kubernetes_version": cluster_record.get("kubernetes_version"),
+        "api_server_host_category": cluster_record.get("api_server_host_category"),
+        "server_certificate_verification_enabled": cluster_record.get(
+            "server_certificate_verification_enabled"
+        ),
+        "namespace_scope": (
+            "all namespaces" if not cluster_record.get("configured_namespace_allowlist")
+            else f"{len(cluster_record['configured_namespace_allowlist'])} allowlisted namespace(s)"
+        ),
+        "sections": sections,
+        "coverage": coverage,
+        "security_findings_note": (
+            "Security Findings are evaluated only for resources ConfigTrace could read; "
+            "denied/unsupported families are excluded, never assumed safe."
+        ),
+        "change_detection_note": (
+            "Change detection is available for every family marked available above; "
+            "denied/unsupported/partial families never generate false removal Changes."
+        ),
+        "record_count": len(records),
+    }
+
+
+def format_permission_diagnostics_text(report: dict) -> str:
+    """Render ``build_permission_diagnostics()``'s output as the plain-text
+    report shape shown in the message-8 task description. Purely a display
+    helper — contains no information not already in the structured report."""
+    if not report.get("cluster_reachable"):
+        return "Kubernetes connection could not be validated.\n\n" + report.get("security_findings_note", "")
+
+    lines = ["Kubernetes connection validated", "", "Cluster:", "  reachable"]
+    for section in report["sections"]:
+        lines.append("")
+        lines.append(f"{section['name']}:")
+        for entry in section["resources"]:
+            lines.append(f"  {entry['resource']}: {entry['status_label']}")
+    lines.append("")
+    lines.append(f"Coverage:\n  {report['coverage'].capitalize()}")
+    lines.append("")
+    lines.append(f"Security Findings:\n  {report['security_findings_note']}")
+    return "\n".join(lines)
+
+
+def run_live_kubernetes_validation(kubeconfig_path: str, *, context_name: Optional[str] = None) -> dict:
+    """Live-cluster validation harness (message 8).
+
+    Loads a real kubeconfig from *kubeconfig_path*, runs the same
+    ``KubernetesConnector.fetch()`` pipeline used in production, and returns
+    a redacted diagnostics report via ``build_permission_diagnostics()``.
+
+    Intended for local/manual use against a real cluster (kind/minikube/k3d
+    or any reachable cluster) — never invoked automatically in CI. Callers
+    are expected to gate invocation behind an opt-in environment variable
+    (see ``CONFIGTRACE_KUBERNETES_LIVE_KUBECONFIG`` in the test suite) so
+    normal test runs never require or read a real kubeconfig.
+    """
+    with open(kubeconfig_path, "r", encoding="utf-8") as fh:
+        kubeconfig_content = fh.read()
+
+    credentials = {"kubeconfig": kubeconfig_content}
+    if context_name:
+        credentials["context_name"] = context_name
+
+    connector = KubernetesConnector()
+    records = connector.fetch(credentials)
+    report = build_permission_diagnostics(records)
+    report["records_observed_count"] = len(records)
+    return report

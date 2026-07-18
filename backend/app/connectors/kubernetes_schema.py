@@ -361,6 +361,8 @@ class KubernetesClusterRecord(TypedDict):
     collection_completeness_category: str
     partial_permission_indicator: bool
     server_certificate_verification_enabled: bool
+    family_completeness: dict[str, str]
+    configured_namespace_allowlist: Optional[list[str]]
 
 
 class KubernetesNamespaceRecord(TypedDict):

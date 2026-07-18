@@ -3850,6 +3850,76 @@ def _build_provider_metadata(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Kubernetes false-removal prevention (message 8)
+#
+# A Kubernetes list API can fail for one resource family (RBAC 403, Gateway
+# API uninstalled, a throttled/timed-out page, an expired continuation
+# token) while every other family collects normally. Naively diffing two
+# consecutive snapshots would then report every previously-known record in
+# that family as "removed" — a false drift signal, not a real deletion.
+#
+# The Kubernetes connector (app/connectors/kubernetes.py) reports per-family
+# collection status via a `family_completeness` dict carried on the single,
+# always-present `kubernetes_cluster` record (never as a synthetic resource
+# record of its own). This function consults that signal — and a parallel
+# namespace-allowlist comparison for intentional scope changes — to decide
+# whether an absent-from-the-new-snapshot Kubernetes record should be
+# suppressed rather than reported as removed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _kubernetes_removal_suppressed(
+    prev_record: dict, new_index: dict[str, dict]
+) -> Optional[str]:
+    """Return a short reason string if *prev_record*'s absence from the new
+    snapshot must NOT be reported as a "removed" Change, or ``None`` if the
+    normal removal path should proceed.
+
+    Only ever inspects Kubernetes records — every other provider's removal
+    behavior is completely unaffected (this function returns ``None``
+    immediately for any non-``kubernetes_*`` record).
+    """
+    record_type = prev_record.get("record_type")
+    if not isinstance(record_type, str) or not record_type.startswith("kubernetes_"):
+        return None
+    # The cluster record's own disappearance is a real signal (integration
+    # lost all access / cluster deleted) — never suppressed.
+    if record_type == "kubernetes_cluster":
+        return None
+
+    cluster_id = prev_record.get("cluster_id")
+    new_cluster_record = new_index.get(cluster_id) if cluster_id else None
+    if not isinstance(new_cluster_record, dict):
+        # No matching cluster record in the new snapshot at all (e.g. the
+        # cluster record itself was removed, or this is a synthetic/test
+        # snapshot with no cluster record) — nothing to consult, so fall
+        # back to the normal (unsuppressed) removal path rather than
+        # guessing about completeness.
+        return None
+
+    family_completeness = new_cluster_record.get("family_completeness")
+    if isinstance(family_completeness, dict):
+        status = family_completeness.get(record_type)
+        if isinstance(status, str) and status != "complete":
+            return f"family_incomplete:{status}"
+
+    # Namespace allowlist shrink: a namespace that was previously in scope
+    # (or scope was unrestricted) and is no longer in the new allowlist is a
+    # deliberate scope change, not evidence the namespace's resources were
+    # deleted from the cluster.
+    namespace = prev_record.get("namespace")
+    if namespace:
+        new_allowlist = new_cluster_record.get("configured_namespace_allowlist")
+        if isinstance(new_allowlist, list) and namespace not in new_allowlist:
+            # A restricted allowlist is authoritative for which namespaces
+            # the connector selects records from — if `namespace` isn't in
+            # it, that alone explains the record's absence without implying
+            # deletion from the cluster.
+            return "namespace_descoped_by_allowlist"
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Diff computation — pure, no DB
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3915,6 +3985,15 @@ def compute_diff(
     # ── Removed records ──────────────────────────────────────────────────────
     for key, prev_record in prev_index.items():
         if key not in new_index:
+            suppress_reason = _kubernetes_removal_suppressed(prev_record, new_index)
+            if suppress_reason is not None:
+                logger.info(
+                    "diff: suppressed false-removal  id=%s  label=%r  reason=%s",
+                    key,
+                    format_record_identifier(prev_record),
+                    suppress_reason,
+                )
+                continue
             changes.append({
                 "change_type": "removed",
                 "record_identifier": format_record_identifier(prev_record),
