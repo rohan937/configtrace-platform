@@ -136,6 +136,35 @@ def _get(obj: object, field: str) -> object:
     return getattr(obj, field, None)
 
 
+def _as_int(value: object) -> "int | None":
+    """Return *value* as an int only for genuine integers (bool excluded,
+    since bool is an int subclass in Python but never a count here).
+    Anything else (None, str, float, malformed) is unknown."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _count_transition(
+    nv: object, pv: object, *,
+    increased: tuple[str, str], decreased: tuple[str, str],
+    unknown_message: str = "A Kubernetes count field changed and could not be safely compared.",
+) -> tuple[str, str]:
+    """Directional severity for an integer count field.
+
+    Unknown (non-int, e.g. ``None`` from a missing/omitted key) on either
+    side is never coerced to 0 — an unknown count must never be misread as
+    a decrease (or an increase) relative to the other side. Only fires
+    ``increased``/``decreased`` when BOTH values are genuine integers.
+    """
+    nv_i, pv_i = _as_int(nv), _as_int(pv)
+    if nv_i is None or pv_i is None:
+        return "low", unknown_message
+    if nv_i > pv_i:
+        return increased
+    return decreased
+
+
 _PSA_ENFORCEMENT_RANK = {
     None: 0,
     "privileged": 0,
@@ -228,12 +257,42 @@ def _whole_record(change: object, *, added: bool) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+# Mirrors security_rules/kubernetes.py's kubernetes_privileged_host_access
+# static Finding's exact trigger, so a newly-added workload matching that
+# Critical combination is never under-classified as a fresh Change (Finding
+# severity parity — see message 7's audit).
+_HIGH_TIER_CAPABILITIES = frozenset({"SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "NET_ADMIN", "SYS_PTRACE"})
+_SOCKET_HOSTPATH_CATEGORIES = frozenset(
+    {HOSTPATH_CATEGORY_DOCKER_SOCKET, HOSTPATH_CATEGORY_CONTAINERD_SOCKET}
+)
+
+
+def _is_privileged_host_access_combo(record: dict) -> bool:
+    privileged_count = record.get("privileged_container_count")
+    if not (isinstance(privileged_count, int) and not isinstance(privileged_count, bool) and privileged_count > 0):
+        return False
+    if record.get("host_pid") or record.get("host_ipc"):
+        return True
+    hostpaths = set(record.get("dangerous_hostpath_categories") or [])
+    if hostpaths & _SOCKET_HOSTPATH_CATEGORIES:
+        return True
+    caps = set(record.get("added_capability_categories") or [])
+    return bool(caps & _HIGH_TIER_CAPABILITIES)
+
+
 def _classify_workload_controller_change(change: object) -> tuple[str, str]:
     """Shared classifier for Deployment/StatefulSet/DaemonSet/Job/CronJob."""
     ct = (_get(change, "change_type") or "").lower()
 
     if ct == "added":
         record = _whole_record(change, added=True)
+        if _is_privileged_host_access_combo(record):
+            return (
+                "critical",
+                "A Kubernetes workload was added to monitoring already combining "
+                "a privileged container with host PID/IPC access, a container "
+                "runtime socket mount, or a high-risk added Linux capability.",
+            )
         posture = record.get("security_posture_summary")
         if posture == SECURITY_POSTURE_PRIVILEGED_OR_HOST_ACCESS:
             return (
@@ -251,6 +310,13 @@ def _classify_workload_controller_change(change: object) -> tuple[str, str]:
 
     if ct == "removed":
         record = _whole_record(change, added=False)
+        if _is_privileged_host_access_combo(record):
+            return (
+                "medium",
+                "A Kubernetes workload combining a privileged container with "
+                "host-access posture is no longer visible to ConfigTrace. "
+                "Verify this was an intentional removal.",
+            )
         posture = record.get("security_posture_summary")
         if posture == SECURITY_POSTURE_PRIVILEGED_OR_HOST_ACCESS:
             return (
@@ -282,17 +348,26 @@ def _classify_workload_controller_change(change: object) -> tuple[str, str]:
             "low", "Process namespace sharing was disabled for a Kubernetes Pod.",
         )
     if fp == "privileged_container_count":
-        if (nv or 0) > (pv or 0):
-            return "high", "A privileged container was introduced into a Kubernetes workload."
-        return "low", "A privileged container was removed from a Kubernetes workload."
+        return _count_transition(
+            nv, pv,
+            increased=("high", "A privileged container was introduced into a Kubernetes workload."),
+            decreased=("low", "A privileged container was removed from a Kubernetes workload."),
+            unknown_message="A Kubernetes workload's privileged-container count could not be safely compared.",
+        )
     if fp == "root_container_count":
-        if (nv or 0) > (pv or 0):
-            return "medium", "A container explicitly configured to run as root was introduced."
-        return "low", "A container explicitly configured to run as root was removed."
+        return _count_transition(
+            nv, pv,
+            increased=("medium", "A container explicitly configured to run as root was introduced."),
+            decreased=("low", "A container explicitly configured to run as root was removed."),
+            unknown_message="A Kubernetes workload's root-container count could not be safely compared.",
+        )
     if fp == "allow_privilege_escalation_count":
-        if (nv or 0) > (pv or 0):
-            return "medium", "Privilege escalation was enabled for a container in a Kubernetes workload."
-        return "low", "Privilege escalation was disabled for a container in a Kubernetes workload."
+        return _count_transition(
+            nv, pv,
+            increased=("medium", "Privilege escalation was enabled for a container in a Kubernetes workload."),
+            decreased=("low", "Privilege escalation was disabled for a container in a Kubernetes workload."),
+            unknown_message="A Kubernetes workload's privilege-escalation container count could not be safely compared.",
+        )
     if fp == "dangerous_hostpath_categories":
         return _classify_hostpath_category_transition(nv, pv)
     if fp == "added_capability_categories":
@@ -402,8 +477,11 @@ def _classify_container_security_context_change(change: object) -> tuple[str, st
             "low", "Resource limits were added to a container.",
         )
     if fp == "host_port_count":
-        return ("medium", "A host port was introduced on a container.") if (nv or 0) > (pv or 0) else (
-            "low", "A host port was removed from a container.",
+        return _count_transition(
+            nv, pv,
+            increased=("medium", "A host port was introduced on a container."),
+            decreased=("low", "A host port was removed from a container."),
+            unknown_message="A container's host-port count could not be safely compared.",
         )
     if fp == "dangerous_host_ports":
         added = set(nv or []) - set(pv or [])
@@ -411,8 +489,11 @@ def _classify_container_security_context_change(change: object) -> tuple[str, st
             return "medium", f"A sensitive host port was introduced on a container ({sorted(added)})."
         return "low", "A sensitive host port was removed from a container."
     if fp in ("hostpath_mount_count", "writable_hostpath_mount_count"):
-        return ("medium", "A writable hostPath mount was introduced on a container.") if (nv or 0) > (pv or 0) else (
-            "low", "A hostPath mount was removed from a container.",
+        return _count_transition(
+            nv, pv,
+            increased=("medium", "A writable hostPath mount was introduced on a container."),
+            decreased=("low", "A hostPath mount was removed from a container."),
+            unknown_message="A container's hostPath mount count could not be safely compared.",
         )
     if fp == "service_account_token_explicitly_mounted":
         return ("medium", "A service-account token was explicitly mounted on a container.") if nv is True else (
@@ -911,13 +992,19 @@ def _classify_service_change(change: object) -> tuple[str, str]:
             return "medium", "A Kubernetes Service changed to NodePort exposure."
         return "low", "A Kubernetes Service's exposure category changed."
     if fp == "load_balancer_ingress_count":
-        if (nv or 0) > (pv or 0):
-            return "high", "A public LoadBalancer address was assigned to a Kubernetes Service."
-        return "low", "A Kubernetes Service's LoadBalancer address was unassigned."
+        return _count_transition(
+            nv, pv,
+            increased=("high", "A public LoadBalancer address was assigned to a Kubernetes Service."),
+            decreased=("low", "A Kubernetes Service's LoadBalancer address was unassigned."),
+            unknown_message="A Kubernetes Service's LoadBalancer ingress count could not be safely compared.",
+        )
     if fp == "external_ip_count":
-        if (nv or 0) > (pv or 0):
-            return "high", "An externalIP was added to a Kubernetes Service."
-        return "low", "An externalIP was removed from a Kubernetes Service."
+        return _count_transition(
+            nv, pv,
+            increased=("high", "An externalIP was added to a Kubernetes Service."),
+            decreased=("low", "An externalIP was removed from a Kubernetes Service."),
+            unknown_message="A Kubernetes Service's externalIP count could not be safely compared.",
+        )
     if fp == "internal_load_balancer_annotation_present":
         if pv is True and nv is not True:
             return "high", "A Kubernetes Service's LoadBalancer is no longer marked internal."
@@ -1009,15 +1096,21 @@ def _classify_ingress_change(change: object) -> tuple[str, str]:
             return "low", "TLS coverage was restored for a Kubernetes Ingress."
         return "low", "A Kubernetes Ingress's plaintext-exposure category changed."
     if fp == "tls_host_count":
-        if (nv or 0) < (pv or 0) and (nv or 0) == 0:
+        nv_i, pv_i = _as_int(nv), _as_int(pv)
+        if nv_i is None or pv_i is None:
+            return "low", "A Kubernetes Ingress's TLS host count could not be safely compared."
+        if nv_i < pv_i and nv_i == 0:
             return "high", "TLS coverage was fully removed from a Kubernetes Ingress."
-        if (nv or 0) < (pv or 0):
+        if nv_i < pv_i:
             return "medium", "TLS coverage was partially reduced on a Kubernetes Ingress."
         return "low", "A Kubernetes Ingress's TLS host coverage changed."
     if fp == "wildcard_host_count":
-        if (nv or 0) > (pv or 0):
-            return "high", "A wildcard host was introduced on a Kubernetes Ingress."
-        return "low", "A wildcard host was removed from a Kubernetes Ingress."
+        return _count_transition(
+            nv, pv,
+            increased=("high", "A wildcard host was introduced on a Kubernetes Ingress."),
+            decreased=("low", "A wildcard host was removed from a Kubernetes Ingress."),
+            unknown_message="A Kubernetes Ingress's wildcard host count could not be safely compared.",
+        )
     if fp == "hostless_rule_present":
         return ("high", "A hostless catch-all rule was introduced on a Kubernetes Ingress.") if nv else (
             "low", "A hostless catch-all rule was removed from a Kubernetes Ingress.",
@@ -1027,8 +1120,11 @@ def _classify_ingress_change(change: object) -> tuple[str, str]:
             return "high", "A public LoadBalancer address was assigned to a Kubernetes Ingress."
         return "low", "A Kubernetes Ingress's public-exposure category changed."
     if fp == "load_balancer_ingress_count":
-        return ("high", "A public LoadBalancer address was assigned to a Kubernetes Ingress.") if (nv or 0) > (pv or 0) else (
-            "low", "A Kubernetes Ingress's LoadBalancer address was unassigned.",
+        return _count_transition(
+            nv, pv,
+            increased=("high", "A public LoadBalancer address was assigned to a Kubernetes Ingress."),
+            decreased=("low", "A Kubernetes Ingress's LoadBalancer address was unassigned."),
+            unknown_message="A Kubernetes Ingress's LoadBalancer ingress count could not be safely compared.",
         )
     if fp == "ingress_class":
         return "medium", "A Kubernetes Ingress's class changed."
@@ -1111,8 +1207,11 @@ def _classify_gateway_change(change: object) -> tuple[str, str]:
     if fp in ("http_listener_count", "https_listener_count", "tls_listener_count", "listener_protocol_categories"):
         return "medium", "A Kubernetes Gateway's listener configuration changed."
     if fp == "wildcard_hostname_count":
-        return ("high", "A wildcard hostname was introduced on a Kubernetes Gateway listener.") if (nv or 0) > (pv or 0) else (
-            "low", "A wildcard hostname was removed from a Kubernetes Gateway listener.",
+        return _count_transition(
+            nv, pv,
+            increased=("high", "A wildcard hostname was introduced on a Kubernetes Gateway listener."),
+            decreased=("low", "A wildcard hostname was removed from a Kubernetes Gateway listener."),
+            unknown_message="A Kubernetes Gateway's wildcard hostname count could not be safely compared.",
         )
     if fp == "status_category":
         return "low", "A Kubernetes Gateway's status category changed."
@@ -1173,20 +1272,29 @@ def _classify_http_route_change(change: object) -> tuple[str, str]:
     pv = _get(change, "prev_value")
 
     if fp == "cross_namespace_backend_count":
-        return ("high", "A Kubernetes HTTPRoute's cross-namespace backend reference was broadened.") if (nv or 0) > (pv or 0) else (
-            "low", "A Kubernetes HTTPRoute's cross-namespace backend reference was narrowed.",
+        return _count_transition(
+            nv, pv,
+            increased=("high", "A Kubernetes HTTPRoute's cross-namespace backend reference was broadened."),
+            decreased=("low", "A Kubernetes HTTPRoute's cross-namespace backend reference was narrowed."),
+            unknown_message="A Kubernetes HTTPRoute's cross-namespace backend count could not be safely compared.",
         )
     if fp == "cross_namespace_parent_count":
-        return ("medium", "A Kubernetes HTTPRoute gained a cross-namespace parent reference.") if (nv or 0) > (pv or 0) else (
-            "low", "A Kubernetes HTTPRoute's cross-namespace parent reference was removed.",
+        return _count_transition(
+            nv, pv,
+            increased=("medium", "A Kubernetes HTTPRoute gained a cross-namespace parent reference."),
+            decreased=("low", "A Kubernetes HTTPRoute's cross-namespace parent reference was removed."),
+            unknown_message="A Kubernetes HTTPRoute's cross-namespace parent count could not be safely compared.",
         )
     if fp == "resolved_refs_status":
         if nv == ks.ROUTE_REFS_SOME_UNRESOLVED:
             return "medium", "A Kubernetes HTTPRoute has unresolved backend/parent references."
         return "low", "A Kubernetes HTTPRoute's reference-resolution status changed."
     if fp == "wildcard_hostname_count":
-        return ("high", "A wildcard hostname was introduced on a Kubernetes HTTPRoute.") if (nv or 0) > (pv or 0) else (
-            "low", "A wildcard hostname was removed from a Kubernetes HTTPRoute.",
+        return _count_transition(
+            nv, pv,
+            increased=("high", "A wildcard hostname was introduced on a Kubernetes HTTPRoute."),
+            decreased=("low", "A wildcard hostname was removed from a Kubernetes HTTPRoute."),
+            unknown_message="A Kubernetes HTTPRoute's wildcard hostname count could not be safely compared.",
         )
     if fp in ("redirect_present", "rewrite_present", "filter_categories"):
         return "low", "A Kubernetes HTTPRoute's filter configuration changed."
@@ -1269,8 +1377,11 @@ def _classify_network_policy_change(change: object) -> tuple[str, str]:
             "low", "A Kubernetes NetworkPolicy's public IPv6 CIDR allowance was removed.",
         )
     if fp == "broad_cidr_count":
-        return ("medium", "A Kubernetes NetworkPolicy's broad (non-private) CIDR count increased.") if (nv or 0) > (pv or 0) else (
-            "low", "A Kubernetes NetworkPolicy's broad CIDR count decreased.",
+        return _count_transition(
+            nv, pv,
+            increased=("medium", "A Kubernetes NetworkPolicy's broad (non-private) CIDR count increased."),
+            decreased=("low", "A Kubernetes NetworkPolicy's broad CIDR count decreased."),
+            unknown_message="A Kubernetes NetworkPolicy's broad CIDR count could not be safely compared.",
         )
     if fp in ("namespace_selector_present", "pod_selector_present"):
         return "medium", "A Kubernetes NetworkPolicy's peer-selector configuration changed."
@@ -1396,20 +1507,32 @@ def _classify_webhook_configuration_change(change: object) -> tuple[str, str]:
             return "low", f"A {kind_label} changed from fail-open to fail-closed."
         return "low", f"A {kind_label}'s security posture summary changed."
     if fp == "fail_open_webhook_count":
-        return ("medium", f"A {kind_label} gained a fail-open webhook.") if (nv or 0) > (pv or 0) else (
-            "low", f"A {kind_label}'s fail-open webhook count decreased.",
+        return _count_transition(
+            nv, pv,
+            increased=("medium", f"A {kind_label} gained a fail-open webhook."),
+            decreased=("low", f"A {kind_label}'s fail-open webhook count decreased."),
+            unknown_message=f"A {kind_label}'s fail-open webhook count could not be safely compared.",
         )
     if fp == "fail_closed_webhook_count":
-        return ("low", f"A {kind_label} gained a fail-closed webhook.") if (nv or 0) > (pv or 0) else (
-            "medium", f"A {kind_label}'s fail-closed webhook count decreased.",
+        return _count_transition(
+            nv, pv,
+            increased=("low", f"A {kind_label} gained a fail-closed webhook."),
+            decreased=("medium", f"A {kind_label}'s fail-closed webhook count decreased."),
+            unknown_message=f"A {kind_label}'s fail-closed webhook count could not be safely compared.",
         )
     if fp == "webhook_count":
-        return ("low", f"A {kind_label} gained a webhook.") if (nv or 0) > (pv or 0) else (
-            "medium", f"A webhook was removed from a {kind_label}.",
+        return _count_transition(
+            nv, pv,
+            increased=("low", f"A {kind_label} gained a webhook."),
+            decreased=("medium", f"A webhook was removed from a {kind_label}."),
+            unknown_message=f"A {kind_label}'s webhook count could not be safely compared.",
         )
     if fp == "ca_bundle_present_count":
-        return ("low", f"A {kind_label}'s CA-bundle coverage increased.") if (nv or 0) > (pv or 0) else (
-            "medium", f"A {kind_label}'s CA-bundle coverage decreased.",
+        return _count_transition(
+            nv, pv,
+            increased=("low", f"A {kind_label}'s CA-bundle coverage increased."),
+            decreased=("medium", f"A {kind_label}'s CA-bundle coverage decreased."),
+            unknown_message=f"A {kind_label}'s CA-bundle coverage count could not be safely compared.",
         )
     if fp in ("timeout_seconds_min", "timeout_seconds_max"):
         return "medium", f"A {kind_label}'s webhook timeout configuration changed."
@@ -1495,9 +1618,12 @@ def _classify_webhook_change(change: object) -> tuple[str, str]:
             return "medium", "An admission webhook's sideEffects became Unknown."
         return "low", "An admission webhook's sideEffects category changed."
     if fp == "timeout_seconds":
-        return ("medium", "An admission webhook's timeout was reduced.") if (nv or 0) < (pv or 0) else (
-            "low", "An admission webhook's timeout was increased.",
-        )
+        nv_i, pv_i = _as_int(nv), _as_int(pv)
+        if nv_i is None or pv_i is None:
+            return "low", "An admission webhook's timeout could not be safely compared."
+        if nv_i < pv_i:
+            return "medium", "An admission webhook's timeout was reduced."
+        return "low", "An admission webhook's timeout was increased."
     if fp == "match_policy":
         return "low", "An admission webhook's matchPolicy changed."
     if fp in ("operation_categories", "api_group_categories", "resource_categories", "scope_category",
