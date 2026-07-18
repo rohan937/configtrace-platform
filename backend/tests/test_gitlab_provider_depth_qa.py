@@ -355,10 +355,11 @@ def test_author_approval_field_name_correct() -> None:
 # ===========================================================================
 
 def test_kubernetes_not_implemented() -> None:
-    assert "kubernetes" not in _PROVIDER_RULES
-    # No kubernetes evaluator module wired into the security rules package.
+    """Regression note: kubernetes is now wired into the central evaluator
+    (Kubernetes message 6 — static Security Finding taxonomy)."""
+    assert "kubernetes" in _PROVIDER_RULES
     rules_dir = _BACKEND / "app" / "services" / "security_rules"
-    assert not (rules_dir / "kubernetes.py").exists()
+    assert (rules_dir / "kubernetes.py").exists()
 
 
 def test_provider_expansion_points_to_m89a_kubernetes() -> None:

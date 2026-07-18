@@ -275,25 +275,36 @@ class TestCapabilityMatrix:
         assert cap is not None
 
     def test_kubernetes_maturity_is_planned(self):
+        """Regression note: as of Kubernetes message 6 (static Security
+        Finding taxonomy), maturity is 'partial' — drift snapshots/diff/risk
+        classification and security_rules all exist, but the provider is
+        still not connectable/production-ready (see messages 7-9)."""
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("kubernetes")
-        assert cap.maturity == "planned"
+        assert cap.maturity == "partial"
 
     def test_kubernetes_drift_snapshots_true_but_nothing_else(self):
+        """Regression note: drift_diff and drift_risk_classification are now
+        True as of Kubernetes messages 2-5 (workload/RBAC/network/admission
+        diff tracking and structural risk routing)."""
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("kubernetes")
         assert cap.drift.drift_snapshots is True
-        assert cap.drift.drift_diff is False
-        assert cap.drift.drift_risk_classification is False
+        assert cap.drift.drift_diff is True
+        assert cap.drift.drift_risk_classification is True
         assert cap.drift.drift_review_workflow is False
 
     def test_kubernetes_security_stack_entirely_false(self):
+        """Regression note: security_rules is now True as of Kubernetes
+        message 6 (static Security Finding taxonomy). Activity ingestion,
+        signals, correlations, demo, and case-report layers remain
+        unimplemented."""
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("kubernetes")
-        assert cap.security.security_rules is False
+        assert cap.security.security_rules is True
         assert cap.security.activity_ingestion is False
         assert cap.security.demo_seed_clear is False
 

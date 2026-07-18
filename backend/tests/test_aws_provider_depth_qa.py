@@ -405,6 +405,8 @@ def test_no_kubernetes_connector_file() -> None:
 
 
 def test_no_kubernetes_security_rules_file() -> None:
-    assert not os.path.exists(
+    """Regression note: the Kubernetes security rules module now exists
+    (Kubernetes message 6 — static Security Finding taxonomy)."""
+    assert os.path.exists(
         str(REPO_ROOT / "backend" / "app" / "services" / "security_rules" / "kubernetes.py")
     )

@@ -659,11 +659,10 @@ class TestDatadogProviderCapabilityMatrix:
         )
 
     def test_kubernetes_not_implemented(self) -> None:
-        """Regression note: Kubernetes launched its provider architecture
-        foundation (message 1). It now has a capability-matrix entry
-        (maturity='planned', drift_snapshots only) but still has NO
-        Security Findings — that remains guarded here since Findings are
-        message 6."""
+        """Regression note: Kubernetes now has a static Security Finding
+        layer (message 6). It has a capability-matrix entry
+        (maturity='partial', security_rules=True) and is wired into the
+        central evaluator/registry."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
@@ -672,13 +671,13 @@ class TestDatadogProviderCapabilityMatrix:
 
         cap = get_provider_capability("kubernetes")
         assert cap is not None
-        assert cap.maturity == "planned"
-        assert cap.security.security_rules is False
-        assert "kubernetes" not in _PROVIDER_RULES, (
-            "kubernetes must not be wired into the central evaluator yet"
+        assert cap.maturity == "partial"
+        assert cap.security.security_rules is True
+        assert "kubernetes" in _PROVIDER_RULES, (
+            "kubernetes must be wired into the central evaluator"
         )
-        assert not any(k.startswith("kubernetes_") for k in KNOWN_RULE_KEYS), (
-            "no kubernetes_* rule keys should exist in the registry yet"
+        assert any(k.startswith("kubernetes_") for k in KNOWN_RULE_KEYS), (
+            "kubernetes_* rule keys should exist in the registry"
         )
 
     def test_kubernetes_connector_does_not_exist(self) -> None:

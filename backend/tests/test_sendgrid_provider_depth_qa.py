@@ -964,16 +964,16 @@ class TestSendGridProviderCapabilityMatrix:
         )
 
     def test_kubernetes_is_not_yet_implemented(self) -> None:
-        """Regression note: Kubernetes launched its provider architecture
-        foundation (Kubernetes message 1) — a capability-matrix entry now
-        exists (maturity='planned', drift_snapshots only, no security rules)."""
+        """Regression note: Kubernetes now has a static Security Finding
+        layer (message 6) — capability entry reflects maturity='partial',
+        security_rules=True. Still not connectable/production-ready."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("kubernetes")
         assert cap is not None
-        assert cap.maturity == "planned"
-        assert cap.security.security_rules is False
+        assert cap.maturity == "partial"
+        assert cap.security.security_rules is True
 
     def test_kubernetes_connector_does_not_exist(self) -> None:
         """Regression note: the Kubernetes connector now exists (foundation

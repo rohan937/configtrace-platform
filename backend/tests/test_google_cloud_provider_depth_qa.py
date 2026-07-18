@@ -556,13 +556,13 @@ class TestGoogleCloudProviderCapabilityMatrix:
         assert cap.drift.drift_risk_classification is True
 
     def test_kubernetes_is_not_yet_implemented(self) -> None:
-        """Regression note: Kubernetes launched its provider architecture
-        foundation (message 1) — capability entry exists (maturity='planned',
-        no security rules yet)."""
+        """Regression note: Kubernetes now has a static Security Finding
+        layer (message 6) — capability entry reflects maturity='partial',
+        security_rules=True. Still not connectable/production-ready."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("kubernetes")
         assert cap is not None
-        assert cap.maturity == "planned"
-        assert cap.security.security_rules is False
+        assert cap.maturity == "partial"
+        assert cap.security.security_rules is True

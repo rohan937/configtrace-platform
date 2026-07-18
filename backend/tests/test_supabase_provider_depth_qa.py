@@ -543,13 +543,11 @@ def test_expansion_framework_points_at_kubernetes() -> None:
 
 
 def test_kubernetes_is_not_implemented() -> None:
-    """Regression note: the Kubernetes connector now exists (Kubernetes
-    message 1 — provider architecture foundation only). It still has NO
-    Security Findings module or registered rule keys — that remains
-    guarded here since Findings are message 6."""
+    """Regression note: the Kubernetes connector and Security Findings
+    module now exist (Kubernetes message 6 — static Security Finding
+    taxonomy)."""
     assert (BACKEND / "connectors" / "kubernetes.py").exists()
-    assert not (BACKEND / "services" / "security_rules" / "kubernetes.py").exists()
-    # No Kubernetes rule keys registered yet.
+    assert (BACKEND / "services" / "security_rules" / "kubernetes.py").exists()
     from app.services.security_rule_registry import KNOWN_RULE_KEYS
-    assert not any("kubernetes" in k.lower() or k.lower().startswith("k8s")
-                   for k in KNOWN_RULE_KEYS)
+    assert any("kubernetes" in k.lower() or k.lower().startswith("k8s")
+               for k in KNOWN_RULE_KEYS)

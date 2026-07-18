@@ -1437,13 +1437,13 @@ _KUBERNETES = ProviderCapability(
     category="cloud",
     drift=DriftCapabilities(
         drift_snapshots=True,
-        drift_diff=False,
-        drift_risk_classification=False,
+        drift_diff=True,
+        drift_risk_classification=True,
         drift_review_workflow=False,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1452,22 +1452,40 @@ _KUBERNETES = ProviderCapability(
         evidence_timeline=False,
         evidence_graph=False,
     ),
-    maturity="planned",
+    maturity="partial",
     notes=(
-        "Kubernetes message 1 establishes the provider architecture foundation "
-        "only: connector client initialization (kubeconfig content, one context "
-        "per integration), a stable cluster identity (kube-system namespace UID, "
-        "falling back to a host hash), namespace collection with an optional "
-        "allowlist, safe API discovery (capability records only, never the full "
-        "discovery document), a fail-soft API-call wrapper distinguishing "
-        "auth/permission/not-found/throttling/server/connection/TLS failures, "
-        "and a bounded pagination helper following the Kubernetes '_continue' "
-        "convention. Three record types are emitted: kubernetes_cluster, "
-        "kubernetes_namespace, kubernetes_api_capability. No Secret or ConfigMap "
-        "data (not even metadata) is fetched yet. No workload, RBAC, network, or "
-        "admission-control collection exists yet, and no Security Findings or "
-        "broad risk classification are implemented. "
-        "planned_next_stage: Kubernetes message 2: Workloads and Pod security."
+        "Kubernetes messages 1-5 built the full drift foundation: connector "
+        "client initialization, cluster identity, namespace collection, API "
+        "discovery, fail-soft handling, and pagination (message 1); workload/Pod "
+        "security posture across Deployments/StatefulSets/DaemonSets/Jobs/"
+        "CronJobs/Pods and container security contexts (message 2); RBAC/"
+        "identity posture across ServiceAccounts/Roles/ClusterRoles/Bindings "
+        "with resolved per-subject permission summaries (message 3); network "
+        "exposure across Services/Ingresses/Gateway API/HTTPRoutes and "
+        "NetworkPolicy isolation posture (message 4); and admission control / "
+        "configuration governance across ValidatingWebhookConfigurations, "
+        "MutatingWebhookConfigurations, Pod Security Admission, ResourceQuota, "
+        "LimitRange, and namespace governance rollups (message 5). "
+        "Message 6 (this stage) adds the static Kubernetes Security Finding "
+        "layer: 59 rules across workload/Pod security, RBAC/identity, public/"
+        "network exposure, NetworkPolicy isolation, admission webhook posture, "
+        "Pod Security Admission, and namespace governance (including cross-"
+        "control combination rules such as a privileged workload paired with "
+        "weak Pod Security Admission or missing NetworkPolicy isolation). Every "
+        "rule is registered in the central evaluator/registry/confidence/pack/"
+        "coverage layers and reachable through evaluate_record() against real "
+        "connector-normalized records. Evidence is metadata-only (names, "
+        "categories, booleans, counts, CIDRs) — Secret and ConfigMap contents "
+        "remain permanently unsupported. Drift diff and structural risk "
+        "classification exist for all emitted record types, but the exhaustive "
+        "Change-classification QA pass (message 7), scale/partial-sync "
+        "hardening (message 8), and activity ingestion / signals / "
+        "correlations / demo+QA / case reporting (not yet built for this "
+        "provider) remain outstanding before Kubernetes reaches feature parity "
+        "with the fully 'complete' providers. The provider is not yet "
+        "connectable/production-ready. "
+        "planned_next_stage: Kubernetes message 7: exhaustive Change "
+        "classification QA."
     ),
 )
 

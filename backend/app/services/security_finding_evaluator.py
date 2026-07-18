@@ -58,6 +58,7 @@ from app.services.security_rules import terraform_cloud as terraform_cloud_rules
 from app.services.security_rules import twilio as twilio_rules
 from app.services.security_rules import sendgrid as sendgrid_rules
 from app.services.security_rules import auth0 as auth0_rules
+from app.services.security_rules import kubernetes as kubernetes_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,8 @@ _PROVIDER_RULES = {
     "sendgrid": [sendgrid_rules.evaluate],
     # M81B/M81C: Auth0 core security rules
     "auth0": [auth0_rules.evaluate],
+    # M89F: Kubernetes security findings
+    "kubernetes": [kubernetes_rules.evaluate],
 }
 
 

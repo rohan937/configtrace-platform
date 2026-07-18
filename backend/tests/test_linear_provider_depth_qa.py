@@ -526,18 +526,17 @@ def test_planned_next_stage_structural_invariant() -> None:
 
 
 def test_kubernetes_not_yet_implemented() -> None:
-    """Regression note: the Kubernetes connector now exists (Kubernetes
-    message 1 — provider architecture foundation only). It still has no
-    security-rules module or registered rule keys, and it has been removed
-    from the recommended-next queue since it has launched."""
+    """Regression note: the Kubernetes connector and security-rules module
+    now exist (Kubernetes message 6 — static Security Finding taxonomy). It
+    has been removed from the recommended-next queue since it has launched."""
     assert (_REPO_ROOT / "backend" / "app" / "connectors" / "kubernetes.py").exists()
-    assert not (
+    assert (
         _REPO_ROOT / "backend" / "app" / "services" / "security_rules" / "kubernetes.py"
     ).exists()
-    assert "kubernetes" not in _PROVIDER_RULES
+    assert "kubernetes" in _PROVIDER_RULES
     cap = get_provider_capability("kubernetes")
     assert cap is not None
-    assert cap.maturity == "planned"
+    assert cap.maturity == "partial"
     fw = get_framework()
     recommended = [
         r.get("provider", "").lower()

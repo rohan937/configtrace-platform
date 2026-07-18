@@ -999,18 +999,18 @@ class TestKubernetesNotImplemented:
         connector_path = _REPO_ROOT / "backend" / "app" / "connectors" / "kubernetes.py"
         assert connector_path.exists()
 
-    def test_no_kubernetes_security_rules(self) -> None:
+    def test_kubernetes_security_rules_exist(self) -> None:
+        """Regression note: the Kubernetes security rules module now exists
+        (Kubernetes message 6 — static Security Finding taxonomy)."""
         rules_path = (
             _REPO_ROOT / "backend" / "app" / "services" / "security_rules" / "kubernetes.py"
         )
-        assert not rules_path.exists(), (
-            "Kubernetes security rules already exist — M89A may have started unexpectedly"
-        )
+        assert rules_path.exists()
 
-    def test_kubernetes_not_in_provider_rules(self) -> None:
-        assert "kubernetes" not in _PROVIDER_RULES, (
-            "kubernetes unexpectedly in _PROVIDER_RULES — M89A may have started"
-        )
+    def test_kubernetes_in_provider_rules(self) -> None:
+        """Regression note: kubernetes is now dispatched in _PROVIDER_RULES
+        (Kubernetes message 6 — static Security Finding taxonomy)."""
+        assert "kubernetes" in _PROVIDER_RULES
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1045,10 +1045,10 @@ class TestCapabilityMatrix:
             )
 
     def test_kubernetes_not_in_capability_matrix(self) -> None:
-        """Regression note: Kubernetes launched its provider architecture
-        foundation (message 1) — capability entry exists (maturity='planned',
-        no security rules yet)."""
+        """Regression note: Kubernetes now has a static Security Finding
+        layer (message 6) — capability entry reflects maturity='partial',
+        security_rules=True. Still not connectable/production-ready."""
         kube_cap = get_provider_capability("kubernetes")
         assert kube_cap is not None
-        assert kube_cap.maturity == "planned"
-        assert kube_cap.security.security_rules is False
+        assert kube_cap.maturity == "partial"
+        assert kube_cap.security.security_rules is True
