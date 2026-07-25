@@ -79,9 +79,22 @@ from app.connectors.okta_schema import (
     CAPABILITY_UNAVAILABLE,
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
+    FAMILY_COMPLETE,
+    FAMILY_DENIED,
+    FAMILY_PARTIAL,
+    FAMILY_UNAVAILABLE,
     OKTA_API_CAPABILITY,
+    OKTA_GROUP,
+    OKTA_GROUP_MEMBERSHIP,
     OKTA_ORGANIZATION,
+    OKTA_USER,
+    categorize_group_type,
+    categorize_last_login,
+    categorize_membership_count,
     categorize_org_status,
+    categorize_user_status,
+    is_everyone_group,
+    lifecycle_posture_for_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,6 +107,20 @@ _MAX_STR_LEN = 100
 # Pagination bounds (reused by later messages' list collection).
 _MAX_PAGES = 50
 _DEFAULT_PAGE_LIMIT = 200
+
+# ── Identity collection bounds (Okta message 2) ─────────────────────────────
+#
+# Per-family caps bound pathological cases (a tenant with far more objects
+# than any real Okta org would have) without imposing a flaky timing
+# threshold. Membership enumeration is per-group (see fetch_memberships()
+# docstring for the call-complexity rationale), so it additionally needs a
+# cap on the number of groups walked and a global cap on total membership
+# records collected, to bound the worst case where many large groups exist.
+_MAX_USERS = 20_000
+_MAX_GROUPS = 5_000
+_MAX_MEMBERS_PER_GROUP = 20_000
+_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION = 5_000
+_MAX_TOTAL_MEMBERSHIPS = 200_000
 
 # 429 retry bounds — bounded exponential backoff with jitter, mirroring the
 # Kubernetes reliability pattern (message 8 of the Kubernetes arc).
@@ -349,6 +376,18 @@ def call_okta(
         return CallOutcome(ok=False, category=category, detail=detail)
 
 
+# Representative HTTP status codes for the categories that raise a plain
+# ConnectorError — lets callers (e.g. message 2's family-completeness
+# logic) distinguish "denied" (403) from other unexpected errors via
+# ``exc.status_code`` without needing a second round-trip.
+_CATEGORY_STATUS_CODE = {
+    CATEGORY_PERMISSION_DENIED: 403,
+    CATEGORY_NOT_FOUND: 404,
+    CATEGORY_SERVER_ERROR: 500,
+    CATEGORY_MALFORMED_RESPONSE: None,
+}
+
+
 def _raise_for_outcome(outcome: CallOutcome, *, context: str = "") -> httpx.Response:
     """Raise the appropriate connector exception for a failed CallOutcome,
     or return the response for a successful one."""
@@ -361,7 +400,10 @@ def _raise_for_outcome(outcome: CallOutcome, *, context: str = "") -> httpx.Resp
         raise RateLimitError(f"okta: {outcome.detail}{suffix}")
     if outcome.category in (CATEGORY_CONNECTION_ERROR, CATEGORY_TIMEOUT, CATEGORY_TLS_ERROR):
         raise NetworkError(f"okta: {outcome.detail}{suffix}")
-    raise ConnectorError(f"okta: {outcome.detail}{suffix}")
+    raise ConnectorError(
+        f"okta: {outcome.detail}{suffix}",
+        status_code=_CATEGORY_STATUS_CODE.get(outcome.category),
+    )
 
 
 # ── Pagination (RFC5988 Link header) ────────────────────────────────────────
@@ -553,12 +595,21 @@ class OktaConnector(BaseConnector):
     # ── Record normalizers ─────────────────────────────────────────────────
 
     @staticmethod
-    def _normalize_organization(org_hostname: str, raw: dict) -> dict:
+    def _normalize_organization(
+        org_hostname: str, raw: dict, *, family_completeness: Optional[dict] = None,
+    ) -> dict:
         """Normalize the Okta org/tenant record.
 
         SECURITY: raw org response (which may include support contact
         name/email, phone numbers, and postal address) is NEVER stored —
         only the specific safe fields below are extracted.
+
+        ``family_completeness`` (message 2) reports what actually happened
+        collecting users/groups/memberships this fetch — e.g.
+        ``{"users": "complete", "groups": "complete", "memberships": "denied"}``
+        — informational only, never diff-tracked (see
+        ``diff_service._OKTA_TRACKED_FIELDS_BY_TYPE``), so a permission
+        change alone never produces a noisy Change on its own.
         """
         tenant_id = OktaConnector.compute_tenant_id(org_hostname, raw)
         display_name = raw.get("companyName") if isinstance(raw, dict) else None
@@ -575,6 +626,7 @@ class OktaConnector(BaseConnector):
                 else None
             ),
             "status_category": categorize_org_status(raw.get("status") if isinstance(raw, dict) else None),
+            "family_completeness": dict(family_completeness) if family_completeness else {},
         }
 
     @staticmethod
@@ -587,6 +639,329 @@ class OktaConnector(BaseConnector):
             "family": family,
             "status": status,
         }
+
+    # ── User / group / membership normalizers (Okta message 2) ─────────────
+
+    @staticmethod
+    def _normalize_user(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one Okta user record.
+
+        SECURITY: only the fields explicitly listed below are ever read
+        from ``raw``. ``raw["credentials"]`` is touched ONLY at the single
+        path ``credentials.provider.type`` (a short categorical string,
+        e.g. "OKTA"/"IMPORT"/"FEDERATION" — never the password/
+        recovery_question sub-objects). ``raw["profile"]`` is touched ONLY
+        at ``profile.login``, ``profile.firstName``, ``profile.lastName``
+        — never iterated/copied wholesale, so arbitrary custom profile
+        attributes (phone, address, department, title, manager, etc.) can
+        never leak in even if present in a real tenant's profile map.
+        """
+        user_id = raw.get("id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            return None
+
+        profile = raw.get("profile") if isinstance(raw.get("profile"), dict) else {}
+        login = profile.get("login")
+        login = login.strip()[:_MAX_STR_LEN] if isinstance(login, str) and login.strip() else None
+
+        first_name = profile.get("firstName")
+        last_name = profile.get("lastName")
+        display_name_parts = [
+            p.strip() for p in (first_name, last_name)
+            if isinstance(p, str) and p.strip()
+        ]
+        display_name = " ".join(display_name_parts)[:_MAX_STR_LEN] if display_name_parts else None
+
+        status = categorize_user_status(raw.get("status"))
+        posture = lifecycle_posture_for_status(status)
+
+        user_type = raw.get("type") if isinstance(raw.get("type"), dict) else {}
+        user_type_id = user_type.get("id")
+        user_type_id = user_type_id.strip()[:_MAX_STR_LEN] if isinstance(user_type_id, str) and user_type_id.strip() else None
+
+        credentials = raw.get("credentials") if isinstance(raw.get("credentials"), dict) else {}
+        cred_provider = credentials.get("provider") if isinstance(credentials.get("provider"), dict) else {}
+        credential_provider_category = cred_provider.get("type")
+        credential_provider_category = (
+            credential_provider_category.strip()[:30]
+            if isinstance(credential_provider_category, str) and credential_provider_category.strip()
+            else None
+        )
+
+        created = raw.get("created") if isinstance(raw.get("created"), str) else None
+        activated = raw.get("activated") if isinstance(raw.get("activated"), str) else None
+
+        return {
+            "record_type": OKTA_USER,
+            "record_id": f"{tenant_id}/user/{user_id}",
+            "provider_resource_id": f"users/{user_id}",
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "login": login,
+            "display_name": display_name,
+            "status": status,
+            "lifecycle_posture": posture,
+            "active": status == "ACTIVE",
+            "staged": status == "STAGED",
+            "provisioned": status == "PROVISIONED",
+            "recovery": status == "RECOVERY",
+            "locked_out": status == "LOCKED_OUT",
+            "password_expired": status == "PASSWORD_EXPIRED",
+            "suspended": status == "SUSPENDED",
+            "deprovisioned": status == "DEPROVISIONED",
+            "user_type_id": user_type_id,
+            "credential_provider_category": credential_provider_category,
+            "last_login_category": categorize_last_login(raw.get("lastLogin")),
+            "created": created,
+            "activated": activated,
+        }
+
+    @staticmethod
+    def _normalize_group(
+        tenant_id: str, raw: dict, *, membership_count: Optional[int],
+    ) -> Optional[dict]:
+        """Normalize one Okta group record.
+
+        SECURITY: ``raw["profile"]`` is touched ONLY at ``profile.name``
+        and ``profile.description`` — never iterated wholesale, so
+        arbitrary group profile attributes can never leak in.
+        """
+        group_id = raw.get("id")
+        if not isinstance(group_id, str) or not group_id.strip():
+            return None
+
+        profile = raw.get("profile") if isinstance(raw.get("profile"), dict) else {}
+        group_name = profile.get("name")
+        group_name = group_name.strip()[:_MAX_STR_LEN] if isinstance(group_name, str) and group_name.strip() else None
+
+        description = profile.get("description")
+        description = description.strip()[:200] if isinstance(description, str) and description.strip() else None
+
+        group_type = categorize_group_type(raw.get("type"))
+
+        return {
+            "record_type": OKTA_GROUP,
+            "record_id": f"{tenant_id}/group/{group_id}",
+            "provider_resource_id": f"groups/{group_id}",
+            "tenant_id": tenant_id,
+            "group_id": group_id,
+            "group_name": group_name,
+            "group_type": group_type,
+            "description": description,
+            "built_in": group_type == "BUILT_IN",
+            "everyone_group": is_everyone_group(group_type, group_name),
+            "membership_count": membership_count,
+            "membership_count_category": categorize_membership_count(membership_count),
+        }
+
+    @staticmethod
+    def _normalize_membership(
+        tenant_id: str, user_record: Optional[dict], group_record: dict, user_id: str,
+    ) -> dict:
+        """Normalize one user<->group membership edge.
+
+        Never duplicates the full user/group record — only denormalizes
+        the small set of display/context fields a Change or Finding needs
+        (login, group name/type, user status) so downstream consumers
+        don't need a join back to the full records.
+        """
+        group_id = group_record["group_id"]
+        user_login = user_record.get("login") if user_record else None
+        user_status = user_record.get("status") if user_record else "UNKNOWN"
+
+        return {
+            "record_type": OKTA_GROUP_MEMBERSHIP,
+            "record_id": f"{tenant_id}/membership/{group_id}/{user_id}",
+            "provider_resource_id": f"groups/{group_id}/users/{user_id}",
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "group_id": group_id,
+            "user_login": user_login,
+            "group_name": group_record.get("group_name"),
+            "group_type": group_record.get("group_type"),
+            "user_status": user_status,
+            "built_in_group": bool(group_record.get("built_in")),
+        }
+
+    # ── Family collection (Okta message 2) ──────────────────────────────────
+
+    @staticmethod
+    def _collect_family(
+        client: httpx.Client,
+        trusted_origin: str,
+        path: str,
+        *,
+        params: Optional[dict],
+        cap: int,
+        _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Paginate a whole family (users/groups) and report what actually
+        happened, rather than raising and aborting the whole fetch.
+
+        Returns ``(items, completeness)`` where completeness is one of
+        ``FAMILY_COMPLETE`` / ``FAMILY_PARTIAL`` / ``FAMILY_DENIED`` /
+        ``FAMILY_UNAVAILABLE``. Hitting ``cap`` is treated as
+        ``FAMILY_PARTIAL`` (unknown-safe: never claim complete when the
+        result may have been truncated).
+        """
+        try:
+            items = paginate(
+                client, trusted_origin, path, params=params,
+                max_pages=_MAX_PAGES, _sleep_fn=_sleep_fn,
+            )
+        except AuthenticationError:
+            return [], FAMILY_DENIED
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) == 403:
+                return [], FAMILY_DENIED
+            return [], FAMILY_UNAVAILABLE
+        except (NetworkError, RateLimitError):
+            return [], FAMILY_UNAVAILABLE
+
+        if len(items) >= cap:
+            return items[:cap], FAMILY_PARTIAL
+        return items, FAMILY_COMPLETE
+
+    @classmethod
+    def _fetch_users(
+        cls, client: httpx.Client, trusted_origin: str, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, trusted_origin, "/api/v1/users",
+            params={"limit": str(_DEFAULT_PAGE_LIMIT)},
+            cap=_MAX_USERS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_user(tenant_id, raw)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
+    @classmethod
+    def _fetch_groups_raw(
+        cls, client: httpx.Client, trusted_origin: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        return cls._collect_family(
+            client, trusted_origin, "/api/v1/groups",
+            params={"limit": str(_DEFAULT_PAGE_LIMIT)},
+            cap=_MAX_GROUPS, _sleep_fn=_sleep_fn,
+        )
+
+    @classmethod
+    def _fetch_memberships(
+        cls,
+        client: httpx.Client,
+        trusted_origin: str,
+        tenant_id: str,
+        raw_groups: list[dict],
+        group_records_by_id: dict,
+        user_index: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict]:
+        """Collect user<->group membership edges.
+
+        Call-complexity design: Okta's API has no single "list all
+        memberships across the tenant" endpoint — membership is only
+        enumerable per-group (``GET /api/v1/groups/{groupId}/users``) or
+        per-user (``GET /api/v1/users/{userId}/groups``). This connector
+        walks per-GROUP (one paginated call per group, capped at
+        ``_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION`` groups) rather than
+        per-user, because a real tenant almost always has far fewer groups
+        than users (fewer top-level requests), and group->users is the
+        conventional direction for directory-sync tooling. This is
+        intentionally NOT optimized further in this message — message 7
+        owns full partial-sync/scale hardening; here it is bounded and
+        documented, not silently unbounded.
+
+        Also returns a ``membership_count_by_group_id`` dict so
+        ``_normalize_group()`` can report a count derived from what was
+        actually collected, without a separate per-group count API call.
+
+        Returns ``(records, completeness, membership_count_by_group_id)``.
+        completeness is FAMILY_COMPLETE only if every walked group
+        succeeded; FAMILY_DENIED if the walk never got any group members
+        due to permission; FAMILY_PARTIAL if some groups succeeded and
+        others didn't (or the group cap / total cap was hit);
+        FAMILY_UNAVAILABLE if every walked group failed for a
+        non-permission reason.
+        """
+        if not raw_groups:
+            # No groups at all -> trivially complete, zero memberships —
+            # never inferred as "unknown"/"denied".
+            return [], FAMILY_COMPLETE, {}
+
+        groups_to_walk = raw_groups[:_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION]
+        truncated_group_list = len(raw_groups) > len(groups_to_walk)
+
+        records: list[dict] = []
+        counts_by_group: dict = {}
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for raw_group in groups_to_walk:
+            if not isinstance(raw_group, dict):
+                continue
+            group_id = raw_group.get("id")
+            if not isinstance(group_id, str) or not group_id.strip():
+                continue
+            group_record = group_records_by_id.get(group_id)
+            if group_record is None:
+                continue
+
+            members, group_completeness = cls._collect_family(
+                client, trusted_origin, f"/api/v1/groups/{group_id}/users",
+                params={"limit": str(_DEFAULT_PAGE_LIMIT)},
+                cap=_MAX_MEMBERS_PER_GROUP, _sleep_fn=_sleep_fn,
+            )
+            if group_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if group_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if group_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            member_ids: set = set()
+            for raw_member in members:
+                if not isinstance(raw_member, dict):
+                    continue
+                member_id = raw_member.get("id")
+                if not isinstance(member_id, str) or not member_id.strip():
+                    continue
+                if member_id in member_ids:
+                    continue  # dedup within a single group's page set
+                member_ids.add(member_id)
+                if len(records) >= _MAX_TOTAL_MEMBERSHIPS:
+                    cap_hit = True
+                    break
+                user_record = user_index.get(member_id)
+                records.append(
+                    cls._normalize_membership(tenant_id, user_record, group_record, member_id)
+                )
+            counts_by_group[group_id] = len(member_ids)
+            if len(records) >= _MAX_TOTAL_MEMBERSHIPS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_group_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        return records, completeness, counts_by_group
 
     # ── Capability probes ──────────────────────────────────────────────────
     #
@@ -665,15 +1040,22 @@ class OktaConnector(BaseConnector):
             _raise_for_outcome(outcome, context="GET /api/v1/org")
         return True
 
-    def fetch(self, credentials: dict) -> list[dict]:
-        """Fetch the Okta foundation records: one ``okta_organization``
-        record plus one ``okta_api_capability`` record per probed future
-        family.
+    def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
+        """Fetch the Okta identity inventory: ``okta_organization``,
+        ``okta_api_capability`` probes (message 1), plus ``okta_user`` /
+        ``okta_group`` / ``okta_group_membership`` records (message 2).
 
-        Does NOT collect users, groups, applications, policies,
-        authenticators, admin roles, or System Log events — see the module
-        docstring for the permanent sensitive-data boundary and
-        ``okta_schema.py`` for what later messages will add.
+        Does NOT collect applications, policies, authenticators, admin
+        roles, or System Log events yet — see the module docstring for the
+        permanent sensitive-data boundary and ``okta_schema.py`` for what
+        later messages will add.
+
+        Users, groups, and memberships fail independently: if memberships
+        are denied while users/groups are readable, the users and groups
+        are still returned and ``okta_organization.family_completeness``
+        reports the memberships gap — a family failure never aborts the
+        whole fetch, and a denied/unreadable family is never silently
+        reported as "zero" (see ``_collect_family``/``_fetch_memberships``).
 
         SECURITY: the API token is used only within this method's scope,
         placed only in the Authorization header, never stored on the
@@ -683,8 +1065,8 @@ class OktaConnector(BaseConnector):
         Raises:
             AuthenticationError: Token rejected or malformed org_url.
             ConnectorError: Okta returned an unexpected error fetching the
-                org record itself (capability probes never raise — see
-                ``_probe_one``).
+                org record itself (every other family fails soft instead
+                of raising — see ``_collect_family``).
             NetworkError: Transport-level failure reaching the org endpoint.
         """
         org_url, api_token = self._credentials(credentials)
@@ -701,10 +1083,59 @@ class OktaConnector(BaseConnector):
             if not isinstance(raw_org, dict):
                 raise ConnectorError("okta: /api/v1/org response was not a JSON object")
 
-            org_record = self._normalize_organization(org_hostname, raw_org)
-            records.append(org_record)
+            tenant_id = self.compute_tenant_id(org_hostname, raw_org)
 
-            tenant_id = org_record["tenant_id"]
+            # ── Users ──────────────────────────────────────────────────────
+            user_records, users_completeness = self._fetch_users(
+                client, org_url, tenant_id, _sleep_fn=_sleep_fn,
+            )
+            user_index = {u["user_id"]: u for u in user_records}
+
+            # ── Groups (raw kept for membership walk; normalized after) ────
+            raw_groups, groups_completeness = self._fetch_groups_raw(
+                client, org_url, _sleep_fn=_sleep_fn,
+            )
+            group_records_by_id: dict = {}
+            for raw_group in raw_groups:
+                if not isinstance(raw_group, dict):
+                    continue
+                group_id = raw_group.get("id")
+                if not isinstance(group_id, str) or not group_id.strip():
+                    continue
+                # membership_count filled in below once memberships are collected.
+                rec = self._normalize_group(tenant_id, raw_group, membership_count=None)
+                if rec is not None:
+                    group_records_by_id[group_id] = rec
+
+            # ── Memberships ──────────────────────────────────────────────
+            membership_records, memberships_completeness, counts_by_group = self._fetch_memberships(
+                client, org_url, tenant_id, raw_groups, group_records_by_id, user_index,
+                _sleep_fn=_sleep_fn,
+            )
+
+            # Backfill membership_count only for groups whose own membership
+            # walk actually succeeded — a group whose walk was denied/failed
+            # keeps membership_count=None (unknown), never 0.
+            group_records: list[dict] = []
+            for group_id, group_rec in group_records_by_id.items():
+                count = counts_by_group.get(group_id)
+                group_rec["membership_count"] = count
+                group_rec["membership_count_category"] = categorize_membership_count(count)
+                group_records.append(group_rec)
+
+            org_record = self._normalize_organization(
+                org_hostname, raw_org,
+                family_completeness={
+                    "users": users_completeness,
+                    "groups": groups_completeness,
+                    "memberships": memberships_completeness,
+                },
+            )
+
+            records.append(org_record)
+            records.extend(user_records)
+            records.extend(group_records)
+            records.extend(membership_records)
             records.extend(self._probe_capabilities(client, tenant_id))
 
         return records

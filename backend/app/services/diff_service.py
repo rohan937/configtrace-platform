@@ -3362,9 +3362,57 @@ _OKTA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "org_hostname",
         "org_display_name",
         "status_category",
+        # family_completeness is intentionally NOT tracked — see
+        # okta.py's _normalize_organization docstring.
     ),
     "okta_api_capability": (
         "status",
+    ),
+    # ── Okta identity lifecycle (Okta message 2 of 8) ───────────────────────
+    #
+    # lastLogin/statusChanged/created/activated are intentionally NOT
+    # tracked — routine activity telemetry, not durable configuration
+    # (see okta.py's categorize_last_login() docstring). Lifecycle state
+    # (status/posture/booleans) and stable identity display fields ARE
+    # tracked since they're exactly the durable posture this message
+    # exists to monitor.
+    "okta_user": (
+        "login",
+        "display_name",
+        "status",
+        "lifecycle_posture",
+        "suspended",
+        "locked_out",
+        "password_expired",
+        "deprovisioned",
+        "user_type_id",
+        "credential_provider_category",
+        # "active"/"staged"/"provisioned"/"recovery" are intentionally NOT
+        # separately tracked — they're pure derivations of "status" (which
+        # IS tracked), and tracking every derived boolean alongside its
+        # own source field would multiply one real transition into many
+        # redundant per-field Change rows.
+    ),
+    "okta_group": (
+        "group_name",
+        "group_type",
+        "built_in",
+        "membership_count",
+        # "everyone_group"/"membership_count_category" are intentionally
+        # NOT separately tracked — pure derivations of group_type+
+        # group_name and membership_count respectively (same rationale as
+        # okta_user's derived booleans above).
+    ),
+    "okta_group_membership": (
+        # user_id/group_id are the record's own identity components (a
+        # change to either produces a different record_id, hence
+        # add+remove, never a "modified" diff on these) — tracked anyway
+        # for shape completeness; they will never actually fire.
+        "user_id",
+        "group_id",
+        "user_status",
+        "group_type",
+        "built_in_group",
     ),
 }
 
@@ -3865,6 +3913,25 @@ def _build_provider_metadata(
             metadata["limit_range_name"] = context_record.get("name") or record.get("name") or ""
         if _kubernetes_record_type == "kubernetes_namespace_governance_posture":
             metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
+
+    # Okta identity records (message 2) carry no "name" field the generic
+    # record_name/record_content stanza above would populate — the risk
+    # classifier and UI need tenant/login/group-name context directly.
+    # Never includes credentials, tokens, or arbitrary profile fields.
+    if record.get("record_type") == "okta_user":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["login"] = context_record.get("login") or record.get("login") or ""
+    if record.get("record_type") == "okta_group":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+    if record.get("record_type") == "okta_group_membership":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["user_login"] = context_record.get("user_login") or record.get("user_login") or ""
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
 
     return metadata
 
