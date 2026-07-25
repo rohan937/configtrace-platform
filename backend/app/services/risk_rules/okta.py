@@ -1,5 +1,5 @@
 """Okta risk classification rules — foundation + identity lifecycle +
-application security (Okta messages 1-3 of 8).
+application security + authentication policy (Okta messages 1-4 of 8).
 
 This module exists to give every ``okta_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -32,6 +32,13 @@ Classification here is deliberately structural, not incident-level:
   wildcard-callback precedent in this codebase. Assignment additions are
   Low/Medium with no privilege claims — message 5 will know which
   apps/roles are actually privileged.
+- Authentication-policy/rule changes are classified by MFA-requirement/
+  phishing-resistance DIRECTION: MFA required -> none/optional and
+  phishing-resistant-required -> removed are High; the reverse
+  (strengthening) is Low/improvement. deny -> allow is High when explicit;
+  allow -> deny is Low (a restriction, not a weakening). Unknown states
+  are NEVER classified as a known weakening (e.g. an unrecognized/missing
+  MFA requirement is Medium "needs review," never treated as "no MFA").
 """
 
 from __future__ import annotations
@@ -49,15 +56,24 @@ from app.connectors.okta_schema import (
     LIFECYCLE_RECOVERY,
     LIFECYCLE_SUSPENDED,
     LIFECYCLE_UNKNOWN,
+    MFA_REQUIREMENT_NONE,
+    MFA_REQUIREMENT_RANK,
+    MFA_REQUIREMENT_UNKNOWN,
+    NOT_PHISHING_RESISTANT,
     OKTA_API_CAPABILITY,
     OKTA_APPLICATION,
     OKTA_APPLICATION_GROUP_ASSIGNMENT,
     OKTA_APPLICATION_USER_ASSIGNMENT,
+    OKTA_AUTHENTICATOR,
     OKTA_GROUP,
     OKTA_GROUP_MEMBERSHIP,
     OKTA_ORGANIZATION,
+    OKTA_POLICY,
+    OKTA_POLICY_RULE,
     OKTA_USER,
     ORG_STATUS_ACTIVE,
+    PHISHING_RESISTANCE_UNKNOWN,
+    PHISHING_RESISTANT,
     lifecycle_posture_for_status,
 )
 
@@ -477,6 +493,303 @@ def _classify_app_group_assignment_change(change: object) -> tuple[str, str]:
     return "low", "An Okta application group assignment field changed."
 
 
+def _classify_policy_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "An Okta policy was added to the inventory."
+    if ct == "removed":
+        return (
+            "medium",
+            "An Okta policy is no longer visible to ConfigTrace. This "
+            "reflects the collected snapshot — it does not by itself "
+            "confirm the policy was deleted in Okta, but a removed policy "
+            "may indicate a protective control is no longer in effect.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status":
+        nv = _get(change, "new_value")
+        if nv not in (APP_STATUS_ACTIVE, "INACTIVE"):
+            return (
+                "medium",
+                f"An Okta policy's status changed to an unrecognized value "
+                f"({nv!r}) — treat as needing review.",
+            )
+        if nv == "INACTIVE":
+            return (
+                "medium",
+                "An Okta policy was deactivated. If this was a protective "
+                "policy, its controls are no longer enforced.",
+            )
+        return "medium", "An Okta policy was activated."
+    if fp == "active":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "An Okta policy was deactivated."
+        return "medium", "An Okta policy was activated."
+    if fp in ("policy_name",):
+        return "low", "An Okta policy was renamed."
+    if fp == "policy_type":
+        return "low", "An Okta policy's type changed."
+    if fp == "priority":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is None or nv_i is None:
+            return "low", "An Okta policy's priority became unknown or was newly determined."
+        return (
+            "medium",
+            f"An Okta policy's priority order changed ({pv_i} -> {nv_i}). "
+            "Policy order can affect which rule applies first — review "
+            "whether this broadens or narrows effective access.",
+        )
+    if fp == "system":
+        return "low", "An Okta policy's built-in/system category changed."
+    if fp == "scope_category":
+        return "low", "An Okta policy's targeting scope changed."
+    if fp == "rule_count":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is None or nv_i is None:
+            return "low", "An Okta policy's rule count became unknown or was newly determined."
+        return "low", f"An Okta policy's rule count changed ({pv_i} -> {nv_i})."
+    if fp == "password_min_length":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is None or nv_i is None:
+            return "low", "An Okta password policy's minimum length became unknown or was newly determined."
+        if nv_i < pv_i:
+            return (
+                "medium",
+                f"An Okta password policy's minimum length decreased ({pv_i} -> {nv_i}).",
+            )
+        return "low", f"An Okta password policy's minimum length increased ({pv_i} -> {nv_i})."
+    if fp == "password_complexity_required":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "An Okta password policy's complexity requirement was removed."
+        if nv is True:
+            return "low", "An Okta password policy's complexity requirement was added."
+        return "low", "An Okta password policy's complexity requirement became unknown."
+    if fp == "password_history_present":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "An Okta password policy's password-history requirement was removed."
+        if nv is True:
+            return "low", "An Okta password policy's password-history requirement was added."
+        return "low", "An Okta password policy's password-history posture became unknown."
+    if fp == "password_lockout_present":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "An Okta password policy's lockout control was removed or disabled."
+        if nv is True:
+            return "low", "An Okta password policy's lockout control was added or enabled."
+        return "low", "An Okta password policy's lockout posture became unknown."
+    if fp == "password_lockout_max_attempts":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is None or nv_i is None:
+            return "low", "An Okta password policy's lockout threshold became unknown or was newly determined."
+        if nv_i > pv_i:
+            return "medium", f"An Okta password policy's lockout threshold was loosened ({pv_i} -> {nv_i})."
+        return "low", f"An Okta password policy's lockout threshold was tightened ({pv_i} -> {nv_i})."
+    if fp == "password_lifetime_bounded":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "An Okta password policy no longer enforces a maximum password age."
+        if nv is True:
+            return "low", "An Okta password policy now enforces a maximum password age."
+        return "low", "An Okta password policy's maximum-age posture became unknown."
+    if fp == "password_min_length_category":
+        return "low", "An Okta password policy's minimum-length category changed."
+    return "low", "An Okta policy configuration field changed."
+
+
+def _classify_rule_mfa_requirement_transition(prev: object, new: object) -> tuple[str, str]:
+    if new == MFA_REQUIREMENT_UNKNOWN:
+        return (
+            "medium",
+            "An Okta policy rule's MFA requirement changed to an "
+            "unrecognized/undeterminable value — treat as needing review.",
+        )
+    prev_rank = MFA_REQUIREMENT_RANK.get(prev, -1) if isinstance(prev, str) else -1
+    new_rank = MFA_REQUIREMENT_RANK.get(new, -1) if isinstance(new, str) else -1
+    if prev_rank == -1 or new_rank == -1:
+        return "low", f"An Okta policy rule's MFA requirement changed ({prev!r} -> {new!r})."
+    if new == MFA_REQUIREMENT_NONE and prev != MFA_REQUIREMENT_NONE:
+        return (
+            "high",
+            f"An Okta policy rule's MFA requirement was removed (was {prev!r}). "
+            "Multi-factor authentication is no longer required by this rule.",
+        )
+    if new_rank < prev_rank:
+        return (
+            "medium",
+            f"An Okta policy rule's MFA requirement was weakened ({prev!r} -> {new!r}).",
+        )
+    if new_rank > prev_rank:
+        return (
+            "low",
+            f"An Okta policy rule's MFA requirement was strengthened ({prev!r} -> {new!r}).",
+        )
+    return "low", f"An Okta policy rule's MFA requirement changed ({prev!r} -> {new!r})."
+
+
+def _classify_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "An Okta policy rule was added."
+    if ct == "removed":
+        return (
+            "medium",
+            "An Okta policy rule is no longer visible to ConfigTrace. This "
+            "reflects the collected snapshot — it does not by itself "
+            "confirm the rule was deleted in Okta, but a removed rule may "
+            "indicate a protective control is no longer in effect.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status":
+        nv = _get(change, "new_value")
+        if nv not in (APP_STATUS_ACTIVE, "INACTIVE"):
+            return "medium", f"An Okta policy rule's status changed to an unrecognized value ({nv!r})."
+        if nv == "INACTIVE":
+            return "medium", "An Okta policy rule was deactivated."
+        return "medium", "An Okta policy rule was activated."
+    if fp == "active":
+        nv = _get(change, "new_value")
+        return ("medium", "An Okta policy rule was deactivated.") if nv is False else (
+            "medium", "An Okta policy rule was activated.",
+        )
+    if fp == "rule_name":
+        return "low", "An Okta policy rule was renamed."
+    if fp == "priority":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is None or nv_i is None:
+            return "low", "An Okta policy rule's priority became unknown or was newly determined."
+        return (
+            "medium",
+            f"An Okta policy rule's priority order changed ({pv_i} -> {nv_i}). "
+            "Rule order can broaden or narrow effective access — review the "
+            "rules above/below this one.",
+        )
+    if fp == "scope_category":
+        return "low", "An Okta policy rule's targeting scope changed."
+    if fp == "access_category":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if nv == "ALLOW" and pv == "DENY":
+            return (
+                "high",
+                "An Okta policy rule's access changed from deny to allow.",
+            )
+        if nv == "DENY" and pv == "ALLOW":
+            return "low", "An Okta policy rule's access changed from allow to deny."
+        if nv == "unknown":
+            return "medium", "An Okta policy rule's access outcome became unrecognized/undeterminable."
+        return "low", "An Okta policy rule's access outcome changed."
+    if fp == "mfa_requirement_category":
+        return _classify_rule_mfa_requirement_transition(_get(change, "prev_value"), _get(change, "new_value"))
+    if fp == "required_factor_count":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is None or nv_i is None:
+            return "low", "An Okta policy rule's required factor count became unknown or was newly determined."
+        if nv_i < pv_i:
+            return (
+                "medium",
+                f"An Okta policy rule's required factor count decreased ({pv_i} -> {nv_i}).",
+            )
+        return "low", f"An Okta policy rule's required factor count increased ({pv_i} -> {nv_i})."
+    if fp == "phishing_resistant_category":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if nv == PHISHING_RESISTANCE_UNKNOWN:
+            return "medium", "An Okta policy rule's phishing-resistance posture became unknown."
+        if pv == PHISHING_RESISTANT and nv != PHISHING_RESISTANT:
+            return (
+                "high",
+                "An Okta policy rule's phishing-resistant authentication "
+                "requirement was removed.",
+            )
+        if nv == PHISHING_RESISTANT and pv != PHISHING_RESISTANT:
+            return "low", "An Okta policy rule now requires phishing-resistant authentication."
+        return "low", "An Okta policy rule's phishing-resistance posture changed."
+    if fp in ("possession_required", "knowledge_required"):
+        factor = fp.replace("_required", "")
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", f"An Okta policy rule no longer requires a {factor} factor."
+        if nv is True:
+            return "low", f"An Okta policy rule now requires a {factor} factor."
+        return "low", f"An Okta policy rule's {factor}-factor requirement became unknown."
+    if fp == "hardware_protected_category":
+        return "low", "An Okta policy rule's hardware-protection requirement changed."
+    if fp == "device_bound":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "An Okta policy rule no longer requires a device-bound factor."
+        if nv is True:
+            return "low", "An Okta policy rule now requires a device-bound factor."
+        return "low", "An Okta policy rule's device-bound requirement became unknown."
+    if fp in ("session_lifetime_category", "re_authentication_category"):
+        return "low", f"An Okta policy rule's {fp.replace('_', ' ')} changed."
+    return "low", "An Okta policy rule configuration field changed."
+
+
+def _classify_authenticator_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "An Okta authenticator was added to the inventory."
+    if ct == "removed":
+        return (
+            "medium",
+            "An Okta authenticator is no longer visible to ConfigTrace. "
+            "This does not by itself confirm MFA is disabled tenant-wide — "
+            "other authenticators/policies may still enforce MFA.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status":
+        nv = _get(change, "new_value")
+        pm = _get(change, "provider_metadata")
+        pm = pm if isinstance(pm, dict) else {}
+        phishing_resistant = pm.get("phishing_resistant_category") == PHISHING_RESISTANT
+        if nv not in (APP_STATUS_ACTIVE, "INACTIVE"):
+            return "medium", f"An Okta authenticator's status changed to an unrecognized value ({nv!r})."
+        if nv == "INACTIVE":
+            if phishing_resistant:
+                return (
+                    "medium",
+                    "A phishing-resistant Okta authenticator was disabled.",
+                )
+            return "low", "An Okta authenticator was disabled."
+        return "low", "An Okta authenticator was enabled."
+    if fp == "active":
+        nv = _get(change, "new_value")
+        return ("low", "An Okta authenticator was disabled.") if nv is False else (
+            "low", "An Okta authenticator was enabled.",
+        )
+    if fp in ("key", "type"):
+        return "low", "An Okta authenticator's type changed."
+    if fp == "phishing_resistant_category":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if pv == PHISHING_RESISTANT and nv == NOT_PHISHING_RESISTANT:
+            return "medium", "An Okta authenticator's phishing-resistant capability was lost."
+        if nv == PHISHING_RESISTANCE_UNKNOWN:
+            return "medium", "An Okta authenticator's phishing-resistant capability became unknown."
+        return "low", "An Okta authenticator's phishing-resistant capability changed."
+    if fp in ("possession_factor", "knowledge_factor"):
+        return "low", "An Okta authenticator's factor category changed."
+    if fp == "hardware_backed_category":
+        return "low", "An Okta authenticator's hardware-backed category changed."
+    return "low", "An Okta authenticator configuration field changed."
+
+
 def classify_okta_change(change: object) -> tuple[str, str]:
     """Route an Okta Change to its record-type classifier.
 
@@ -505,5 +818,11 @@ def classify_okta_change(change: object) -> tuple[str, str]:
         return _classify_app_user_assignment_change(change)
     if record_type == OKTA_APPLICATION_GROUP_ASSIGNMENT:
         return _classify_app_group_assignment_change(change)
+    if record_type == OKTA_POLICY:
+        return _classify_policy_change(change)
+    if record_type == OKTA_POLICY_RULE:
+        return _classify_rule_change(change)
+    if record_type == OKTA_AUTHENTICATOR:
+        return _classify_authenticator_change(change)
 
     return "low", f"An Okta configuration record changed ({record_type or 'unknown record type'})."

@@ -1,4 +1,4 @@
-"""Okta provider schema (Okta messages 1-3 of 8).
+"""Okta provider schema (Okta messages 1-4 of 8).
 
 Defines the record-type constants and safe category vocabularies for the
 Okta provider. Record types so far:
@@ -25,10 +25,20 @@ Okta provider. Record types so far:
                                     edge (msg 3).
   okta_application_group_assignment — one record per group<->app assignment
                                     edge (msg 3).
+  okta_policy                     — one record per Okta policy (msg 4) —
+                                    type/status/priority/targeting posture
+                                    only, never raw conditions/actions.
+  okta_policy_rule                 — one record per policy rule (msg 4) —
+                                    sign-on/MFA/password/assurance posture
+                                    derived from safe, explicit fields only.
+  okta_authenticator                — one record per Okta authenticator/
+                                    factor type (msg 4) — availability and
+                                    deterministic phishing-resistance
+                                    posture only, never enrollment or
+                                    secret material.
 
-Later messages (4-5) will add record types for policies/MFA/authenticators
-and admin roles. This module intentionally defines ONLY the message 1-3
-taxonomy.
+Later messages (5) will add record types for privileged/admin roles. This
+module intentionally defines ONLY the message 1-4 taxonomy.
 
 SENSITIVE-DATA BOUNDARY (permanent, re-affirmed every later message)
 ----------------------------------------------------------------------
@@ -39,10 +49,13 @@ Never collected or stored by this connector, at any stage:
   profile data (phone numbers, addresses, department, title, manager,
   custom profile attributes), application client secrets, signing
   certificates/private keys, raw SAML metadata XML, app-user credentials
-  or custom profile mappings.
+  or custom profile mappings, factor/challenge secrets, recovery codes,
+  device secrets, raw policy condition/action maps.
 """
 
 from __future__ import annotations
+
+import re as _re
 
 # ── Record types ────────────────────────────────────────────────────────────
 
@@ -54,6 +67,9 @@ OKTA_GROUP_MEMBERSHIP = "okta_group_membership"
 OKTA_APPLICATION = "okta_application"
 OKTA_APPLICATION_USER_ASSIGNMENT = "okta_application_user_assignment"
 OKTA_APPLICATION_GROUP_ASSIGNMENT = "okta_application_group_assignment"
+OKTA_POLICY = "okta_policy"
+OKTA_POLICY_RULE = "okta_policy_rule"
+OKTA_AUTHENTICATOR = "okta_authenticator"
 
 OKTA_RECORD_TYPES = frozenset({
     OKTA_ORGANIZATION,
@@ -64,6 +80,9 @@ OKTA_RECORD_TYPES = frozenset({
     OKTA_APPLICATION,
     OKTA_APPLICATION_USER_ASSIGNMENT,
     OKTA_APPLICATION_GROUP_ASSIGNMENT,
+    OKTA_POLICY,
+    OKTA_POLICY_RULE,
+    OKTA_AUTHENTICATOR,
 })
 
 # ── Org status categories ───────────────────────────────────────────────────
@@ -585,3 +604,362 @@ def categorize_assignment_scope(raw_scope: object) -> str:
         if candidate in ASSIGNMENT_SCOPES:
             return candidate
     return ASSIGNMENT_SCOPE_UNKNOWN
+
+
+# ── Policy type taxonomy (Okta message 4) ───────────────────────────────────
+
+POLICY_TYPE_OKTA_SIGN_ON = "OKTA_SIGN_ON"
+POLICY_TYPE_PASSWORD = "PASSWORD"
+POLICY_TYPE_MFA_ENROLL = "MFA_ENROLL"
+POLICY_TYPE_ACCESS_POLICY = "ACCESS_POLICY"
+POLICY_TYPE_PROFILE_ENROLLMENT = "PROFILE_ENROLLMENT"
+POLICY_TYPE_IDP_DISCOVERY = "IDP_DISCOVERY"
+POLICY_TYPE_UNKNOWN = "unknown"
+
+POLICY_TYPES = frozenset({
+    POLICY_TYPE_OKTA_SIGN_ON, POLICY_TYPE_PASSWORD, POLICY_TYPE_MFA_ENROLL,
+    POLICY_TYPE_ACCESS_POLICY, POLICY_TYPE_PROFILE_ENROLLMENT, POLICY_TYPE_IDP_DISCOVERY,
+})
+
+
+def categorize_policy_type(raw_type: object) -> str:
+    """Map a raw Okta policy `type` string to the fixed POLICY_TYPE_* set.
+    Returns POLICY_TYPE_UNKNOWN for anything not in the known set — never
+    fabricated for an unsupported/future policy type."""
+    if isinstance(raw_type, str):
+        candidate = raw_type.strip().upper()
+        if candidate in POLICY_TYPES:
+            return candidate
+    return POLICY_TYPE_UNKNOWN
+
+
+# ── Sign-on rule access / MFA requirement taxonomy (Okta message 4) ─────────
+
+ACCESS_CATEGORY_ALLOW = "ALLOW"
+ACCESS_CATEGORY_DENY = "DENY"
+ACCESS_CATEGORY_UNKNOWN = "unknown"
+
+ACCESS_CATEGORIES = frozenset({ACCESS_CATEGORY_ALLOW, ACCESS_CATEGORY_DENY})
+
+
+def categorize_access(raw_access: object) -> str:
+    if isinstance(raw_access, str):
+        candidate = raw_access.strip().upper()
+        if candidate in ACCESS_CATEGORIES:
+            return candidate
+    return ACCESS_CATEGORY_UNKNOWN
+
+
+# Bounded MFA-requirement vocabulary. UNKNOWN is never coerced to NONE —
+# a rule whose MFA posture cannot be determined from the fields actually
+# returned is explicitly unknown, not "safe."
+MFA_REQUIREMENT_NONE = "none"
+MFA_REQUIREMENT_OPTIONAL = "optional"
+MFA_REQUIREMENT_REQUIRED = "required"
+MFA_REQUIREMENT_REQUIRED_EVERY_SIGNIN = "required_every_signin"
+MFA_REQUIREMENT_REQUIRED_PER_SESSION = "required_per_session"
+MFA_REQUIREMENT_STEP_UP = "step_up"
+MFA_REQUIREMENT_UNKNOWN = "unknown"
+
+MFA_REQUIREMENTS = frozenset({
+    MFA_REQUIREMENT_NONE, MFA_REQUIREMENT_OPTIONAL, MFA_REQUIREMENT_REQUIRED,
+    MFA_REQUIREMENT_REQUIRED_EVERY_SIGNIN, MFA_REQUIREMENT_REQUIRED_PER_SESSION,
+    MFA_REQUIREMENT_STEP_UP,
+})
+
+# Ranking used only for directional Change classification (never persisted) —
+# higher means more restrictive/protective.
+MFA_REQUIREMENT_RANK = {
+    MFA_REQUIREMENT_NONE: 0,
+    MFA_REQUIREMENT_OPTIONAL: 1,
+    MFA_REQUIREMENT_REQUIRED: 2,
+    MFA_REQUIREMENT_REQUIRED_PER_SESSION: 2,
+    MFA_REQUIREMENT_REQUIRED_EVERY_SIGNIN: 3,
+    MFA_REQUIREMENT_STEP_UP: 3,
+}
+
+
+def mfa_requirement_from_signon_actions(actions: dict) -> str:
+    """Derive an MFA_REQUIREMENT_* value from an Okta sign-on policy rule's
+    ``actions.signon`` block (the classic OKTA_SIGN_ON rule action shape).
+
+    Only ``requireFactor`` (bool) and ``factorPromptMode`` (str) are ever
+    read. Returns MFA_REQUIREMENT_UNKNOWN when ``requireFactor`` is absent
+    or not a bool — never guessed as NONE.
+    """
+    signon = actions.get("signon") if isinstance(actions.get("signon"), dict) else None
+    if not isinstance(signon, dict):
+        return MFA_REQUIREMENT_UNKNOWN
+    require_factor = signon.get("requireFactor")
+    if not isinstance(require_factor, bool):
+        return MFA_REQUIREMENT_UNKNOWN
+    if require_factor is False:
+        return MFA_REQUIREMENT_NONE
+    prompt_mode = signon.get("factorPromptMode")
+    if isinstance(prompt_mode, str):
+        mode = prompt_mode.strip().upper()
+        if mode == "ALWAYS":
+            return MFA_REQUIREMENT_REQUIRED_EVERY_SIGNIN
+        if mode in ("SESSION", "DEVICE"):
+            return MFA_REQUIREMENT_REQUIRED_PER_SESSION
+    return MFA_REQUIREMENT_REQUIRED
+
+
+def mfa_requirement_from_verification_method(verification_method: dict) -> str:
+    """Derive an MFA_REQUIREMENT_* value from a modern (Identity Engine)
+    Okta authentication policy rule's ``actions.appSignOn.verificationMethod``
+    block. Only ``factorMode`` (str) is read for this mapping — never the
+    raw ``constraints`` list wholesale.
+    """
+    factor_mode = verification_method.get("factorMode")
+    if not isinstance(factor_mode, str):
+        return MFA_REQUIREMENT_UNKNOWN
+    mode = factor_mode.strip().upper()
+    if mode == "2FA":
+        return MFA_REQUIREMENT_REQUIRED
+    if mode == "1FA":
+        return MFA_REQUIREMENT_NONE
+    return MFA_REQUIREMENT_UNKNOWN
+
+
+# ── Assurance / phishing-resistance posture (Okta message 4) ───────────────
+
+PHISHING_RESISTANT = "phishing_resistant"
+NOT_PHISHING_RESISTANT = "not_phishing_resistant"
+PHISHING_RESISTANCE_UNKNOWN = "unknown"
+
+PHISHING_RESISTANCE_CATEGORIES = frozenset({PHISHING_RESISTANT, NOT_PHISHING_RESISTANT})
+
+
+def phishing_resistance_from_possession_constraint(possession: object) -> str:
+    """Map an Okta authentication policy rule's
+    ``constraints[0].possession.phishingResistant`` value to a fixed
+    category. Only ``"REQUIRED"`` is treated as PHISHING_RESISTANT;
+    ``"DISALLOWED"``/other explicit non-required values are
+    NOT_PHISHING_RESISTANT; anything absent/malformed is UNKNOWN — never
+    guessed as either.
+    """
+    if not isinstance(possession, dict):
+        return PHISHING_RESISTANCE_UNKNOWN
+    value = possession.get("phishingResistant")
+    if isinstance(value, str):
+        v = value.strip().upper()
+        if v == "REQUIRED":
+            return PHISHING_RESISTANT
+        if v in ("DISALLOWED", "OPTIONAL"):
+            return NOT_PHISHING_RESISTANT
+    return PHISHING_RESISTANCE_UNKNOWN
+
+
+def categorize_hardware_protection(possession: object) -> str:
+    """Map ``constraints[0].possession.hardwareProtection`` to a fixed
+    category string, or "unknown" if absent/malformed."""
+    if isinstance(possession, dict):
+        value = possession.get("hardwareProtection")
+        if isinstance(value, str) and value.strip():
+            return value.strip().upper()
+    return "unknown"
+
+
+# ── Duration parsing (Okta message 4) ───────────────────────────────────────
+
+_ISO8601_DURATION_RE = _re.compile(
+    r"^P(?:(?P<days>\d+)D)?"
+    r"(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+)
+
+
+def parse_iso8601_duration_to_minutes(raw: object) -> "int | None":
+    """Parse a (simple, non-negative) ISO-8601 duration string such as
+    ``"PT2H"``/``"PT30M"``/``"P1D"`` into total minutes. Returns ``None``
+    for anything unparseable — never guessed."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    match = _ISO8601_DURATION_RE.match(raw.strip().upper())
+    if not match:
+        return None
+    parts = match.groupdict()
+    if not any(parts.values()):
+        return None
+    days = int(parts["days"] or 0)
+    hours = int(parts["hours"] or 0)
+    minutes = int(parts["minutes"] or 0)
+    seconds = int(parts["seconds"] or 0)
+    return days * 24 * 60 + hours * 60 + minutes + (1 if seconds else 0)
+
+
+# ── Session / re-authentication lifetime buckets (Okta message 4) ──────────
+#
+# Same threshold philosophy as Auth0's _session_category (token_lifetime
+# style buckets already established in app/connectors/auth0.py) — reused
+# here for consistency across providers rather than inventing new numbers.
+
+SESSION_LIFETIME_VERY_SHORT = "very_short"
+SESSION_LIFETIME_SHORT = "short"
+SESSION_LIFETIME_STANDARD = "standard"
+SESSION_LIFETIME_EXTENDED = "extended"
+SESSION_LIFETIME_UNKNOWN = "unknown"
+
+
+def categorize_session_lifetime_minutes(minutes: object) -> str:
+    """Bucket a session/re-authentication lifetime given in minutes.
+    ``None``/non-int returns SESSION_LIFETIME_UNKNOWN — never guessed."""
+    if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes < 0:
+        return SESSION_LIFETIME_UNKNOWN
+    hours = minutes / 60.0
+    if hours < 1:
+        return SESSION_LIFETIME_VERY_SHORT
+    if hours < 24:
+        return SESSION_LIFETIME_SHORT
+    if hours < 168:
+        return SESSION_LIFETIME_STANDARD
+    return SESSION_LIFETIME_EXTENDED
+
+
+# ── Policy/rule targeting (scope) categories (Okta message 4) ──────────────
+
+SCOPE_ALL_USERS = "all_users"
+SCOPE_SCOPED_GROUPS = "scoped_groups"
+SCOPE_SCOPED_USERS = "scoped_users"
+SCOPE_UNKNOWN = "unknown"
+
+SCOPE_CATEGORIES = frozenset({SCOPE_ALL_USERS, SCOPE_SCOPED_GROUPS, SCOPE_SCOPED_USERS})
+
+
+def categorize_scope(*, group_include_count: "int | None", user_include_count: "int | None") -> str:
+    """Derive a targeting scope category from safe include-counts.
+    Unknown (both counts unavailable) is never coerced to "all_users"."""
+    if group_include_count is None and user_include_count is None:
+        return SCOPE_UNKNOWN
+    if (group_include_count or 0) > 0:
+        return SCOPE_SCOPED_GROUPS
+    if (user_include_count or 0) > 0:
+        return SCOPE_SCOPED_USERS
+    return SCOPE_ALL_USERS
+
+
+# ── Password policy posture (Okta message 4) ────────────────────────────────
+#
+# Thresholds are deliberately conservative and documented (no existing
+# ConfigTrace convention defines password-strength buckets, per the
+# message-4 spec's instruction to avoid arbitrary industry numbers unless
+# clearly justified): 8 is Okta's own long-standing platform default
+# minimum length; 14 is a widely-cited passphrase-strength threshold
+# (e.g. CIS Benchmarks' "strong" tier for privileged accounts). These are
+# ONLY used for the record's own descriptive category field — Change
+# classification (see risk_rules/okta.py) is directional (increase/
+# decrease), matching the existing AWS/Supabase password_min_length
+# classifiers, never based on crossing these absolute thresholds.
+
+PASSWORD_STRENGTH_WEAK = "weak"
+PASSWORD_STRENGTH_BASELINE = "baseline"
+PASSWORD_STRENGTH_STRONG = "strong"
+PASSWORD_STRENGTH_UNKNOWN = "unknown"
+
+PASSWORD_MIN_LENGTH_WEAK_THRESHOLD = 8   # < this is "weak"
+PASSWORD_MIN_LENGTH_STRONG_THRESHOLD = 14  # >= this is "strong"
+
+
+def categorize_password_min_length(min_length: object) -> str:
+    if not isinstance(min_length, int) or isinstance(min_length, bool) or min_length < 0:
+        return PASSWORD_STRENGTH_UNKNOWN
+    if min_length < PASSWORD_MIN_LENGTH_WEAK_THRESHOLD:
+        return PASSWORD_STRENGTH_WEAK
+    if min_length >= PASSWORD_MIN_LENGTH_STRONG_THRESHOLD:
+        return PASSWORD_STRENGTH_STRONG
+    return PASSWORD_STRENGTH_BASELINE
+
+
+def _safe_int(value: object) -> "int | None":
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+# ── Authenticator taxonomy (Okta message 4) ─────────────────────────────────
+
+AUTHENTICATOR_KEY_PASSWORD = "password"
+AUTHENTICATOR_KEY_SECURITY_QUESTION = "security_question"
+AUTHENTICATOR_KEY_EMAIL = "email"
+AUTHENTICATOR_KEY_PHONE_NUMBER = "phone_number"
+AUTHENTICATOR_KEY_OKTA_VERIFY = "okta_verify"
+AUTHENTICATOR_KEY_WEBAUTHN = "webauthn"
+AUTHENTICATOR_KEY_GOOGLE_OTP = "google_otp"
+AUTHENTICATOR_KEY_ONPREM_MFA = "onprem_mfa"
+AUTHENTICATOR_KEY_SMART_CARD_IDP = "smart_card_idp"
+AUTHENTICATOR_KEY_CUSTOM_APP = "custom_app"
+AUTHENTICATOR_KEY_UNKNOWN = "unknown"
+
+_KNOWN_AUTHENTICATOR_KEYS = frozenset({
+    AUTHENTICATOR_KEY_PASSWORD, AUTHENTICATOR_KEY_SECURITY_QUESTION, AUTHENTICATOR_KEY_EMAIL,
+    AUTHENTICATOR_KEY_PHONE_NUMBER, AUTHENTICATOR_KEY_OKTA_VERIFY, AUTHENTICATOR_KEY_WEBAUTHN,
+    AUTHENTICATOR_KEY_GOOGLE_OTP, AUTHENTICATOR_KEY_ONPREM_MFA, AUTHENTICATOR_KEY_SMART_CARD_IDP,
+    AUTHENTICATOR_KEY_CUSTOM_APP,
+})
+
+
+def categorize_authenticator_key(raw_key: object) -> str:
+    """Map a raw Okta authenticator `key` string to the fixed
+    AUTHENTICATOR_KEY_* set. Returns AUTHENTICATOR_KEY_UNKNOWN for
+    anything not in the known set — never guessed from the display name."""
+    if isinstance(raw_key, str):
+        candidate = raw_key.strip().lower()
+        if candidate in _KNOWN_AUTHENTICATOR_KEYS:
+            return candidate
+    return AUTHENTICATOR_KEY_UNKNOWN
+
+
+# Deterministic phishing-resistance mapping for authenticator TYPES (as
+# opposed to the per-rule constraint mapping above). Only WebAuthn/FIDO2
+# and smart-card authenticators are ever categorized as phishing-resistant
+# — SMS, email, TOTP/OTP, and password are explicitly categorized as NOT
+# phishing-resistant (deterministic, not guessed), since these mechanisms
+# are well-documented as vulnerable to real-time phishing relay regardless
+# of tenant configuration. Anything else (custom_app, onprem_mfa) is
+# unknown — never assumed either way.
+_PHISHING_RESISTANT_AUTHENTICATOR_KEYS = frozenset({
+    AUTHENTICATOR_KEY_WEBAUTHN, AUTHENTICATOR_KEY_SMART_CARD_IDP,
+})
+_NOT_PHISHING_RESISTANT_AUTHENTICATOR_KEYS = frozenset({
+    AUTHENTICATOR_KEY_PASSWORD, AUTHENTICATOR_KEY_SECURITY_QUESTION, AUTHENTICATOR_KEY_EMAIL,
+    AUTHENTICATOR_KEY_PHONE_NUMBER, AUTHENTICATOR_KEY_GOOGLE_OTP, AUTHENTICATOR_KEY_OKTA_VERIFY,
+})
+
+
+def phishing_resistance_for_authenticator_key(key: str) -> str:
+    if key in _PHISHING_RESISTANT_AUTHENTICATOR_KEYS:
+        return PHISHING_RESISTANT
+    if key in _NOT_PHISHING_RESISTANT_AUTHENTICATOR_KEYS:
+        return NOT_PHISHING_RESISTANT
+    return PHISHING_RESISTANCE_UNKNOWN
+
+
+# Okta's own factor-category convention: password/security_question are
+# "knowledge" factors; email/phone/okta_verify/webauthn/smart_card are
+# "possession" factors (proof of access to a device/channel). Okta does
+# not expose a distinct "inherence" (biometric) authenticator type in this
+# API — biometrics are a modifier of WebAuthn/Okta Verify, not a separate
+# type — so inherence is always None/unknown here, never fabricated.
+_KNOWLEDGE_AUTHENTICATOR_KEYS = frozenset({
+    AUTHENTICATOR_KEY_PASSWORD, AUTHENTICATOR_KEY_SECURITY_QUESTION,
+})
+_POSSESSION_AUTHENTICATOR_KEYS = frozenset({
+    AUTHENTICATOR_KEY_EMAIL, AUTHENTICATOR_KEY_PHONE_NUMBER, AUTHENTICATOR_KEY_OKTA_VERIFY,
+    AUTHENTICATOR_KEY_WEBAUTHN, AUTHENTICATOR_KEY_GOOGLE_OTP, AUTHENTICATOR_KEY_SMART_CARD_IDP,
+})
+
+
+def is_knowledge_authenticator(key: str) -> "bool | None":
+    if key in _KNOWLEDGE_AUTHENTICATOR_KEYS:
+        return True
+    if key in _POSSESSION_AUTHENTICATOR_KEYS:
+        return False
+    return None
+
+
+def is_possession_authenticator(key: str) -> "bool | None":
+    if key in _POSSESSION_AUTHENTICATOR_KEYS:
+        return True
+    if key in _KNOWLEDGE_AUTHENTICATOR_KEYS:
+        return False
+    return None

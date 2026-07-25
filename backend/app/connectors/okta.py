@@ -87,24 +87,41 @@ from app.connectors.okta_schema import (
     OKTA_APPLICATION,
     OKTA_APPLICATION_GROUP_ASSIGNMENT,
     OKTA_APPLICATION_USER_ASSIGNMENT,
+    OKTA_AUTHENTICATOR,
     OKTA_GROUP,
     OKTA_GROUP_MEMBERSHIP,
     OKTA_ORGANIZATION,
+    OKTA_POLICY,
+    OKTA_POLICY_RULE,
     OKTA_USER,
+    categorize_access,
     categorize_algorithm,
     categorize_app_status,
     categorize_app_type,
     categorize_assignment_scope,
+    categorize_authenticator_key,
     categorize_group_type,
+    categorize_hardware_protection,
     categorize_last_login,
     categorize_membership_count,
     categorize_org_status,
+    categorize_password_min_length,
+    categorize_policy_type,
     categorize_redirect_uris,
+    categorize_scope,
+    categorize_session_lifetime_minutes,
     categorize_sign_on_mode,
     categorize_token_auth_method,
     categorize_user_status,
     is_everyone_group,
+    is_knowledge_authenticator,
+    is_possession_authenticator,
     lifecycle_posture_for_status,
+    mfa_requirement_from_signon_actions,
+    mfa_requirement_from_verification_method,
+    parse_iso8601_duration_to_minutes,
+    phishing_resistance_for_authenticator_key,
+    phishing_resistance_from_possession_constraint,
     protocol_category_for_sign_on_mode,
 )
 
@@ -145,6 +162,18 @@ _MAX_APPS_FOR_ASSIGNMENT_ENUMERATION = 5_000
 _MAX_TOTAL_USER_ASSIGNMENTS = 200_000
 _MAX_TOTAL_GROUP_ASSIGNMENTS = 200_000
 _MAX_REDIRECT_URIS = 200
+
+# ── Policy/authenticator collection bounds (Okta message 4) ────────────────
+#
+# Same rationale as the application/identity bounds above — rule
+# enumeration is per-policy (see _fetch_policy_rules() docstring), so this
+# additionally needs a cap on the number of policies walked and a global
+# cap on total rule records collected.
+_MAX_POLICIES_PER_TYPE = 1_000
+_MAX_RULES_PER_POLICY = 5_000
+_MAX_POLICIES_FOR_RULE_ENUMERATION = 5_000
+_MAX_TOTAL_RULES = 200_000
+_MAX_AUTHENTICATORS = 1_000
 
 # 429 retry bounds — bounded exponential backoff with jitter, mirroring the
 # Kubernetes reliability pattern (message 8 of the Kubernetes arc).
@@ -996,6 +1025,301 @@ class OktaConnector(BaseConnector):
             "everyone_group": bool(group_record.get("everyone_group")) if group_record else False,
         }
 
+    # ── Policy / rule / authenticator normalizers (Okta message 4) ─────────
+
+    # Every Okta policy type this connector knows how to request. Okta's
+    # Policies API requires an explicit `type` query parameter per call —
+    # there is no single "list all policies" endpoint — so collection
+    # loops over this fixed, bounded set (6 calls), never an unbounded
+    # per-tenant discovery.
+    _POLICY_TYPES: tuple[str, ...] = (
+        "OKTA_SIGN_ON", "PASSWORD", "MFA_ENROLL",
+        "ACCESS_POLICY", "PROFILE_ENROLLMENT", "IDP_DISCOVERY",
+    )
+
+    @staticmethod
+    def _safe_int(value: object) -> Optional[int]:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return None
+
+    @staticmethod
+    def _people_targeting_counts(conditions: dict) -> tuple[Optional[int], Optional[int], Optional[int]]:
+        """Extract (group_include_count, group_exclude_count, user_include_count)
+        from a Policy or Rule's ``conditions.people`` block. Only list
+        lengths are ever read — never the actual group/user IDs inside."""
+        people = conditions.get("people") if isinstance(conditions.get("people"), dict) else {}
+        groups = people.get("groups") if isinstance(people.get("groups"), dict) else {}
+        users = people.get("users") if isinstance(people.get("users"), dict) else {}
+        group_include = groups.get("include")
+        group_exclude = groups.get("exclude")
+        user_include = users.get("include")
+        return (
+            len(group_include) if isinstance(group_include, list) else None,
+            len(group_exclude) if isinstance(group_exclude, list) else None,
+            len(user_include) if isinstance(user_include, list) else None,
+        )
+
+    @staticmethod
+    def _normalize_password_posture(settings: dict) -> dict:
+        """Extract safe password-policy posture from
+        ``policy.settings.password`` ONLY. Never touches
+        ``settings.recovery`` (recovery question/factor configuration) or
+        any credential material — Okta's Policies API never returns
+        password values/hashes/history contents in the first place.
+        """
+        password = settings.get("password") if isinstance(settings.get("password"), dict) else {}
+        complexity = password.get("complexity") if isinstance(password.get("complexity"), dict) else {}
+        age = password.get("age") if isinstance(password.get("age"), dict) else {}
+        lockout = password.get("lockout") if isinstance(password.get("lockout"), dict) else {}
+
+        min_length = OktaConnector._safe_int(complexity.get("minLength"))
+        min_lower = OktaConnector._safe_int(complexity.get("minLowerCase"))
+        min_upper = OktaConnector._safe_int(complexity.get("minUpperCase"))
+        min_number = OktaConnector._safe_int(complexity.get("minNumber"))
+        min_symbol = OktaConnector._safe_int(complexity.get("minSymbol"))
+        history_count = OktaConnector._safe_int(age.get("historyCount"))
+        max_age_days = OktaConnector._safe_int(age.get("maxAgeDays"))
+        min_age_minutes = OktaConnector._safe_int(age.get("minAgeMinutes"))
+        max_attempts = OktaConnector._safe_int(lockout.get("maxAttempts"))
+
+        complexity_counts = [c for c in (min_lower, min_upper, min_number, min_symbol) if c is not None]
+        complexity_required = (
+            any(c > 0 for c in complexity_counts) if complexity_counts else None
+        )
+        exclude_username = complexity.get("excludeUsername")
+        exclude_username = bool(exclude_username) if isinstance(exclude_username, bool) else None
+        dictionary = complexity.get("dictionary") if isinstance(complexity.get("dictionary"), dict) else {}
+        common_dict = dictionary.get("common") if isinstance(dictionary.get("common"), dict) else {}
+        common_password_excluded = common_dict.get("exclude")
+        common_password_excluded = bool(common_password_excluded) if isinstance(common_password_excluded, bool) else None
+
+        return {
+            "password_min_length": min_length,
+            "password_min_length_category": categorize_password_min_length(min_length),
+            "password_complexity_required": complexity_required,
+            "password_exclude_username": exclude_username,
+            "password_common_password_excluded": common_password_excluded,
+            "password_history_count": history_count,
+            "password_history_present": (history_count > 0) if history_count is not None else None,
+            "password_max_age_days": max_age_days,
+            "password_lifetime_bounded": (max_age_days > 0) if max_age_days is not None else None,
+            "password_min_age_minutes": min_age_minutes,
+            "password_lockout_max_attempts": max_attempts,
+            "password_lockout_present": (max_attempts > 0) if max_attempts is not None else None,
+        }
+
+    @staticmethod
+    def _normalize_policy(
+        tenant_id: str, raw: dict, *, rule_count: Optional[int],
+    ) -> Optional[dict]:
+        """Normalize one Okta policy record.
+
+        SECURITY: ``raw["conditions"]`` is touched ONLY at
+        ``conditions.people.groups.include/exclude`` and
+        ``conditions.people.users.include`` list LENGTHS — never the
+        actual group/user IDs, and never any other conditions sub-tree
+        (network/platform/risk at the policy level are not read here).
+        ``raw["settings"]`` is touched only via ``_normalize_password_posture``
+        for PASSWORD-type policies, at the specific safe fields documented
+        there — never copied wholesale.
+        """
+        policy_id = raw.get("id")
+        if not isinstance(policy_id, str) or not policy_id.strip():
+            return None
+
+        name = raw.get("name")
+        name = name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None
+
+        policy_type = categorize_policy_type(raw.get("type"))
+        status = categorize_app_status(raw.get("status"))
+        priority = OktaConnector._safe_int(raw.get("priority"))
+        system = raw.get("system")
+        system = bool(system) if isinstance(system, bool) else None
+
+        conditions = raw.get("conditions") if isinstance(raw.get("conditions"), dict) else {}
+        group_include, group_exclude, user_include = OktaConnector._people_targeting_counts(conditions)
+
+        record: dict = {
+            "record_type": OKTA_POLICY,
+            "record_id": f"{tenant_id}/policy/{policy_id}",
+            "provider_resource_id": f"policies/{policy_id}",
+            "tenant_id": tenant_id,
+            "policy_id": policy_id,
+            "policy_name": name,
+            "policy_type": policy_type,
+            "status": status,
+            "active": status == "ACTIVE",
+            "priority": priority,
+            "system": system,
+            "group_include_count": group_include,
+            "group_exclude_count": group_exclude,
+            "user_include_count": user_include,
+            "scope_category": categorize_scope(
+                group_include_count=group_include, user_include_count=user_include,
+            ),
+            "rule_count": rule_count,
+        }
+
+        if policy_type == "PASSWORD":
+            settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+            record.update(OktaConnector._normalize_password_posture(settings))
+
+        return record
+
+    @staticmethod
+    def _normalize_policy_rule(tenant_id: str, policy_record: dict, raw: dict) -> Optional[dict]:
+        """Normalize one Okta policy rule record.
+
+        SECURITY: ``raw["conditions"]`` and ``raw["actions"]`` are touched
+        ONLY at the specific safe sub-paths documented inline below — never
+        copied wholesale. No factor secrets, challenge data, or credential
+        material ever exist in these API responses in the first place, but
+        this normalizer additionally never reads any field that could
+        plausibly carry them (e.g. any ``credentials``-shaped sub-object).
+        """
+        rule_id = raw.get("id")
+        if not isinstance(rule_id, str) or not rule_id.strip():
+            return None
+
+        name = raw.get("name")
+        name = name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None
+        status = categorize_app_status(raw.get("status"))
+        priority = OktaConnector._safe_int(raw.get("priority"))
+
+        conditions = raw.get("conditions") if isinstance(raw.get("conditions"), dict) else {}
+        group_include, group_exclude, user_include = OktaConnector._people_targeting_counts(conditions)
+
+        network = conditions.get("network") if isinstance(conditions.get("network"), dict) else {}
+        network_connection = network.get("connection")
+        if network_connection == "ZONE" and isinstance(network.get("include"), list):
+            network_zone_category = "zone_restricted"
+        elif network_connection == "ANYWHERE":
+            network_zone_category = "any"
+        else:
+            network_zone_category = "unknown"
+
+        actions = raw.get("actions") if isinstance(raw.get("actions"), dict) else {}
+
+        # Classic OKTA_SIGN_ON rule action shape.
+        signon = actions.get("signon") if isinstance(actions.get("signon"), dict) else {}
+        access_category = categorize_access(signon.get("access"))
+        mfa_requirement_category = mfa_requirement_from_signon_actions(actions)
+        session = signon.get("session") if isinstance(signon.get("session"), dict) else {}
+        session_lifetime_minutes = OktaConnector._safe_int(session.get("maxSessionLifetimeMinutes"))
+
+        # Modern (Identity Engine) ACCESS_POLICY rule action shape —
+        # consulted only when the classic shape didn't yield a definitive
+        # access/MFA answer, since a rule is one or the other, never both.
+        possession: Optional[dict] = None
+        knowledge: Optional[dict] = None
+        required_factor_count: Optional[int] = None
+        reauth_minutes: Optional[int] = None
+        app_sign_on = actions.get("appSignOn") if isinstance(actions.get("appSignOn"), dict) else {}
+        verification_method = (
+            app_sign_on.get("verificationMethod")
+            if isinstance(app_sign_on.get("verificationMethod"), dict) else {}
+        )
+        if app_sign_on:
+            if access_category == "unknown":
+                access_category = categorize_access(app_sign_on.get("access"))
+            if mfa_requirement_category == "unknown" and verification_method:
+                mfa_requirement_category = mfa_requirement_from_verification_method(verification_method)
+            factor_mode = verification_method.get("factorMode")
+            if factor_mode == "1FA":
+                required_factor_count = 1
+            elif factor_mode == "2FA":
+                required_factor_count = 2
+            constraints = verification_method.get("constraints")
+            if isinstance(constraints, list) and constraints and isinstance(constraints[0], dict):
+                possession = constraints[0].get("possession") if isinstance(constraints[0].get("possession"), dict) else None
+                knowledge = constraints[0].get("knowledge") if isinstance(constraints[0].get("knowledge"), dict) else None
+            reauth_minutes = parse_iso8601_duration_to_minutes(verification_method.get("reauthenticateIn"))
+
+        possession_required = isinstance(possession, dict) if app_sign_on else None
+        knowledge_required = isinstance(knowledge, dict) if app_sign_on else None
+        phishing_resistant_category = phishing_resistance_from_possession_constraint(possession)
+        hardware_protected_category = categorize_hardware_protection(possession)
+        device_bound = (
+            possession.get("deviceBound") if isinstance(possession, dict) and isinstance(possession.get("deviceBound"), bool)
+            else None
+        )
+
+        re_auth_minutes = reauth_minutes if reauth_minutes is not None else session_lifetime_minutes
+
+        return {
+            "record_type": OKTA_POLICY_RULE,
+            "record_id": f"{tenant_id}/policy_rule/{policy_record['policy_id']}/{rule_id}",
+            "provider_resource_id": f"policies/{policy_record['policy_id']}/rules/{rule_id}",
+            "tenant_id": tenant_id,
+            "policy_id": policy_record["policy_id"],
+            "policy_name": policy_record.get("policy_name"),
+            "policy_type": policy_record.get("policy_type"),
+            "rule_id": rule_id,
+            "rule_name": name,
+            "status": status,
+            "active": status == "ACTIVE",
+            "priority": priority,
+            "group_include_count": group_include,
+            "group_exclude_count": group_exclude,
+            "user_include_count": user_include,
+            "scope_category": categorize_scope(
+                group_include_count=group_include, user_include_count=user_include,
+            ),
+            "network_zone_category": network_zone_category,
+            "access_category": access_category,
+            "mfa_requirement_category": mfa_requirement_category,
+            "required_factor_count": required_factor_count,
+            "possession_required": possession_required,
+            "knowledge_required": knowledge_required,
+            "phishing_resistant_category": phishing_resistant_category,
+            "hardware_protected_category": hardware_protected_category,
+            "device_bound": device_bound,
+            "session_lifetime_category": categorize_session_lifetime_minutes(session_lifetime_minutes),
+            "re_authentication_category": categorize_session_lifetime_minutes(re_auth_minutes),
+        }
+
+    @staticmethod
+    def _normalize_authenticator(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one Okta authenticator record.
+
+        SECURITY: only ``id``, ``key``, ``type``, ``name``, and ``status``
+        are ever read from ``raw``. ``raw["settings"]`` (which may include
+        enrollment-related configuration) is never read at all — no OTP
+        seeds, private keys, shared secrets, recovery codes, or phone
+        numbers exist in this record's construction path.
+        """
+        authenticator_id = raw.get("id")
+        if not isinstance(authenticator_id, str) or not authenticator_id.strip():
+            return None
+
+        key = categorize_authenticator_key(raw.get("key"))
+        raw_type = raw.get("type")
+        raw_type = raw_type.strip()[:30] if isinstance(raw_type, str) and raw_type.strip() else None
+        name = raw.get("name")
+        name = name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None
+        status = categorize_app_status(raw.get("status"))
+
+        hardware_backed_category = "hardware_backed" if raw_type == "security_key" else "unknown"
+
+        return {
+            "record_type": OKTA_AUTHENTICATOR,
+            "record_id": f"{tenant_id}/authenticator/{authenticator_id}",
+            "provider_resource_id": f"authenticators/{authenticator_id}",
+            "tenant_id": tenant_id,
+            "authenticator_id": authenticator_id,
+            "key": key,
+            "type": raw_type,
+            "name": name,
+            "status": status,
+            "active": status == "ACTIVE",
+            "phishing_resistant_category": phishing_resistance_for_authenticator_key(key),
+            "possession_factor": is_possession_authenticator(key),
+            "knowledge_factor": is_knowledge_authenticator(key),
+            "inherence_factor": None,  # never fabricated — see module docstring
+            "hardware_backed_category": hardware_backed_category,
+        }
+
     # ── Family collection (Okta message 2) ──────────────────────────────────
 
     @staticmethod
@@ -1374,6 +1698,169 @@ class OktaConnector(BaseConnector):
 
         return records, completeness, counts_by_app
 
+    # ── Policy / rule / authenticator collection (Okta message 4) ──────────
+
+    @classmethod
+    def _fetch_policies_raw(
+        cls, client: httpx.Client, trusted_origin: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Collect all policies across every known policy type.
+
+        Okta's Policies API requires an explicit ``type`` query parameter
+        per call — there is no single "list all policies" endpoint — so
+        this loops over the fixed, bounded ``_POLICY_TYPES`` set (6 calls),
+        never an unbounded per-tenant discovery. Each type's own request
+        is bounded/paginated via ``_collect_family`` like every other
+        family in this connector.
+
+        Returns ``(raw_policies, completeness)`` where completeness is
+        FAMILY_COMPLETE only if every policy type succeeded; FAMILY_DENIED
+        if every type was denied; FAMILY_UNAVAILABLE if every type failed
+        for a non-permission reason; FAMILY_PARTIAL otherwise (including
+        when any single type's cap was hit).
+        """
+        all_items: list[dict] = []
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for policy_type in cls._POLICY_TYPES:
+            items, completeness = cls._collect_family(
+                client, trusted_origin, "/api/v1/policies",
+                params={"type": policy_type, "limit": str(_DEFAULT_PAGE_LIMIT)},
+                cap=_MAX_POLICIES_PER_TYPE, _sleep_fn=_sleep_fn,
+            )
+            if completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if completeness == FAMILY_PARTIAL:
+                cap_hit = True
+            succeeded += 1
+            all_items.extend(items)
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            return all_items, FAMILY_DENIED
+        if succeeded == 0 and other_failed > 0:
+            return all_items, FAMILY_UNAVAILABLE
+        if denied > 0 or other_failed > 0 or cap_hit:
+            return all_items, FAMILY_PARTIAL
+        return all_items, FAMILY_COMPLETE
+
+    @classmethod
+    def _fetch_policy_rules(
+        cls,
+        client: httpx.Client,
+        trusted_origin: str,
+        tenant_id: str,
+        raw_policies: list[dict],
+        policy_records_by_id: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict]:
+        """Collect policy rules for every collected policy.
+
+        Call-complexity design: mirrors ``_fetch_memberships()``/
+        ``_fetch_app_user_assignments()`` — Okta's API enumerates rules
+        per-policy (``GET /api/v1/policies/{policyId}/rules``), so this
+        walks policies once (capped at
+        ``_MAX_POLICIES_FOR_RULE_ENUMERATION``) rather than any
+        alternative broader enumeration, and never re-fetches the policy
+        list itself.
+
+        Returns ``(records, completeness, rule_count_by_policy_id)``.
+        """
+        if not raw_policies:
+            return [], FAMILY_COMPLETE, {}
+
+        policies_to_walk = raw_policies[:_MAX_POLICIES_FOR_RULE_ENUMERATION]
+        truncated_policy_list = len(raw_policies) > len(policies_to_walk)
+
+        records: list[dict] = []
+        counts_by_policy: dict = {}
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for raw_policy in policies_to_walk:
+            if not isinstance(raw_policy, dict):
+                continue
+            policy_id = raw_policy.get("id")
+            if not isinstance(policy_id, str) or not policy_id.strip():
+                continue
+            policy_record = policy_records_by_id.get(policy_id)
+            if policy_record is None:
+                continue
+
+            rules, policy_completeness = cls._collect_family(
+                client, trusted_origin, f"/api/v1/policies/{policy_id}/rules",
+                params={"limit": str(_DEFAULT_PAGE_LIMIT)},
+                cap=_MAX_RULES_PER_POLICY, _sleep_fn=_sleep_fn,
+            )
+            if policy_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if policy_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if policy_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            seen_ids: set = set()
+            for raw_rule in rules:
+                if not isinstance(raw_rule, dict):
+                    continue
+                rule_id = raw_rule.get("id")
+                if not isinstance(rule_id, str) or not rule_id.strip():
+                    continue
+                if rule_id in seen_ids:
+                    continue
+                seen_ids.add(rule_id)
+                if len(records) >= _MAX_TOTAL_RULES:
+                    cap_hit = True
+                    break
+                rec = cls._normalize_policy_rule(tenant_id, policy_record, raw_rule)
+                if rec is not None:
+                    records.append(rec)
+            counts_by_policy[policy_id] = len(seen_ids)
+            if len(records) >= _MAX_TOTAL_RULES:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_policy_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        return records, completeness, counts_by_policy
+
+    @classmethod
+    def _fetch_authenticators(
+        cls, client: httpx.Client, trusted_origin: str, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, trusted_origin, "/api/v1/authenticators",
+            params=None, cap=_MAX_AUTHENTICATORS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_authenticator(tenant_id, raw)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
     # ── Capability probes ──────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET with the smallest
@@ -1452,23 +1939,26 @@ class OktaConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
-        """Fetch the Okta identity + application inventory:
-        ``okta_organization``, ``okta_api_capability`` probes (message 1);
-        ``okta_user`` / ``okta_group`` / ``okta_group_membership`` (message
-        2); ``okta_application`` / ``okta_application_user_assignment`` /
-        ``okta_application_group_assignment`` (message 3).
+        """Fetch the Okta identity + application + authentication-policy
+        inventory: ``okta_organization``, ``okta_api_capability`` probes
+        (message 1); ``okta_user`` / ``okta_group`` /
+        ``okta_group_membership`` (message 2); ``okta_application`` /
+        ``okta_application_user_assignment`` /
+        ``okta_application_group_assignment`` (message 3); ``okta_policy``
+        / ``okta_policy_rule`` / ``okta_authenticator`` (message 4).
 
-        Does NOT collect policies, authenticators, or admin roles yet —
-        see the module docstring for the permanent sensitive-data boundary
-        and ``okta_schema.py`` for what later messages will add.
+        Does NOT collect privileged/admin roles yet — see the module
+        docstring for the permanent sensitive-data boundary and
+        ``okta_schema.py`` for what later messages will add.
 
-        Every family fails independently: if e.g. app group assignments
-        are denied while everything else is readable, the rest is still
-        returned and ``okta_organization.family_completeness`` reports the
-        gap — a family failure never aborts the whole fetch, and a denied/
+        Every family fails independently: if e.g. policy rules are denied
+        while everything else is readable, the rest is still returned and
+        ``okta_organization.family_completeness`` reports the gap — a
+        family failure never aborts the whole fetch, and a denied/
         unreadable family is never silently reported as "zero" (see
         ``_collect_family``/``_fetch_memberships``/
-        ``_fetch_app_user_assignments``/``_fetch_app_group_assignments``).
+        ``_fetch_app_user_assignments``/``_fetch_app_group_assignments``/
+        ``_fetch_policy_rules``).
 
         SECURITY: the API token is used only within this method's scope,
         placed only in the Authorization header, never stored on the
@@ -1579,6 +2069,43 @@ class OktaConnector(BaseConnector):
                 app_rec["group_assignment_count"] = group_counts_by_app.get(app_id)
                 app_records.append(app_rec)
 
+            # ── Policies (raw kept for rule walk; normalized after) ─────────
+            raw_policies, policies_completeness = self._fetch_policies_raw(
+                client, org_url, _sleep_fn=_sleep_fn,
+            )
+            policy_records_by_id: dict = {}
+            for raw_policy in raw_policies:
+                if not isinstance(raw_policy, dict):
+                    continue
+                policy_id = raw_policy.get("id")
+                if not isinstance(policy_id, str) or not policy_id.strip():
+                    continue
+                # rule_count filled in below once rules are collected.
+                rec = self._normalize_policy(tenant_id, raw_policy, rule_count=None)
+                if rec is not None:
+                    policy_records_by_id[policy_id] = rec
+
+            # ── Policy rules ─────────────────────────────────────────────
+            policy_rule_records, policy_rules_completeness, rule_counts_by_policy = (
+                self._fetch_policy_rules(
+                    client, org_url, tenant_id, raw_policies, policy_records_by_id,
+                    _sleep_fn=_sleep_fn,
+                )
+            )
+
+            # Backfill rule_count only for policies whose own rule walk
+            # actually succeeded — a policy whose walk was denied/failed
+            # keeps rule_count=None (unknown), never 0.
+            policy_records: list[dict] = []
+            for policy_id, policy_rec in policy_records_by_id.items():
+                policy_rec["rule_count"] = rule_counts_by_policy.get(policy_id)
+                policy_records.append(policy_rec)
+
+            # ── Authenticators ───────────────────────────────────────────
+            authenticator_records, authenticators_completeness = self._fetch_authenticators(
+                client, org_url, tenant_id, _sleep_fn=_sleep_fn,
+            )
+
             org_record = self._normalize_organization(
                 org_hostname, raw_org,
                 family_completeness={
@@ -1588,6 +2115,9 @@ class OktaConnector(BaseConnector):
                     "applications": applications_completeness,
                     "app_user_assignments": app_user_assignments_completeness,
                     "app_group_assignments": app_group_assignments_completeness,
+                    "policies": policies_completeness,
+                    "policy_rules": policy_rules_completeness,
+                    "authenticators": authenticators_completeness,
                 },
             )
 
@@ -1598,6 +2128,9 @@ class OktaConnector(BaseConnector):
             records.extend(app_records)
             records.extend(app_user_assignment_records)
             records.extend(app_group_assignment_records)
+            records.extend(policy_records)
+            records.extend(policy_rule_records)
+            records.extend(authenticator_records)
             records.extend(self._probe_capabilities(client, tenant_id))
 
         return records

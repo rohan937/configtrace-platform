@@ -3467,6 +3467,62 @@ _OKTA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "built_in_group",
         "everyone_group",
     ),
+    # ── Okta authentication policy (Okta message 4 of 8) ────────────────────
+    #
+    # "priority"/"rule_fingerprint"-style fields are tracked because
+    # first-match policy/rule ORDER can itself be security-relevant (see
+    # risk_rules/okta.py). Enrollment counts and any timestamp/API
+    # metadata are intentionally NOT tracked.
+    "okta_policy": (
+        "policy_name",
+        "policy_type",
+        "status",
+        "active",
+        "priority",
+        "system",
+        "scope_category",
+        "rule_count",
+        "password_min_length",
+        "password_min_length_category",
+        "password_complexity_required",
+        "password_history_present",
+        "password_lifetime_bounded",
+        "password_lockout_present",
+        "password_lockout_max_attempts",
+    ),
+    "okta_policy_rule": (
+        "rule_name",
+        "status",
+        "active",
+        "priority",
+        "scope_category",
+        "access_category",
+        "mfa_requirement_category",
+        "required_factor_count",
+        "possession_required",
+        "knowledge_required",
+        "phishing_resistant_category",
+        "hardware_protected_category",
+        "device_bound",
+        "session_lifetime_category",
+        "re_authentication_category",
+        # "network_zone_category"/"group_include_count"/"group_exclude_count"/
+        # "user_include_count" are intentionally NOT tracked at the field
+        # level — targeting-detail churn is expected and would be noisy;
+        # "scope_category" (the collapsed posture) is tracked instead.
+    ),
+    "okta_authenticator": (
+        "key",
+        "type",
+        "status",
+        "active",
+        "phishing_resistant_category",
+        "possession_factor",
+        "knowledge_factor",
+        "hardware_backed_category",
+        # "inherence_factor" is never tracked — it is always None (never
+        # fabricated), so tracking it would never produce a meaningful Change.
+    ),
 }
 
 
@@ -4005,6 +4061,25 @@ def _build_provider_metadata(
         metadata["app_label"] = context_record.get("app_label") or record.get("app_label") or ""
         metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
         metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+    if record.get("record_type") == "okta_policy":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["policy_id"] = context_record.get("policy_id") or record.get("policy_id") or ""
+        metadata["policy_name"] = context_record.get("policy_name") or record.get("policy_name") or ""
+        metadata["policy_type"] = context_record.get("policy_type") or record.get("policy_type") or ""
+    if record.get("record_type") == "okta_policy_rule":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["policy_id"] = context_record.get("policy_id") or record.get("policy_id") or ""
+        metadata["policy_name"] = context_record.get("policy_name") or record.get("policy_name") or ""
+        metadata["policy_type"] = context_record.get("policy_type") or record.get("policy_type") or ""
+        metadata["rule_id"] = context_record.get("rule_id") or record.get("rule_id") or ""
+        metadata["rule_name"] = context_record.get("rule_name") or record.get("rule_name") or ""
+    if record.get("record_type") == "okta_authenticator":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["authenticator_id"] = context_record.get("authenticator_id") or record.get("authenticator_id") or ""
+        metadata["key"] = context_record.get("key") or record.get("key") or ""
+        metadata["phishing_resistant_category"] = (
+            context_record.get("phishing_resistant_category") or record.get("phishing_resistant_category") or ""
+        )
 
     return metadata
 
