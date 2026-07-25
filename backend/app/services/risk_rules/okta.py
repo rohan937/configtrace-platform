@@ -1,5 +1,5 @@
-"""Okta risk classification rules — foundation + identity lifecycle
-(Okta messages 1-2 of 8).
+"""Okta risk classification rules — foundation + identity lifecycle +
+application security (Okta messages 1-3 of 8).
 
 This module exists to give every ``okta_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -23,6 +23,15 @@ Classification here is deliberately structural, not incident-level:
   legitimate, deliberate admin action.
 - Group/membership churn is low/medium with no privilege claims — message
   5 will add the admin-role/privileged-group context needed to say more.
+- Application activation follows the same directional principle as user
+  lifecycle: INACTIVE -> ACTIVE is Medium (access restored), ACTIVE ->
+  INACTIVE is Low (restrictive). Redirect-posture changes use precise,
+  non-alarmist wording ("allows an HTTP redirect URI"), never claims of
+  token theft or account takeover — and a wildcard redirect is the one
+  application-posture signal treated as High, mirroring Auth0's existing
+  wildcard-callback precedent in this codebase. Assignment additions are
+  Low/Medium with no privilege claims — message 5 will know which
+  apps/roles are actually privileged.
 """
 
 from __future__ import annotations
@@ -30,6 +39,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.connectors.okta_schema import (
+    APP_STATUS_ACTIVE,
     CAPABILITY_AVAILABLE,
     LIFECYCLE_ACTIVE,
     LIFECYCLE_DEPROVISIONED,
@@ -40,6 +50,9 @@ from app.connectors.okta_schema import (
     LIFECYCLE_SUSPENDED,
     LIFECYCLE_UNKNOWN,
     OKTA_API_CAPABILITY,
+    OKTA_APPLICATION,
+    OKTA_APPLICATION_GROUP_ASSIGNMENT,
+    OKTA_APPLICATION_USER_ASSIGNMENT,
     OKTA_GROUP,
     OKTA_GROUP_MEMBERSHIP,
     OKTA_ORGANIZATION,
@@ -280,6 +293,190 @@ def _classify_membership_change(change: object) -> tuple[str, str]:
     return "low", "An Okta group membership field changed."
 
 
+def _classify_app_status_transition(prev_status: object, new_status: object) -> tuple[str, str]:
+    """Classify an application's ``status`` field transition by direction.
+
+    Mirrors the user lifecycle transition principle: restrictive
+    (ACTIVE -> INACTIVE) is Low; access-restoring (INACTIVE -> ACTIVE) is
+    Medium, never described as unauthorized. An unrecognized new status is
+    Medium (needs review), never silently treated as safe.
+    """
+    if new_status not in (APP_STATUS_ACTIVE, "INACTIVE"):
+        return (
+            "medium",
+            f"An Okta application's status changed to an unrecognized value "
+            f"({new_status!r}) — treat as needing review since it cannot be "
+            "safely categorized.",
+        )
+    if prev_status == APP_STATUS_ACTIVE and new_status == "INACTIVE":
+        return "low", "An Okta application was deactivated."
+    if prev_status == "INACTIVE" and new_status == APP_STATUS_ACTIVE:
+        return (
+            "medium",
+            "An Okta application was activated — it was previously inactive. "
+            "Verify this was expected.",
+        )
+    return "low", "An Okta application's status changed."
+
+
+def _classify_app_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        nv = _get(change, "new_value")
+        nv = nv if isinstance(nv, dict) else {}
+        if nv.get("status") == APP_STATUS_ACTIVE:
+            return "low", "An Okta application was added to the inventory (active)."
+        return "low", "An Okta application was added to the inventory (inactive)."
+    if ct == "removed":
+        return (
+            "low",
+            "An Okta application is no longer visible to ConfigTrace. This "
+            "reflects the collected snapshot — it does not by itself confirm "
+            "the application was deleted in Okta.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status":
+        return _classify_app_status_transition(_get(change, "prev_value"), _get(change, "new_value"))
+    if fp == "active":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "low", "An Okta application was deactivated."
+        return "medium", "An Okta application was activated — verify this was expected."
+    if fp in ("label",):
+        return "low", "An Okta application was renamed."
+    if fp in ("sign_on_mode", "protocol_category", "app_type_category"):
+        return "low", "An Okta application's protocol/sign-on configuration changed."
+    if fp == "token_endpoint_auth_method_category":
+        nv = _get(change, "new_value")
+        if nv == "none":
+            return (
+                "medium",
+                "An Okta application's token endpoint authentication method "
+                "changed to 'none' (public client, no client authentication).",
+            )
+        return "low", "An Okta application's token endpoint authentication method changed."
+    if fp in ("grant_types_summary", "response_types_summary"):
+        return "low", "An Okta application's OAuth grant/response type configuration changed."
+    if fp == "http_redirect_count":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return (
+                "medium",
+                "An OIDC application allows an HTTP (non-HTTPS) redirect URI.",
+            )
+        if pv_i is not None and nv_i is not None and nv_i < pv_i:
+            return "low", "An OIDC application's HTTP redirect URI count decreased."
+        return "low", "An OIDC application's HTTP redirect URI count changed."
+    if fp == "wildcard_redirect_present":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return (
+                "high",
+                "An OIDC application now allows a wildcard redirect URI. This "
+                "may require review.",
+            )
+        if nv is False:
+            return "low", "An OIDC application's wildcard redirect URI was removed."
+        return "low", "An OIDC application's wildcard redirect presence is now unknown or missing."
+    if fp == "custom_scheme_redirect_count":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "medium", "An OIDC application now uses a custom-scheme redirect URI."
+        return "low", "An OIDC application's custom-scheme redirect URI count changed."
+    if fp in ("redirect_count", "https_redirect_count", "localhost_redirect_count",
+              "loopback_redirect_count", "logout_redirect_count"):
+        return "low", "An Okta application's redirect URI configuration changed."
+    if fp in ("saml_response_signed", "saml_assertion_signed"):
+        nv = _get(change, "new_value")
+        if nv is False:
+            return (
+                "medium",
+                f"An Okta SAML application's {fp.replace('saml_', '').replace('_', ' ')} "
+                "posture was disabled.",
+            )
+        return "low", f"An Okta SAML application's {fp.replace('saml_', '').replace('_', ' ')} posture changed."
+    if fp in ("saml_destination_configured", "saml_audience_configured"):
+        return "low", "An Okta SAML application's configuration completeness changed."
+    if fp in ("saml_signature_algorithm_category", "saml_digest_algorithm_category"):
+        return "low", "An Okta SAML application's signing algorithm configuration changed."
+    if fp == "saml_encryption_enabled":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "An Okta SAML application's assertion encryption was disabled."
+        return "low", "An Okta SAML application's assertion encryption posture changed."
+    if fp in ("user_assignment_count", "group_assignment_count"):
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is None or nv_i is None:
+            return "low", "An Okta application's assignment count became unknown or was newly determined."
+        if nv_i > pv_i:
+            return "low", f"An Okta application's assignment count increased ({pv_i} -> {nv_i})."
+        return "low", f"An Okta application's assignment count decreased ({pv_i} -> {nv_i})."
+    return "low", "An Okta application configuration field changed."
+
+
+def _classify_app_user_assignment_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "medium", "A user was assigned to an Okta application."
+    if ct == "removed":
+        return "low", "A user's assignment to an Okta application was removed."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "user_status":
+        return "low", "An assigned user's status changed (see the user's own record for lifecycle detail)."
+    if fp == "assignment_status_category":
+        return "low", "A user's Okta application assignment status changed."
+    if fp == "assignment_scope_category":
+        return "low", "A user's Okta application assignment scope (direct vs. via group) changed."
+    return "low", "An Okta application user assignment field changed."
+
+
+def _classify_app_group_assignment_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    everyone = None
+    if isinstance(_get(change, "new_value"), dict):
+        everyone = _get(change, "new_value").get("everyone_group")
+    elif isinstance(_get(change, "prev_value"), dict):
+        everyone = _get(change, "prev_value").get("everyone_group")
+
+    if ct == "added":
+        if everyone is True:
+            return (
+                "medium",
+                "The built-in Everyone group was assigned to an Okta application "
+                "— every user in the tenant may now have access.",
+            )
+        return "medium", "A group was assigned to an Okta application."
+    if ct == "removed":
+        if everyone is True:
+            return "low", "The built-in Everyone group's assignment to an Okta application was removed."
+        return "low", "A group's assignment to an Okta application was removed."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "group_type":
+        return "low", "An assigned group's type changed."
+    if fp == "built_in_group":
+        return "low", "An assigned group's built-in/system category changed."
+    if fp == "everyone_group":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return (
+                "medium",
+                "An Okta application's group assignment now resolves to the "
+                "built-in Everyone group.",
+            )
+        return "low", "An Okta application's group assignment Everyone-group status changed."
+    return "low", "An Okta application group assignment field changed."
+
+
 def classify_okta_change(change: object) -> tuple[str, str]:
     """Route an Okta Change to its record-type classifier.
 
@@ -302,5 +499,11 @@ def classify_okta_change(change: object) -> tuple[str, str]:
         return _classify_group_change(change)
     if record_type == OKTA_GROUP_MEMBERSHIP:
         return _classify_membership_change(change)
+    if record_type == OKTA_APPLICATION:
+        return _classify_app_change(change)
+    if record_type == OKTA_APPLICATION_USER_ASSIGNMENT:
+        return _classify_app_user_assignment_change(change)
+    if record_type == OKTA_APPLICATION_GROUP_ASSIGNMENT:
+        return _classify_app_group_assignment_change(change)
 
     return "low", f"An Okta configuration record changed ({record_type or 'unknown record type'})."

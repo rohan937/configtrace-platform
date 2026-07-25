@@ -84,17 +84,28 @@ from app.connectors.okta_schema import (
     FAMILY_PARTIAL,
     FAMILY_UNAVAILABLE,
     OKTA_API_CAPABILITY,
+    OKTA_APPLICATION,
+    OKTA_APPLICATION_GROUP_ASSIGNMENT,
+    OKTA_APPLICATION_USER_ASSIGNMENT,
     OKTA_GROUP,
     OKTA_GROUP_MEMBERSHIP,
     OKTA_ORGANIZATION,
     OKTA_USER,
+    categorize_algorithm,
+    categorize_app_status,
+    categorize_app_type,
+    categorize_assignment_scope,
     categorize_group_type,
     categorize_last_login,
     categorize_membership_count,
     categorize_org_status,
+    categorize_redirect_uris,
+    categorize_sign_on_mode,
+    categorize_token_auth_method,
     categorize_user_status,
     is_everyone_group,
     lifecycle_posture_for_status,
+    protocol_category_for_sign_on_mode,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,6 +132,19 @@ _MAX_GROUPS = 5_000
 _MAX_MEMBERS_PER_GROUP = 20_000
 _MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION = 5_000
 _MAX_TOTAL_MEMBERSHIPS = 200_000
+
+# ── Application collection bounds (Okta message 3) ──────────────────────────
+#
+# Same rationale as the identity bounds above — assignment enumeration is
+# per-app (see _fetch_app_assignments() docstring), so this additionally
+# needs a cap on the number of apps walked and global caps on total
+# assignment records collected.
+_MAX_APPLICATIONS = 5_000
+_MAX_ASSIGNEES_PER_APP = 20_000
+_MAX_APPS_FOR_ASSIGNMENT_ENUMERATION = 5_000
+_MAX_TOTAL_USER_ASSIGNMENTS = 200_000
+_MAX_TOTAL_GROUP_ASSIGNMENTS = 200_000
+_MAX_REDIRECT_URIS = 200
 
 # 429 retry bounds — bounded exponential backoff with jitter, mirroring the
 # Kubernetes reliability pattern (message 8 of the Kubernetes arc).
@@ -783,6 +807,195 @@ class OktaConnector(BaseConnector):
             "built_in_group": bool(group_record.get("built_in")),
         }
 
+    # ── Application normalizers (Okta message 3) ────────────────────────────
+
+    @staticmethod
+    def _normalize_application(
+        tenant_id: str, raw: dict, *,
+        user_assignment_count: Optional[int], group_assignment_count: Optional[int],
+    ) -> Optional[dict]:
+        """Normalize one Okta application record.
+
+        SECURITY: ``raw["credentials"]`` is touched ONLY at
+        ``credentials.signing.rotationMode`` — never
+        ``credentials.oauthClient.client_secret`` (which Okta's GET
+        /api/v1/apps response DOES include in plaintext for OIDC apps —
+        this is a well-known Okta API characteristic, not a hypothetical
+        risk) and never any other credentials sub-field. ``raw["settings"]``
+        is touched only at the specific safe sub-paths documented in
+        ``_normalize_saml_posture``/``_normalize_oidc_posture`` below —
+        never copied wholesale. ``raw["profile"]`` (app-instance profile
+        overrides) is never read at all.
+        """
+        app_id = raw.get("id")
+        if not isinstance(app_id, str) or not app_id.strip():
+            return None
+
+        label = raw.get("label")
+        label = label.strip()[:_MAX_STR_LEN] if isinstance(label, str) and label.strip() else None
+
+        status = categorize_app_status(raw.get("status"))
+        sign_on_mode = categorize_sign_on_mode(raw.get("signOnMode"))
+        protocol_category = protocol_category_for_sign_on_mode(sign_on_mode)
+
+        visibility = raw.get("visibility") if isinstance(raw.get("visibility"), dict) else {}
+        hide = visibility.get("hide") if isinstance(visibility.get("hide"), dict) else {}
+        hidden_from_self_service = bool(hide.get("web")) if isinstance(hide.get("web"), bool) else None
+        auto_submit = visibility.get("autoSubmitToolbar")
+        auto_submit = bool(auto_submit) if isinstance(auto_submit, bool) else None
+
+        credentials = raw.get("credentials") if isinstance(raw.get("credentials"), dict) else {}
+        signing = credentials.get("signing") if isinstance(credentials.get("signing"), dict) else {}
+        signing_key_rotation_category = signing.get("rotationMode")
+        signing_key_rotation_category = (
+            signing_key_rotation_category.strip()[:30]
+            if isinstance(signing_key_rotation_category, str) and signing_key_rotation_category.strip()
+            else None
+        )
+
+        record: dict = {
+            "record_type": OKTA_APPLICATION,
+            "record_id": f"{tenant_id}/app/{app_id}",
+            "provider_resource_id": f"apps/{app_id}",
+            "tenant_id": tenant_id,
+            "app_id": app_id,
+            "label": label,
+            "status": status,
+            "active": status == "ACTIVE",
+            "sign_on_mode": sign_on_mode,
+            "protocol_category": protocol_category,
+            "hidden_from_self_service": hidden_from_self_service,
+            "auto_submit_toolbar": auto_submit,
+            "signing_key_rotation_category": signing_key_rotation_category,
+            "user_assignment_count": user_assignment_count,
+            "group_assignment_count": group_assignment_count,
+        }
+
+        settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+        if protocol_category == "SAML":
+            record.update(OktaConnector._normalize_saml_posture(settings))
+        elif protocol_category == "OIDC_OAUTH":
+            record.update(OktaConnector._normalize_oidc_posture(settings))
+
+        return record
+
+    @staticmethod
+    def _normalize_saml_posture(settings: dict) -> dict:
+        """Extract safe SAML configuration posture from
+        ``app.settings.signOn`` ONLY. Never touches certificates, private
+        keys, or raw XML metadata — those are not returned by this
+        endpoint and would never be read even if they were.
+        """
+        sign_on = settings.get("signOn") if isinstance(settings.get("signOn"), dict) else {}
+        return {
+            "saml_destination_configured": bool(sign_on.get("destination")),
+            "saml_audience_configured": bool(sign_on.get("audience")),
+            "saml_response_signed": (
+                bool(sign_on["responseSigned"]) if isinstance(sign_on.get("responseSigned"), bool) else None
+            ),
+            "saml_assertion_signed": (
+                bool(sign_on["assertionSigned"]) if isinstance(sign_on.get("assertionSigned"), bool) else None
+            ),
+            "saml_signature_algorithm_category": categorize_algorithm(sign_on.get("signatureAlgorithm")),
+            "saml_digest_algorithm_category": categorize_algorithm(sign_on.get("digestAlgorithm")),
+            "saml_encryption_enabled": (
+                bool(sign_on["assertionEncrypted"]) if isinstance(sign_on.get("assertionEncrypted"), bool) else None
+            ),
+        }
+
+    @staticmethod
+    def _normalize_oidc_posture(settings: dict) -> dict:
+        """Extract safe OIDC/OAuth configuration posture from
+        ``app.settings.oauthClient`` ONLY. Redirect URIs are summarized
+        into counts/booleans and NEVER stored raw — see
+        ``categorize_redirect_uris()``. Never touches ``client_secret``
+        (that lives under ``credentials.oauthClient``, not ``settings``,
+        and is never read by this method or any other in this module).
+        """
+        oauth = settings.get("oauthClient") if isinstance(settings.get("oauthClient"), dict) else {}
+
+        redirect_uris = oauth.get("redirect_uris")
+        redirect_posture = categorize_redirect_uris(
+            redirect_uris[:_MAX_REDIRECT_URIS] if isinstance(redirect_uris, list) else redirect_uris
+        )
+        logout_uris = oauth.get("post_logout_redirect_uris")
+        logout_redirect_count = len(logout_uris) if isinstance(logout_uris, list) else None
+
+        grant_types = oauth.get("grant_types") if isinstance(oauth.get("grant_types"), list) else []
+        response_types = oauth.get("response_types") if isinstance(oauth.get("response_types"), list) else []
+
+        return {
+            "app_type_category": categorize_app_type(oauth.get("application_type")),
+            "token_endpoint_auth_method_category": categorize_token_auth_method(
+                oauth.get("token_endpoint_auth_method")
+            ),
+            "grant_types_summary": ",".join(sorted(g for g in grant_types if isinstance(g, str)))[:200],
+            "response_types_summary": ",".join(sorted(r for r in response_types if isinstance(r, str)))[:200],
+            "logout_redirect_count": logout_redirect_count,
+            **redirect_posture,
+        }
+
+    @staticmethod
+    def _normalize_app_user_assignment(
+        tenant_id: str, app_record: dict, user_record: Optional[dict], raw: dict,
+    ) -> Optional[dict]:
+        """Normalize one user<->app assignment edge.
+
+        SECURITY: ``raw["credentials"]`` (app-user username/password
+        template) and ``raw["profile"]`` (app-user custom profile
+        mapping) are NEVER read — only ``id``, ``status``, and ``scope``.
+        """
+        user_id = raw.get("id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            return None
+
+        app_id = app_record["app_id"]
+        user_login = user_record.get("login") if user_record else None
+        user_status = user_record.get("status") if user_record else "UNKNOWN"
+
+        return {
+            "record_type": OKTA_APPLICATION_USER_ASSIGNMENT,
+            "record_id": f"{tenant_id}/app_assignment/{app_id}/user/{user_id}",
+            "provider_resource_id": f"apps/{app_id}/users/{user_id}",
+            "tenant_id": tenant_id,
+            "app_id": app_id,
+            "app_label": app_record.get("label"),
+            "user_id": user_id,
+            "user_login": user_login,
+            "user_status": user_status,
+            "assignment_status_category": categorize_app_status(raw.get("status")),
+            "assignment_scope_category": categorize_assignment_scope(raw.get("scope")),
+        }
+
+    @staticmethod
+    def _normalize_app_group_assignment(
+        tenant_id: str, app_record: dict, group_record: Optional[dict], raw: dict,
+    ) -> Optional[dict]:
+        """Normalize one group<->app assignment edge.
+
+        SECURITY: only ``id`` (and, defensively, ``priority`` — a plain
+        integer, never sensitive) is ever read from the raw assignment
+        object; no entitlement/profile-mapping payload is read.
+        """
+        group_id = raw.get("id")
+        if not isinstance(group_id, str) or not group_id.strip():
+            return None
+
+        app_id = app_record["app_id"]
+        return {
+            "record_type": OKTA_APPLICATION_GROUP_ASSIGNMENT,
+            "record_id": f"{tenant_id}/app_assignment/{app_id}/group/{group_id}",
+            "provider_resource_id": f"apps/{app_id}/groups/{group_id}",
+            "tenant_id": tenant_id,
+            "app_id": app_id,
+            "app_label": app_record.get("label"),
+            "group_id": group_id,
+            "group_name": group_record.get("group_name") if group_record else None,
+            "group_type": group_record.get("group_type") if group_record else "unknown",
+            "built_in_group": bool(group_record.get("built_in")) if group_record else False,
+            "everyone_group": bool(group_record.get("everyone_group")) if group_record else False,
+        }
+
     # ── Family collection (Okta message 2) ──────────────────────────────────
 
     @staticmethod
@@ -963,6 +1176,204 @@ class OktaConnector(BaseConnector):
 
         return records, completeness, counts_by_group
 
+    # ── Application collection (Okta message 3) ─────────────────────────────
+
+    @classmethod
+    def _fetch_applications_raw(
+        cls, client: httpx.Client, trusted_origin: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        return cls._collect_family(
+            client, trusted_origin, "/api/v1/apps",
+            params={"limit": str(_DEFAULT_PAGE_LIMIT)},
+            cap=_MAX_APPLICATIONS, _sleep_fn=_sleep_fn,
+        )
+
+    @classmethod
+    def _fetch_app_user_assignments(
+        cls,
+        client: httpx.Client,
+        trusted_origin: str,
+        tenant_id: str,
+        raw_apps: list[dict],
+        app_records_by_id: dict,
+        user_index: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict]:
+        """Collect user<->app assignment edges.
+
+        Call-complexity design: mirrors ``_fetch_memberships()`` — Okta's
+        API enumerates app assignments per-app
+        (``GET /api/v1/apps/{appId}/users``), so this walks apps once
+        (capped at ``_MAX_APPS_FOR_ASSIGNMENT_ENUMERATION``) rather than
+        querying assignments user-centrically, and never re-fetches the
+        app list itself. Bounded and documented, not silently unbounded —
+        message 7 owns further scale hardening.
+
+        Returns ``(records, completeness, user_assignment_count_by_app_id)``.
+        """
+        if not raw_apps:
+            return [], FAMILY_COMPLETE, {}
+
+        apps_to_walk = raw_apps[:_MAX_APPS_FOR_ASSIGNMENT_ENUMERATION]
+        truncated_app_list = len(raw_apps) > len(apps_to_walk)
+
+        records: list[dict] = []
+        counts_by_app: dict = {}
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for raw_app in apps_to_walk:
+            if not isinstance(raw_app, dict):
+                continue
+            app_id = raw_app.get("id")
+            if not isinstance(app_id, str) or not app_id.strip():
+                continue
+            app_record = app_records_by_id.get(app_id)
+            if app_record is None:
+                continue
+
+            assignees, app_completeness = cls._collect_family(
+                client, trusted_origin, f"/api/v1/apps/{app_id}/users",
+                params={"limit": str(_DEFAULT_PAGE_LIMIT)},
+                cap=_MAX_ASSIGNEES_PER_APP, _sleep_fn=_sleep_fn,
+            )
+            if app_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if app_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if app_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            seen_ids: set = set()
+            for raw_assignment in assignees:
+                if not isinstance(raw_assignment, dict):
+                    continue
+                user_id = raw_assignment.get("id")
+                if not isinstance(user_id, str) or not user_id.strip():
+                    continue
+                if user_id in seen_ids:
+                    continue  # dedup within a single app's page set
+                seen_ids.add(user_id)
+                if len(records) >= _MAX_TOTAL_USER_ASSIGNMENTS:
+                    cap_hit = True
+                    break
+                user_record = user_index.get(user_id)
+                rec = cls._normalize_app_user_assignment(tenant_id, app_record, user_record, raw_assignment)
+                if rec is not None:
+                    records.append(rec)
+            counts_by_app[app_id] = len(seen_ids)
+            if len(records) >= _MAX_TOTAL_USER_ASSIGNMENTS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_app_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        return records, completeness, counts_by_app
+
+    @classmethod
+    def _fetch_app_group_assignments(
+        cls,
+        client: httpx.Client,
+        trusted_origin: str,
+        tenant_id: str,
+        raw_apps: list[dict],
+        app_records_by_id: dict,
+        group_records_by_id: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict]:
+        """Collect group<->app assignment edges.
+
+        Same per-app walk design as ``_fetch_app_user_assignments()`` —
+        ``GET /api/v1/apps/{appId}/groups`` — collected in the SAME pass
+        over ``raw_apps`` as user assignments (never a duplicate,
+        redundant enumeration of the app list itself).
+
+        Returns ``(records, completeness, group_assignment_count_by_app_id)``.
+        """
+        if not raw_apps:
+            return [], FAMILY_COMPLETE, {}
+
+        apps_to_walk = raw_apps[:_MAX_APPS_FOR_ASSIGNMENT_ENUMERATION]
+        truncated_app_list = len(raw_apps) > len(apps_to_walk)
+
+        records: list[dict] = []
+        counts_by_app: dict = {}
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for raw_app in apps_to_walk:
+            if not isinstance(raw_app, dict):
+                continue
+            app_id = raw_app.get("id")
+            if not isinstance(app_id, str) or not app_id.strip():
+                continue
+            app_record = app_records_by_id.get(app_id)
+            if app_record is None:
+                continue
+
+            assignments, app_completeness = cls._collect_family(
+                client, trusted_origin, f"/api/v1/apps/{app_id}/groups",
+                params={"limit": str(_DEFAULT_PAGE_LIMIT)},
+                cap=_MAX_ASSIGNEES_PER_APP, _sleep_fn=_sleep_fn,
+            )
+            if app_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if app_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if app_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            seen_ids: set = set()
+            for raw_assignment in assignments:
+                if not isinstance(raw_assignment, dict):
+                    continue
+                group_id = raw_assignment.get("id")
+                if not isinstance(group_id, str) or not group_id.strip():
+                    continue
+                if group_id in seen_ids:
+                    continue
+                seen_ids.add(group_id)
+                if len(records) >= _MAX_TOTAL_GROUP_ASSIGNMENTS:
+                    cap_hit = True
+                    break
+                group_record = group_records_by_id.get(group_id)
+                rec = cls._normalize_app_group_assignment(tenant_id, app_record, group_record, raw_assignment)
+                if rec is not None:
+                    records.append(rec)
+            counts_by_app[app_id] = len(seen_ids)
+            if len(records) >= _MAX_TOTAL_GROUP_ASSIGNMENTS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_app_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        return records, completeness, counts_by_app
+
     # ── Capability probes ──────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET with the smallest
@@ -1041,21 +1452,23 @@ class OktaConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
-        """Fetch the Okta identity inventory: ``okta_organization``,
-        ``okta_api_capability`` probes (message 1), plus ``okta_user`` /
-        ``okta_group`` / ``okta_group_membership`` records (message 2).
+        """Fetch the Okta identity + application inventory:
+        ``okta_organization``, ``okta_api_capability`` probes (message 1);
+        ``okta_user`` / ``okta_group`` / ``okta_group_membership`` (message
+        2); ``okta_application`` / ``okta_application_user_assignment`` /
+        ``okta_application_group_assignment`` (message 3).
 
-        Does NOT collect applications, policies, authenticators, admin
-        roles, or System Log events yet — see the module docstring for the
-        permanent sensitive-data boundary and ``okta_schema.py`` for what
-        later messages will add.
+        Does NOT collect policies, authenticators, or admin roles yet —
+        see the module docstring for the permanent sensitive-data boundary
+        and ``okta_schema.py`` for what later messages will add.
 
-        Users, groups, and memberships fail independently: if memberships
-        are denied while users/groups are readable, the users and groups
-        are still returned and ``okta_organization.family_completeness``
-        reports the memberships gap — a family failure never aborts the
-        whole fetch, and a denied/unreadable family is never silently
-        reported as "zero" (see ``_collect_family``/``_fetch_memberships``).
+        Every family fails independently: if e.g. app group assignments
+        are denied while everything else is readable, the rest is still
+        returned and ``okta_organization.family_completeness`` reports the
+        gap — a family failure never aborts the whole fetch, and a denied/
+        unreadable family is never silently reported as "zero" (see
+        ``_collect_family``/``_fetch_memberships``/
+        ``_fetch_app_user_assignments``/``_fetch_app_group_assignments``).
 
         SECURITY: the API token is used only within this method's scope,
         placed only in the Authorization header, never stored on the
@@ -1123,12 +1536,58 @@ class OktaConnector(BaseConnector):
                 group_rec["membership_count_category"] = categorize_membership_count(count)
                 group_records.append(group_rec)
 
+            # ── Applications (raw kept for assignment walks; normalized after) ──
+            raw_apps, applications_completeness = self._fetch_applications_raw(
+                client, org_url, _sleep_fn=_sleep_fn,
+            )
+            app_records_by_id: dict = {}
+            for raw_app in raw_apps:
+                if not isinstance(raw_app, dict):
+                    continue
+                app_id = raw_app.get("id")
+                if not isinstance(app_id, str) or not app_id.strip():
+                    continue
+                # assignment counts filled in below once assignments are collected.
+                rec = self._normalize_application(
+                    tenant_id, raw_app, user_assignment_count=None, group_assignment_count=None,
+                )
+                if rec is not None:
+                    app_records_by_id[app_id] = rec
+
+            # ── Application user assignments ────────────────────────────────
+            app_user_assignment_records, app_user_assignments_completeness, user_counts_by_app = (
+                self._fetch_app_user_assignments(
+                    client, org_url, tenant_id, raw_apps, app_records_by_id, user_index,
+                    _sleep_fn=_sleep_fn,
+                )
+            )
+
+            # ── Application group assignments ───────────────────────────────
+            app_group_assignment_records, app_group_assignments_completeness, group_counts_by_app = (
+                self._fetch_app_group_assignments(
+                    client, org_url, tenant_id, raw_apps, app_records_by_id, group_records_by_id,
+                    _sleep_fn=_sleep_fn,
+                )
+            )
+
+            # Backfill assignment counts only for apps whose own assignment
+            # walk actually succeeded — an app whose walk was denied/failed
+            # keeps the count=None (unknown), never 0.
+            app_records: list[dict] = []
+            for app_id, app_rec in app_records_by_id.items():
+                app_rec["user_assignment_count"] = user_counts_by_app.get(app_id)
+                app_rec["group_assignment_count"] = group_counts_by_app.get(app_id)
+                app_records.append(app_rec)
+
             org_record = self._normalize_organization(
                 org_hostname, raw_org,
                 family_completeness={
                     "users": users_completeness,
                     "groups": groups_completeness,
                     "memberships": memberships_completeness,
+                    "applications": applications_completeness,
+                    "app_user_assignments": app_user_assignments_completeness,
+                    "app_group_assignments": app_group_assignments_completeness,
                 },
             )
 
@@ -1136,6 +1595,9 @@ class OktaConnector(BaseConnector):
             records.extend(user_records)
             records.extend(group_records)
             records.extend(membership_records)
+            records.extend(app_records)
+            records.extend(app_user_assignment_records)
+            records.extend(app_group_assignment_records)
             records.extend(self._probe_capabilities(client, tenant_id))
 
         return records

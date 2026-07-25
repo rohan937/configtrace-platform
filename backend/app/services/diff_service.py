@@ -3414,6 +3414,59 @@ _OKTA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "group_type",
         "built_in_group",
     ),
+    # ── Okta application security (Okta message 3 of 8) ─────────────────────
+    #
+    # creation/lastUpdated timestamps and any transient rate-limit metadata
+    # are intentionally NOT tracked — same rationale as okta_user's
+    # excluded timestamps.
+    "okta_application": (
+        "label",
+        "status",
+        "active",
+        "sign_on_mode",
+        "protocol_category",
+        "app_type_category",
+        "token_endpoint_auth_method_category",
+        "grant_types_summary",
+        "response_types_summary",
+        "redirect_count",
+        "https_redirect_count",
+        "http_redirect_count",
+        "localhost_redirect_count",
+        "loopback_redirect_count",
+        "custom_scheme_redirect_count",
+        "wildcard_redirect_present",
+        "logout_redirect_count",
+        "saml_destination_configured",
+        "saml_audience_configured",
+        "saml_response_signed",
+        "saml_assertion_signed",
+        "saml_signature_algorithm_category",
+        "saml_digest_algorithm_category",
+        "saml_encryption_enabled",
+        "user_assignment_count",
+        "group_assignment_count",
+        # "hidden_from_self_service"/"auto_submit_toolbar"/
+        # "signing_key_rotation_category" are intentionally NOT tracked —
+        # UX-only posture, not a security-relevant durable configuration
+        # signal message 3 needs to alert on.
+    ),
+    "okta_application_user_assignment": (
+        # app_id/user_id are the record's own identity components (see
+        # okta_group_membership's note above — same rationale).
+        "app_id",
+        "user_id",
+        "user_status",
+        "assignment_status_category",
+        "assignment_scope_category",
+    ),
+    "okta_application_group_assignment": (
+        "app_id",
+        "group_id",
+        "group_type",
+        "built_in_group",
+        "everyone_group",
+    ),
 }
 
 
@@ -3930,6 +3983,26 @@ def _build_provider_metadata(
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
         metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
         metadata["user_login"] = context_record.get("user_login") or record.get("user_login") or ""
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+    if record.get("record_type") == "okta_application":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["app_id"] = context_record.get("app_id") or record.get("app_id") or ""
+        metadata["label"] = context_record.get("label") or record.get("label") or ""
+        metadata["sign_on_mode"] = context_record.get("sign_on_mode") or record.get("sign_on_mode") or ""
+        metadata["protocol_category"] = (
+            context_record.get("protocol_category") or record.get("protocol_category") or ""
+        )
+    if record.get("record_type") == "okta_application_user_assignment":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["app_id"] = context_record.get("app_id") or record.get("app_id") or ""
+        metadata["app_label"] = context_record.get("app_label") or record.get("app_label") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["user_login"] = context_record.get("user_login") or record.get("user_login") or ""
+    if record.get("record_type") == "okta_application_group_assignment":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["app_id"] = context_record.get("app_id") or record.get("app_id") or ""
+        metadata["app_label"] = context_record.get("app_label") or record.get("app_label") or ""
         metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
         metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
 
