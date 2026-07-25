@@ -39,6 +39,7 @@ import JiraIntegrationForm from "@/components/integrations/JiraIntegrationForm";
 import GitLabIntegrationForm from "@/components/integrations/GitLabIntegrationForm";
 // ── M88A — Terraform Cloud drift provider foundation ──────────────────────────
 import TerraformCloudIntegrationForm from "@/components/integrations/TerraformCloudIntegrationForm";
+import KubernetesIntegrationForm from "@/components/integrations/KubernetesIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -1082,6 +1083,50 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── Kubernetes message 9 — public launch setup guide ─────────────────────
+
+  if (provider === "kubernetes") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Kubernetes cluster
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Create a dedicated read-only ServiceAccount.",
+            body: <>Do not use a cluster-admin kubeconfig. Apply a{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>ClusterRole</code> that
+              grants only <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>get</code>/
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>list</code> on workload,
+              RBAC, networking, and admission resources — never{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>secrets</code> or{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>configmaps</code>. The
+              full minimum manifest is shown in the security notice below the form.</>,
+          },
+          {
+            heading: "Generate a kubeconfig for that identity.",
+            body: <>Bind the ServiceAccount to a kubeconfig using a long-lived token or your
+              cluster&apos;s standard credential-issuance flow. &lsquo;exec&rsquo; and
+              &lsquo;auth-provider&rsquo; authentication entries are not supported and are
+              rejected at connection time.</>,
+          },
+          {
+            heading: "Paste the kubeconfig below.",
+            body: <>Optionally set a context — leave it blank to use the kubeconfig&apos;s
+              current context. ConfigTrace validates the kubeconfig, checks cluster
+              reachability, and resolves cluster identity before saving.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores your kubeconfig encrypted and uses it only to read cluster
+          configuration metadata. It does not read Secret or ConfigMap contents, exec into or
+          attach to Pods, read Pod logs, port-forward, or create ServiceAccount tokens. Coverage
+          may be partial if some API groups are not readable by the supplied credential.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -1251,6 +1296,10 @@ export default function IntegrationsPage() {
     // ── M88A — Terraform Cloud ───────────────────────────────────────────────────
     if (selectedProvider === "terraform_cloud") {
       return <TerraformCloudIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── Kubernetes message 9 — public launch ─────────────────────────────────────
+    if (selectedProvider === "kubernetes") {
+      return <KubernetesIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

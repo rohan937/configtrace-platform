@@ -1538,15 +1538,30 @@ def _create_kubernetes_integration(
     optional cluster_name/context are used for resource identity — both are
     non-secret, user-chosen labels.
 
-    Live API validation (parsing the kubeconfig, resolving the context,
-    confirming the API server answers ``/version``) is deferred to the
-    first sync, matching the established pattern for other multi-resource
-    providers — this avoids leaking cluster-reachability details through a
-    synchronous create-time error message.
+    Message 9 (public launch): the kubeconfig is validated synchronously
+    against the live API server before anything is written — kubeconfig
+    parsing, exec/auth-provider plugin rejection, and context resolution
+    happen in ``_build_api_client()``; a live ``/version`` call confirms
+    the cluster is reachable and the credential is not obviously invalid.
+    This matches every other provider's create-time validation and gives
+    the "Invalid" launch-certification state (malformed kubeconfig,
+    nonexistent context, auth failure, unreachable cluster) immediate
+    feedback instead of a silent 201.
+
+    Full resource collection (and therefore the Full/Partial coverage
+    determination) is intentionally NOT run synchronously here — it can
+    involve dozens of paginated calls across many API groups, so it stays
+    on the first sync, same as every other multi-resource provider.
     """
+    from app.connectors.kubernetes import KubernetesConnector
+
     context_name: str = (credentials.get("context") or "").strip()
     cluster_name: str = (credentials.get("cluster_name") or "").strip()
     resource_key = cluster_name or context_name or str(user_id)
+
+    # Raises AuthenticationError / NetworkError / ConnectorError — caught by
+    # the router and returned as a 400/502, matching every other provider.
+    KubernetesConnector().validate_credentials(credentials)
 
     # ── 1. Encrypt credentials ────────────────────────────────────────────────
     ciphertext, iv = encrypt_credentials(credentials)
@@ -2127,6 +2142,98 @@ def reconnect_credentials_supabase(
 
     # M59.14: clear both the legacy ``error`` status and the new
     # ``needs_reconnect`` status when a valid set of credentials lands.
+    if integration.status in ("error", "needs_reconnect"):
+        integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_kubernetes(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_kubeconfig: str,
+    new_context: str | None = None,
+    new_cluster_name: str | None = None,
+    new_namespace_allowlist: list[str] | None = None,
+    db: Session,
+) -> Integration:
+    """Replace the kubeconfig for an existing Kubernetes integration.
+
+    The new kubeconfig is validated against the live cluster before the
+    database row is updated. If the new kubeconfig resolves to a genuinely
+    different cluster identity (different ``kube-system`` UID / API server
+    host) than the one this integration was originally connected to, the
+    update is rejected rather than silently merged — a rotated credential
+    for the SAME cluster is always accepted, but pointing this integration
+    at a different cluster is not.
+
+    SECURITY: The kubeconfig is stored encrypted only. It is NEVER logged
+    or returned.
+    """
+    from app.connectors.kubernetes import KUBERNETES_CLUSTER, KubernetesConnector
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    new_creds: dict = {"kubeconfig": new_kubeconfig}
+    if new_context:
+        new_creds["context"] = new_context
+    if new_cluster_name:
+        new_creds["cluster_name"] = new_cluster_name
+    if new_namespace_allowlist:
+        new_creds["namespace_allowlist"] = new_namespace_allowlist
+
+    connector = KubernetesConnector()
+    # Validates parsing, context existence, exec/auth-provider rejection,
+    # and API server reachability. Raises AuthenticationError/NetworkError/
+    # ConnectorError on failure.
+    connector.validate_credentials(new_creds)
+
+    # Resolve the new cluster's identity by running the same collection
+    # pipeline used in production, then compare it against the identity
+    # already on file for this integration.
+    new_records = connector.fetch(new_creds)
+    new_cluster_record = next(
+        (r for r in new_records if r.get("record_type") == KUBERNETES_CLUSTER),
+        None,
+    )
+    new_cluster_id = new_cluster_record.get("cluster_id") if new_cluster_record else None
+
+    existing_cluster_resource = (
+        db.query(Resource)
+        .filter(
+            Resource.integration_id == integration_id,
+            Resource.provider_resource_type == KUBERNETES_CLUSTER,
+        )
+        .first()
+    )
+    existing_cluster_id = (
+        existing_cluster_resource.provider_resource_id
+        if existing_cluster_resource is not None
+        else None
+    )
+
+    if existing_cluster_id and new_cluster_id and existing_cluster_id != new_cluster_id:
+        raise ConnectorError(
+            "This kubeconfig points to a different Kubernetes cluster than the "
+            "one this integration is connected to. To monitor a different "
+            "cluster, create a new integration instead of replacing this one's "
+            "credentials."
+        )
+
+    # Encrypt and store.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
     if integration.status in ("error", "needs_reconnect"):
         integration.status = "active"
 

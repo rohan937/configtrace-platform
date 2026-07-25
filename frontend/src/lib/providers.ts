@@ -41,9 +41,7 @@ export type ProviderId =
   | "gitlab"
   // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
   | "terraform_cloud"
-  // ── Kubernetes message 1 — provider architecture foundation (not yet
-  //    user-connectable; intentionally excluded from PROVIDER_IDS and
-  //    CONNECTABLE_PROVIDER_IDS until a later message adds a connect form) ──
+  // ── Kubernetes message 9 — public launch (fully connectable) ──────────────
   | "kubernetes";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
@@ -535,27 +533,24 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     borderColor: "rgba(123,66,188,0.25)",
   },
 
-  // ── Kubernetes message 1 — provider architecture foundation ───────────────
-  // NOT included in PROVIDER_IDS or CONNECTABLE_PROVIDER_IDS yet — there is
-  // no connect-form UI for kubeconfig upload/context selection built yet,
-  // so this entry exists only so getProviderMeta("kubernetes") resolves
-  // safely if referenced. Do not surface this provider as connectable or
-  // "Live" until a later message adds the frontend connect flow.
+  // ── Kubernetes message 9 — public launch ───────────────────────────────────
   kubernetes: {
     id: "kubernetes",
     label: "Kubernetes",
     shortLabel: "Kubernetes",
     category: "cloud",
     description:
-      "Connect a Kubernetes cluster with read-only credentials. ConfigTrace monitors the workload, identity, network, and admission configuration that determines what can run and what can reach your cluster.",
+      "Connect a Kubernetes cluster with a read-only kubeconfig. ConfigTrace tracks configuration drift and flags security risk across privileged workloads, RBAC privilege escalation, public exposure, NetworkPolicy weakening, admission webhook changes, and Pod Security Admission posture.",
     monitoredSurfaces: [
-      "Workload security contexts and privileged container posture (planned)",
-      "RBAC roles, bindings, and service-account access (planned)",
-      "Services, Ingresses, Gateways, and NetworkPolicy coverage (planned)",
-      "Admission controls and namespace security posture (planned)",
+      "Workload security contexts and privileged/host-access container posture",
+      "RBAC roles, bindings, service accounts, and privilege-escalation paths",
+      "Services, Ingresses, Gateway API routes, and public exposure posture",
+      "NetworkPolicy coverage and namespace network isolation",
+      "Admission webhooks and Pod Security Admission posture",
+      "ResourceQuota, LimitRange, and namespace governance posture",
     ],
     trustNote:
-      "ConfigTrace stores Kubernetes credentials (kubeconfig content) encrypted and uses them only to read cluster metadata. It does not store kubeconfig contents, bearer tokens, client certificates or keys, Secret values, ConfigMap values, Pod logs, exec output, or arbitrary label/annotation maps. This provider is in architecture-foundation stage: only cluster identity, namespace posture, and API capability metadata are currently collected. Workload, RBAC, network, and admission-control monitoring are planned in upcoming stages and are not yet live.",
+      "ConfigTrace stores your kubeconfig encrypted and uses it only to read cluster configuration metadata. It never reads Secret or ConfigMap contents, execs into or attaches to a Pod, reads Pod logs, port-forwards, or creates ServiceAccount tokens. 'exec' and 'auth-provider' kubeconfig entries are rejected — ConfigTrace never executes an external auth plugin. Use a dedicated read-only Kubernetes identity for ConfigTrace; do not provide cluster-admin credentials.",
     color: "#326CE5",
     bgColor: "rgba(50,108,229,0.10)",
     borderColor: "rgba(50,108,229,0.25)",
@@ -617,6 +612,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "gitlab",
   // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
   "terraform_cloud",
+  // ── Kubernetes message 9 — public launch ─────────────────────────────────
+  "kubernetes",
 ];
 
 /**
@@ -655,6 +652,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "gitlab",
   // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
   "terraform_cloud",
+  // ── Kubernetes message 9 — public launch ─────────────────────────────────
+  "kubernetes",
 ];
 
 /**

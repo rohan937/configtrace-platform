@@ -54,6 +54,9 @@ FORBIDDEN_PHRASES = [
     "card data exposed",
 ]
 
+# The 8 dual-stack "complete"-maturity providers — every security capability
+# (activity ingestion/signals/correlations/demo/case report/evidence) is
+# True for these, and they're the set the demo-script table lists.
 EXPECTED_PROVIDERS = {
     "github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify",
 }
@@ -67,6 +70,12 @@ EXPECTED_LABELS = {
     "stripe": "Stripe",
     "shopify": "Shopify",
 }
+
+# All providers in the matrix, including Kubernetes (maturity "partial" —
+# drift + Security Findings only, no activity ingestion/demo/case-report
+# stack, so it is intentionally excluded from EXPECTED_PROVIDERS above).
+ALL_MATRIX_PROVIDERS = EXPECTED_PROVIDERS | {"kubernetes"}
+ALL_MATRIX_LABELS = {**EXPECTED_LABELS, "kubernetes": "Kubernetes"}
 
 
 def _frontend_src() -> Path | None:
@@ -93,14 +102,14 @@ def _read_fe(rel: str) -> str:
 
 
 def test_matrix_has_exactly_eight_providers():
-    assert len(svc.PROVIDER_CAPABILITIES) == 8
+    assert len(svc.PROVIDER_CAPABILITIES) == 9
     keys = {p.provider for p in svc.PROVIDER_CAPABILITIES}
-    assert keys == EXPECTED_PROVIDERS
+    assert keys == ALL_MATRIX_PROVIDERS
 
 
 def test_provider_labels_canonical():
     actual = {p.provider: p.label for p in svc.PROVIDER_CAPABILITIES}
-    assert actual == EXPECTED_LABELS
+    assert actual == ALL_MATRIX_LABELS
 
 
 def test_maturity_values_are_valid():
@@ -117,14 +126,19 @@ def test_categories_are_valid():
         )
 
 
-def test_all_providers_have_full_security_capabilities():
-    """All 8 completed providers must have every security capability True."""
+def test_dual_stack_complete_providers_have_full_security_capabilities():
+    """Every provider with maturity == "complete" must have every security
+    capability True. Kubernetes deliberately has maturity == "partial" (drift
+    + Security Findings only, no activity ingestion/signals/correlations) and
+    is exempt by design — see its `notes` for why."""
     required_security = (
         "security_rules", "activity_ingestion", "activity_signals",
         "risk_activity_correlations", "demo_seed_clear",
         "case_report", "evidence_timeline", "evidence_graph",
     )
     for p in svc.PROVIDER_CAPABILITIES:
+        if p.maturity != "complete":
+            continue
         for cap in required_security:
             assert getattr(p.security, cap), (
                 f"{p.provider} is missing security capability {cap!r}"
@@ -132,7 +146,7 @@ def test_all_providers_have_full_security_capabilities():
 
 
 def test_all_providers_have_drift_snapshot_and_diff():
-    """All 8 providers have at minimum drift snapshots + diff available."""
+    """All 9 providers have at minimum drift snapshots + diff available."""
     for p in svc.PROVIDER_CAPABILITIES:
         assert p.drift.drift_snapshots, f"{p.provider} missing drift_snapshots"
         assert p.drift.drift_diff, f"{p.provider} missing drift_diff"
@@ -168,12 +182,14 @@ def test_drift_remediation_preview_is_honest():
 def test_summary_counts_are_correct():
     matrix = svc.get_matrix()
     summary = matrix["summary"]
-    assert summary["total_providers"] == 8
-    # All 8 have every security capability.
+    assert summary["total_providers"] == 9
+    # The 8 dual-stack-complete providers have every security capability;
+    # Kubernetes (security_rules only, no activity ingestion) does not.
     assert summary["security_complete_count"] == 8
-    # All 8 have snapshot + diff + risk_classification + review_workflow.
-    assert summary["drift_complete_count"] == 8
-    # All 8 have maturity == "complete".
+    # All 9 have snapshot + diff + risk_classification + review_workflow.
+    assert summary["drift_complete_count"] == 9
+    # 8 have maturity == "complete"; Kubernetes is "partial" (drift +
+    # security rules only, no activity ingestion/signals/correlations).
     assert summary["dual_stack_complete_count"] == 8
     # M76 template note is present.
     assert "M76" in summary["planned_next_stage"]
@@ -182,7 +198,7 @@ def test_summary_counts_are_correct():
 def test_get_matrix_structure():
     matrix = svc.get_matrix()
     assert "providers" in matrix and "summary" in matrix
-    assert len(matrix["providers"]) == 8
+    assert len(matrix["providers"]) == 9
     # Each provider dict has the expected keys.
     for pdict in matrix["providers"]:
         for key in ("provider", "label", "category", "drift", "security", "maturity", "notes"):
@@ -197,7 +213,7 @@ def test_get_matrix_structure():
 
 
 def test_get_provider_capability_lookup():
-    for provider in EXPECTED_PROVIDERS:
+    for provider in ALL_MATRIX_PROVIDERS:
         cap = svc.get_provider_capability(provider)
         assert cap is not None
         assert cap.provider == provider
@@ -232,23 +248,28 @@ def test_endpoint_returns_matrix(client):
     assert r.status_code == 200
     body = r.json()
     assert "providers" in body and "summary" in body
-    assert body["summary"]["total_providers"] == 8
+    assert body["summary"]["total_providers"] == 9
     # All expected providers present.
     returned = {p["provider"] for p in body["providers"]}
-    assert returned == EXPECTED_PROVIDERS
+    assert returned == ALL_MATRIX_PROVIDERS
 
 
 def test_endpoint_provider_labels(client):
     r = client.get("/security/provider-capabilities")
     assert r.status_code == 200
     label_map = {p["provider"]: p["label"] for p in r.json()["providers"]}
-    assert label_map == EXPECTED_LABELS
+    assert label_map == ALL_MATRIX_LABELS
 
 
 def test_endpoint_security_capabilities_complete(client):
+    """Every dual-stack "complete"-maturity provider has every security
+    capability True. Kubernetes ("partial" — drift + Security Findings only)
+    is intentionally exempt."""
     r = client.get("/security/provider-capabilities")
     assert r.status_code == 200
     for p in r.json()["providers"]:
+        if p["maturity"] != "complete":
+            continue
         sec = p["security"]
         assert sec["security_rules"] is True
         assert sec["activity_ingestion"] is True

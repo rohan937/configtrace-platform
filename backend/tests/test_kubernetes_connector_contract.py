@@ -128,13 +128,20 @@ class TestProviderDispatchWiring:
             "context": "ctx",
             "cluster_name": "staging-cluster",
         }
-        integration = integration_service.create_integration(
-            user_id=test_user.id,
-            provider="kubernetes",
-            display_name="k8s-test",
-            credentials=credentials,
-            db=db_session,
-        )
+        # Message 9: creation now validates the kubeconfig synchronously
+        # against the live API server (like every other provider), so the
+        # connector call must be stubbed the same way TestValidateCredentials
+        # stubs it above.
+        with patch.object(
+            KubernetesConnector, "validate_credentials", return_value=True,
+        ):
+            integration = integration_service.create_integration(
+                user_id=test_user.id,
+                provider="kubernetes",
+                display_name="k8s-test",
+                credentials=credentials,
+                db=db_session,
+            )
         try:
             assert integration.provider == "kubernetes"
             assert integration.encrypted_credentials is not None
@@ -287,14 +294,16 @@ class TestCapabilityMatrix:
     def test_kubernetes_drift_snapshots_true_but_nothing_else(self):
         """Regression note: drift_diff and drift_risk_classification are now
         True as of Kubernetes messages 2-5 (workload/RBAC/network/admission
-        diff tracking and structural risk routing)."""
+        diff tracking and structural risk routing). drift_review_workflow is
+        now True as of message 9 (public launch — Kubernetes uses the
+        standard review/acknowledge workflow like every other provider)."""
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("kubernetes")
         assert cap.drift.drift_snapshots is True
         assert cap.drift.drift_diff is True
         assert cap.drift.drift_risk_classification is True
-        assert cap.drift.drift_review_workflow is False
+        assert cap.drift.drift_review_workflow is True
 
     def test_kubernetes_security_stack_entirely_false(self):
         """Regression note: security_rules is now True as of Kubernetes
@@ -329,8 +338,8 @@ class TestCapabilityMatrix:
 
 class TestFrontendCatalogState:
     """Source-scan checks (no TS execution) confirming Kubernetes is present
-    for metadata lookups but NOT yet user-connectable, matching the
-    foundation-stage decision documented in kubernetes_foundation_contract.md."""
+    for metadata lookups AND fully user-connectable, matching the public
+    launch decision made in Kubernetes message 9."""
 
     def _providers_ts_text(self) -> str:
         from pathlib import Path
@@ -349,23 +358,32 @@ class TestFrontendCatalogState:
         text = self._providers_ts_text()
         assert "kubernetes: {" in text
 
-    def test_kubernetes_not_in_connectable_provider_ids(self):
+    def test_kubernetes_in_connectable_provider_ids(self):
         text = self._providers_ts_text()
         start = text.index("export const CONNECTABLE_PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"kubernetes"' not in block
+        assert '"kubernetes"' in block
 
-    def test_kubernetes_not_in_provider_ids_display_order(self):
+    def test_kubernetes_in_provider_ids_display_order(self):
         text = self._providers_ts_text()
         start = text.index("export const PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"kubernetes"' not in block
+        assert '"kubernetes"' in block
 
-    def test_kubernetes_trust_note_does_not_claim_live_coverage(self):
+    def test_kubernetes_card_copy_does_not_claim_unsupported_coverage(self):
+        """The card-facing description/monitoredSurfaces copy must not claim
+        Secret/ConfigMap scanning, runtime threat detection, vulnerability
+        scanning, audit-log monitoring, or malware detection. The trustNote
+        is exempt — it legitimately *disclaims* Secret/ConfigMap access as a
+        reassurance, the same pattern every other provider's trustNote uses."""
         text = self._providers_ts_text()
         start = text.index("kubernetes: {")
-        end = text.index("\n  },", start)
-        block = text[start:end]
-        assert "foundation" in block.lower() or "planned" in block.lower()
+        trust_note_start = text.index("trustNote:", start)
+        block = text[start:trust_note_start].lower()
+        for forbidden in (
+            "secret", "configmap", "runtime threat", "vulnerability scanning",
+            "audit-log monitoring", "malware",
+        ):
+            assert forbidden not in block, f"card copy mentions {forbidden!r}"

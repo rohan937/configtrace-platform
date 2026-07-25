@@ -1439,7 +1439,7 @@ _KUBERNETES = ProviderCapability(
         drift_snapshots=True,
         drift_diff=True,
         drift_risk_classification=True,
-        drift_review_workflow=False,
+        drift_review_workflow=True,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
@@ -1454,40 +1454,52 @@ _KUBERNETES = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Kubernetes messages 1-5 built the full drift foundation: connector "
-        "client initialization, cluster identity, namespace collection, API "
-        "discovery, fail-soft handling, and pagination (message 1); workload/Pod "
-        "security posture across Deployments/StatefulSets/DaemonSets/Jobs/"
-        "CronJobs/Pods and container security contexts (message 2); RBAC/"
-        "identity posture across ServiceAccounts/Roles/ClusterRoles/Bindings "
-        "with resolved per-subject permission summaries (message 3); network "
-        "exposure across Services/Ingresses/Gateway API/HTTPRoutes and "
-        "NetworkPolicy isolation posture (message 4); and admission control / "
-        "configuration governance across ValidatingWebhookConfigurations, "
-        "MutatingWebhookConfigurations, Pod Security Admission, ResourceQuota, "
-        "LimitRange, and namespace governance rollups (message 5). "
-        "Message 6 (this stage) adds the static Kubernetes Security Finding "
-        "layer: 59 rules across workload/Pod security, RBAC/identity, public/"
-        "network exposure, NetworkPolicy isolation, admission webhook posture, "
-        "Pod Security Admission, and namespace governance (including cross-"
-        "control combination rules such as a privileged workload paired with "
-        "weak Pod Security Admission or missing NetworkPolicy isolation). Every "
-        "rule is registered in the central evaluator/registry/confidence/pack/"
-        "coverage layers and reachable through evaluate_record() against real "
-        "connector-normalized records. Evidence is metadata-only (names, "
-        "categories, booleans, counts, CIDRs) — Secret and ConfigMap contents "
-        "remain permanently unsupported. Drift diff and structural risk "
-        "classification exist for all emitted record types, but the exhaustive "
-        "Change-classification QA pass (message 7), scale/partial-sync "
-        "hardening (message 8), and activity ingestion / signals / "
-        "correlations / demo+QA / case reporting (not yet built for this "
-        "provider) remain outstanding before Kubernetes reaches feature parity "
-        "with the fully 'complete' providers. The provider is not yet "
-        "connectable/production-ready. "
-        "planned_next_stage: Kubernetes message 7: exhaustive Change "
-        "classification QA."
+        "Kubernetes is a launched, connectable, production-certified provider "
+        "(message 9) covering configuration drift and security posture "
+        "monitoring — it is intentionally NOT a full dual-stack provider like "
+        "GitHub/AWS, and this matrix does not claim otherwise. "
+        "Messages 1-5 built the drift foundation: connector client "
+        "initialization, cluster identity, namespace collection, API "
+        "discovery, fail-soft handling, and pagination (message 1); workload/"
+        "Pod security posture across Deployments/StatefulSets/DaemonSets/"
+        "Jobs/CronJobs/Pods and container security contexts (message 2); "
+        "RBAC/identity posture across ServiceAccounts/Roles/ClusterRoles/"
+        "Bindings with resolved per-subject permission summaries (message 3); "
+        "network exposure across Services/Ingresses/Gateway API/HTTPRoutes "
+        "and NetworkPolicy isolation posture (message 4); and admission "
+        "control / configuration governance across "
+        "ValidatingWebhookConfigurations, MutatingWebhookConfigurations, Pod "
+        "Security Admission, ResourceQuota, LimitRange, and namespace "
+        "governance rollups (message 5). Message 6 added 59 Security Finding "
+        "rules across workload/Pod security, RBAC/identity, public/network "
+        "exposure, NetworkPolicy isolation, admission webhook posture, Pod "
+        "Security Admission, and namespace governance, fully registered in "
+        "the central evaluator/registry/confidence/pack/coverage layers. "
+        "Message 7 completed exhaustive Change-classification QA (fixing 20 "
+        "numeric and 1 severity-parity bug). Message 8 hardened reliability: "
+        "partial-permission/partial-sync false-removal protection, bounded "
+        "429 retry with backoff, differentiated connect/read timeouts, "
+        "permission diagnostics, and a minimum read-only RBAC manifest. "
+        "Message 9 completed public launch certification: the credential "
+        "path (kubeconfig + optional context/cluster name/namespace "
+        "allowlist) is wired end-to-end through the standard integration "
+        "creation and reconnect flow, validation returns Full/Partial/"
+        "Invalid coverage diagnostics, the integration card and setup form "
+        "are live, and RBAC-manifest/connector-call parity was re-verified. "
+        "Evidence is metadata-only (names, categories, booleans, counts, "
+        "CIDRs) — Secret and ConfigMap contents, exec/attach/logs/"
+        "port-forward, runtime/audit-event monitoring, and vulnerability/"
+        "malware scanning remain permanently unsupported. Activity "
+        "ingestion / signals / correlations / demo+QA / case reporting are "
+        "not planned for this provider; Kubernetes' security stack is "
+        "Security Findings only. Kubernetes expansion is complete — future "
+        "work would only be taken up for a concrete customer requirement or "
+        "production defect."
     ),
 )
+
+
+PROVIDER_CAPABILITIES.append(_KUBERNETES)
 
 
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
@@ -1503,7 +1515,6 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
-    _KUBERNETES,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

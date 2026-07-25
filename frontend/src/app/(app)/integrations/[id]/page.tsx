@@ -682,6 +682,96 @@ function ProviderOverview({
     );
   }
 
+  if (integration.provider === "kubernetes") {
+    const clusterResource =
+      resources.find((r) => r.provider_resource_type === "kubernetes_cluster") ?? resource;
+    const meta = (clusterResource?.metadata ?? {}) as Record<string, unknown>;
+    const clusterName =
+      (meta.cluster_name as string | undefined) ?? clusterResource?.display_name ?? "—";
+    const contextName = (meta.context_name as string | undefined) ?? null;
+    const namespaceCount = meta.visible_namespace_count as number | undefined;
+
+    return (
+      <Panel title="Kubernetes overview">
+        <MetaRow
+          label="Cluster"
+          value={<span style={{ color: "#8b90a0" }}>{clusterName}</span>}
+        />
+        <MetaRow
+          label="Context"
+          value={
+            contextName ? (
+              <code style={{ fontSize: "11px", color: "#8b90a0", fontFamily: "monospace" }}>
+                {contextName}
+              </code>
+            ) : (
+              <span style={{ color: "#565b6e" }}>Kubeconfig current-context</span>
+            )
+          }
+        />
+        {typeof namespaceCount === "number" && (
+          <MetaRow
+            label="Visible namespaces"
+            value={<span style={{ color: "#8b90a0" }}>{namespaceCount}</span>}
+          />
+        )}
+        <MetaRow
+          label="Last snapshot"
+          value={
+            clusterResource?.last_snapshot_at ? (
+              <span title={formatAbsoluteTime(clusterResource.last_snapshot_at)}>
+                {formatRelativeTime(clusterResource.last_snapshot_at)}
+              </span>
+            ) : (
+              <span style={{ color: "#565b6e" }}>Never</span>
+            )
+          }
+        />
+        <div style={{ marginTop: "8px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "6px",
+            }}
+          >
+            Monitored categories
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {[
+              "Workload security (Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Pods)",
+              "RBAC (ServiceAccounts, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings)",
+              "Networking (Services, Ingresses, Gateway API, NetworkPolicies)",
+              "Admission control (Validating/Mutating webhooks, Pod Security Admission)",
+              "Namespace governance (ResourceQuota, LimitRange)",
+            ].map((cat) => (
+              <li
+                key={cat}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  padding: "2px 0",
+                  paddingLeft: "12px",
+                  position: "relative",
+                }}
+              >
+                <span style={{ position: "absolute", left: 0, color: "#3a3d4a" }}>·</span>
+                {cat}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <p style={{ margin: "10px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          Secret and ConfigMap contents are never accessed. Coverage may be partial if some API
+          groups are not readable by the supplied credential — previously-known resources are
+          never reported as removed merely because a permission was revoked.
+        </p>
+      </Panel>
+    );
+  }
+
   return (
     <Panel title="Provider overview">
       <p style={{ fontSize: "12px", color: "#565b6e", margin: 0 }}>

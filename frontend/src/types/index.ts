@@ -184,7 +184,9 @@ export interface IntegrationCreateRequest {
     // ── M87A — GitLab drift provider foundation ───────────────────────────────
     | "gitlab"
     // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
-    | "terraform_cloud";
+    | "terraform_cloud"
+    // ── Kubernetes message 9 — public launch ───────────────────────────────────
+    | "kubernetes";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -393,6 +395,22 @@ export interface IntegrationCreateRequest {
    * Defaults to https://app.terraform.io if omitted.
    */
   terraform_cloud_base_url?: string;
+  // ── Kubernetes fields (message 9 — public launch) ──────────────────────────
+  /**
+   * Full kubeconfig YAML content for the cluster to monitor.
+   * Required for the kubernetes provider. Sent to backend once; never stored
+   * in frontend state after submission, never logged, never echoed back.
+   * Stored encrypted server-side — NEVER returned in API responses.
+   * 'exec' and 'auth-provider' auth entries in the selected context are
+   * rejected at connection time.
+   */
+  kubeconfig?: string;
+  /** Optional kubeconfig context. Defaults to the kubeconfig's current-context if omitted. */
+  context?: string;
+  /** Optional display name for the cluster (non-authoritative). */
+  cluster_name?: string;
+  /** Optional namespace allowlist. Omitted means all visible namespaces are collected. */
+  namespace_allowlist?: string[];
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

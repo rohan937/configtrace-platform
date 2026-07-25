@@ -948,6 +948,31 @@ class IntegrationReconnectRequest(BaseModel):
             "Stored encrypted — never returned in API responses."
         ),
     )
+    kubeconfig: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New kubeconfig YAML content. Required for Kubernetes integrations. "
+            "A kubeconfig for the SAME cluster (including a rotated credential) "
+            "is accepted; a kubeconfig for a genuinely different cluster is "
+            "rejected. Stored encrypted — never returned in API responses."
+        ),
+    )
+    context: Optional[str] = Field(
+        None,
+        description=(
+            "Optional kubeconfig context to use. Defaults to the kubeconfig's "
+            "current-context if omitted. Kubernetes integrations only."
+        ),
+    )
+    cluster_name: Optional[str] = Field(
+        None,
+        description="Optional display name update. Kubernetes integrations only.",
+    )
+    namespace_allowlist: Optional[list[str]] = Field(
+        None,
+        description="Optional namespace allowlist update. Kubernetes integrations only.",
+    )
 
 
 class IntegrationResponse(BaseModel):

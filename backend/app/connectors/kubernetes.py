@@ -5167,7 +5167,7 @@ def run_live_kubernetes_validation(kubeconfig_path: str, *, context_name: Option
 
     credentials = {"kubeconfig": kubeconfig_content}
     if context_name:
-        credentials["context_name"] = context_name
+        credentials["context"] = context_name
 
     connector = KubernetesConnector()
     records = connector.fetch(credentials)

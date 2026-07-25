@@ -256,6 +256,18 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
         if body.gitlab_base_url:
             creds["base_url"] = body.gitlab_base_url
         return creds
+    # ── Kubernetes provider (message 9 — public launch) ──────────────────────
+    elif body.provider == "kubernetes":
+        # SECURITY: kubeconfig is NEVER logged here or in the service. It is
+        # stored encrypted and never echoed back in any API response.
+        creds = {"kubeconfig": body.kubeconfig}
+        if body.context:
+            creds["context"] = body.context
+        if body.cluster_name:
+            creds["cluster_name"] = body.cluster_name
+        if body.namespace_allowlist:
+            creds["namespace_allowlist"] = body.namespace_allowlist
+        return creds
     return {}
 
 
@@ -841,6 +853,40 @@ def reconnect_integration(
             raise HTTPException(
                 status_code=502,
                 detail=f"Could not reach Shopify: {exc}",
+            ) from exc
+        return _build_response(integration, db)
+    elif integration.provider == "kubernetes":
+        if not body.kubeconfig:
+            raise HTTPException(
+                status_code=422,
+                detail="kubeconfig is required for Kubernetes integrations.",
+            )
+        try:
+            integration = integration_service.reconnect_credentials_kubernetes(
+                integration_id=integration_id,
+                user_id=current_user.id,
+                new_kubeconfig=body.kubeconfig,
+                new_context=body.context,
+                new_cluster_name=body.cluster_name,
+                new_namespace_allowlist=body.namespace_allowlist,
+                db=db,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Authentication failed: {exc}",
+            ) from exc
+        except ConnectorError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider validation error: {exc}",
+            ) from exc
+        except NetworkError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach the Kubernetes API server: {exc}",
             ) from exc
         return _build_response(integration, db)
     else:
