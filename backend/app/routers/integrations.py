@@ -268,6 +268,10 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
         if body.namespace_allowlist:
             creds["namespace_allowlist"] = body.namespace_allowlist
         return creds
+    # ── Okta provider (message 1 — provider foundation) ──────────────────────
+    elif body.provider == "okta":
+        # SECURITY: okta_api_token is NEVER logged here or in the service.
+        return {"org_url": body.okta_org_url, "api_token": body.okta_api_token}
     return {}
 
 

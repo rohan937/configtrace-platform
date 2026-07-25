@@ -30,6 +30,9 @@ Design decisions
   - Record types starting with ``"kubernetes_"`` → Kubernetes rule set
     (``app.services.risk_rules.kubernetes``) — foundation-stage only; see
     that module's docstring for scope.
+  - Record types starting with ``"okta_"`` → Okta rule set
+    (``app.services.risk_rules.okta``) — foundation-stage only (message 1
+    of 8); see that module's docstring for scope.
   - All other records → Cloudflare DNS rule set
     (``app.services.risk_rules.cloudflare_dns``).
   This approach works without a DB lookup: the record type is embedded in
@@ -166,6 +169,10 @@ def classify_change(change: Change) -> tuple[str, str]:
     if record_type.startswith("kubernetes_"):
         from app.services.risk_rules.kubernetes import classify_kubernetes_change
         return classify_kubernetes_change(change)
+
+    if record_type.startswith("okta_"):
+        from app.services.risk_rules.okta import classify_okta_change
+        return classify_okta_change(change)
 
     if record_type == "cloudflare_ruleset":
         from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change

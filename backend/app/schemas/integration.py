@@ -32,6 +32,9 @@ Supported providers
 ``kubernetes``  (Kubernetes message 1 — provider foundation)
     Credentials: ``kubeconfig`` + optional ``context`` + optional ``cluster_name``
                  + optional ``namespace_allowlist``.
+``okta``  (Okta message 1 — provider foundation)
+    Credentials: ``okta_org_url`` + ``okta_api_token``.
+    Foundation stage — not yet publicly connectable.
 
 Provider-specific fields are made optional at the Pydantic level and
 cross-validated by ``validate_provider_fields`` to produce clear error
@@ -87,6 +90,8 @@ class IntegrationCreateRequest(BaseModel):
         "terraform_cloud",
         # Kubernetes message 1 — provider architecture foundation.
         "kubernetes",
+        # Okta message 1 — provider architecture foundation.
+        "okta",
     ] = Field(
         ...,
         description=(
@@ -602,6 +607,25 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Okta fields (message 1 — provider foundation) ──────────────────────────
+    okta_org_url: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='okta'. "
+            "Okta org base URL, e.g. 'https://example.okta.com'. Custom "
+            "Okta domains are supported. Must use https://, no embedded "
+            "credentials, no query string or path."
+        ),
+    )
+    okta_api_token: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='okta'. "
+            "Okta API token (sent as 'Authorization: SSWS <token>'). "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -807,6 +831,16 @@ class IntegrationCreateRequest(BaseModel):
             if not self.kubeconfig:
                 raise ValueError(
                     "kubeconfig is required for Kubernetes integrations."
+                )
+        # ── Okta message 1 — provider foundation ───────────────────────────────
+        elif self.provider == "okta":
+            if not self.okta_org_url:
+                raise ValueError(
+                    "okta_org_url is required for Okta integrations."
+                )
+            if not self.okta_api_token:
+                raise ValueError(
+                    "okta_api_token is required for Okta integrations."
                 )
         return self
 

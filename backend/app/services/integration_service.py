@@ -281,13 +281,24 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── Okta message 1 — provider foundation ──────────────────────────────────
+    elif provider == "okta":
+        return _create_okta_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
             "'twilio', 'sendgrid', 'auth0', 'datadog', 'clerk', 'pagerduty', "
-            "'linear', 'jira', 'kubernetes'."
+            "'linear', 'jira', 'kubernetes', 'okta'."
         )
 
 
@@ -1596,6 +1607,79 @@ def _create_kubernetes_integration(
         resource_metadata={
             "cluster_name": cluster_name or None,
             "context_name": context_name or None,
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_okta_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create an Okta integration + org resource (Okta message 1 of 8).
+
+    SECURITY: credentials["api_token"] is NEVER logged, NEVER returned,
+    NEVER stored in plaintext outside the encrypted credentials column, and
+    NEVER copied into resource_metadata. Only the user-supplied display
+    name and the non-secret org_url are used for resource identity.
+
+    Live API validation (parsing org_url, confirming the token is accepted
+    and the org is reachable via GET /api/v1/org) is deferred to the first
+    sync, matching the established pattern for the majority of ConfigTrace
+    providers (Auth0, GitLab, Jira, Kubernetes, etc.) — this avoids leaking
+    tenant-reachability details through a synchronous create-time error
+    message.
+
+    Okta is registered internally (dispatch, schema, capability matrix) but
+    is NOT publicly connectable — it is excluded from the frontend's
+    PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Okta message 8.
+    """
+    org_url = (credentials.get("org_url") or "").strip()
+
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="okta",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ─────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the non-secret org_url the user
+    # supplied. api_token is NEVER copied here — the real stable tenant
+    # identity is computed by the connector from the Okta org's immutable
+    # `id` field (or the normalized hostname as a fallback) during fetch(),
+    # not at creation time.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="okta_organization",
+        provider_resource_id=str(integration.id),
+        display_name=f"{display_name} ({org_url})" if org_url else display_name,
+        resource_metadata={
+            "org_url": org_url or None,
         },
         is_active=True,
     )

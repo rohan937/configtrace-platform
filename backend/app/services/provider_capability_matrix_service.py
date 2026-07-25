@@ -1502,6 +1502,53 @@ _KUBERNETES = ProviderCapability(
 PROVIDER_CAPABILITIES.append(_KUBERNETES)
 
 
+_OKTA = ProviderCapability(
+    provider="okta",
+    label="Okta",
+    category="auth",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=True,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Okta message 1 of 8 (foundation). Establishes a secure, read-only "
+        "connector using an Okta API token: org_url normalization/SSRF "
+        "guard, SSWS-header authentication, a stable tenant identity "
+        "(preferring the org's immutable id, falling back to the "
+        "normalized org hostname), RFC5988 Link-header pagination with "
+        "same-origin enforcement and cycle detection, bounded 429 retry "
+        "with injectable-sleep backoff, and read-only capability probes "
+        "for the seven future record families (users, groups, "
+        "applications, policies, authenticators, admin roles, System "
+        "Log) — never a broad enumeration. Only two record types exist "
+        "at this stage: okta_organization and okta_api_capability. Users, "
+        "groups, applications, policies, authenticators, admin roles, and "
+        "System Log events are NOT collected yet — see "
+        "okta_foundation_contract.md for the full sensitive-data boundary "
+        "and the message 2-8 roadmap. The provider is registered "
+        "internally (dispatch, schema, capability matrix, sync scheduling) "
+        "but is NOT publicly connectable — excluded from the frontend's "
+        "PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Okta message 8. "
+        "planned_next_stage: Okta message 2: users, groups, memberships, "
+        "lifecycle posture."
+    ),
+)
+
+
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
@@ -1515,6 +1562,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
+    _OKTA,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

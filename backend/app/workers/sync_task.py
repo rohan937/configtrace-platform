@@ -356,6 +356,12 @@ def sync_integration(
 
                 connector = KubernetesConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "okta":
+                # SECURITY: api_token is NEVER logged.
+                from app.connectors.okta import OktaConnector
+
+                connector = OktaConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

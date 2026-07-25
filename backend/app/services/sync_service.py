@@ -270,6 +270,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "gitlab",
         "terraform_cloud",
         "kubernetes",
+        "okta",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

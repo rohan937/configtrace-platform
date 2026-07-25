@@ -42,7 +42,11 @@ export type ProviderId =
   // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
   | "terraform_cloud"
   // ── Kubernetes message 9 — public launch (fully connectable) ──────────────
-  | "kubernetes";
+  | "kubernetes"
+  // ── Okta message 1 — provider architecture foundation (not yet
+  //    user-connectable; intentionally excluded from PROVIDER_IDS and
+  //    CONNECTABLE_PROVIDER_IDS until Okta message 8) ─────────────────────
+  | "okta";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
 export type ProviderCategory =
@@ -554,6 +558,31 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#326CE5",
     bgColor: "rgba(50,108,229,0.10)",
     borderColor: "rgba(50,108,229,0.25)",
+  },
+
+  // ── Okta message 1 — provider architecture foundation ──────────────────────
+  // NOT included in PROVIDER_IDS or CONNECTABLE_PROVIDER_IDS yet — there is
+  // no connect-form UI built yet, so this entry exists only so
+  // getProviderMeta("okta") resolves safely if referenced. Do not surface
+  // this provider as connectable or "Live" until Okta message 8.
+  okta: {
+    id: "okta",
+    label: "Okta",
+    shortLabel: "Okta",
+    category: "identity",
+    description:
+      "Connect an Okta org with a read-only API token. ConfigTrace will monitor user/group lifecycle posture, application assignments and SSO configuration, sign-on and MFA policy posture, and privileged admin role assignments.",
+    monitoredSurfaces: [
+      "Users, groups, and group memberships (planned)",
+      "Applications, assignments, and SSO configuration (planned)",
+      "Policies, MFA/authenticator configuration, and sign-on controls (planned)",
+      "Privileged/admin role assignments and identity-risk posture (planned)",
+    ],
+    trustNote:
+      "ConfigTrace stores your Okta API token encrypted and uses it only to read org configuration metadata. It does not store the API token value, passwords, password hashes, recovery answers, MFA secrets, OTP seeds, session/refresh/access tokens, private keys, or raw System Log payloads. This provider is in architecture-foundation stage: only org identity and read-permission capability metadata are currently collected. User, group, application, policy, and admin-role monitoring are planned in upcoming stages and are not yet live.",
+    color: "#007DC1",
+    bgColor: "rgba(0,125,193,0.10)",
+    borderColor: "rgba(0,125,193,0.25)",
   },
 
   // ── M87A — GitLab drift provider foundation ────────────────────────────────

@@ -3350,6 +3350,24 @@ _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "kubernetes_namespace_governance_posture": _KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE_TRACKED_FIELDS,
 }
 
+# ── Okta foundation tracked fields (Okta message 1 of 8) ────────────────────
+#
+# Only durable tenant configuration is tracked for okta_organization — never
+# timestamps, request IDs, or API counters. okta_api_capability's "status"
+# IS tracked (capability gained/lost is diagnostically useful — see
+# risk_rules/okta.py for how this is classified as informational/low, never
+# a security incident on its own).
+_OKTA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "okta_organization": (
+        "org_hostname",
+        "org_display_name",
+        "status_category",
+    ),
+    "okta_api_capability": (
+        "status",
+    ),
+}
+
 
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
@@ -3444,6 +3462,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _AZURE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("kubernetes_"):
         return _KUBERNETES_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("okta_"):
+        return _OKTA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Unknown cloudflare_* subtypes return () (empty), matching every
