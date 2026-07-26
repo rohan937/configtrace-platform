@@ -60,20 +60,31 @@ from app.connectors.okta_schema import (
     MFA_REQUIREMENT_RANK,
     MFA_REQUIREMENT_UNKNOWN,
     NOT_PHISHING_RESISTANT,
+    OKTA_ADMIN_ROLE,
     OKTA_API_CAPABILITY,
     OKTA_APPLICATION,
     OKTA_APPLICATION_GROUP_ASSIGNMENT,
     OKTA_APPLICATION_USER_ASSIGNMENT,
     OKTA_AUTHENTICATOR,
     OKTA_GROUP,
+    OKTA_GROUP_ADMIN_ROLE_ASSIGNMENT,
     OKTA_GROUP_MEMBERSHIP,
     OKTA_ORGANIZATION,
     OKTA_POLICY,
     OKTA_POLICY_RULE,
+    OKTA_PRIVILEGED_GROUP,
+    OKTA_PRIVILEGED_IDENTITY,
     OKTA_USER,
+    OKTA_USER_ADMIN_ROLE_ASSIGNMENT,
     ORG_STATUS_ACTIVE,
     PHISHING_RESISTANCE_UNKNOWN,
     PHISHING_RESISTANT,
+    PRIVILEGE_TIER_CRITICAL,
+    PRIVILEGE_TIER_HIGH,
+    PRIVILEGE_TIER_MEDIUM,
+    PRIVILEGE_TIER_RANK,
+    PRIVILEGE_TIER_READ_ONLY,
+    PRIVILEGE_TIER_UNKNOWN,
     lifecycle_posture_for_status,
 )
 
@@ -824,5 +835,314 @@ def classify_okta_change(change: object) -> tuple[str, str]:
         return _classify_rule_change(change)
     if record_type == OKTA_AUTHENTICATOR:
         return _classify_authenticator_change(change)
+    if record_type == OKTA_ADMIN_ROLE:
+        return _classify_admin_role_change(change)
+    if record_type == OKTA_USER_ADMIN_ROLE_ASSIGNMENT:
+        return _classify_user_admin_role_assignment_change(change)
+    if record_type == OKTA_GROUP_ADMIN_ROLE_ASSIGNMENT:
+        return _classify_group_admin_role_assignment_change(change)
+    if record_type == OKTA_PRIVILEGED_IDENTITY:
+        return _classify_privileged_identity_change(change)
+    if record_type == OKTA_PRIVILEGED_GROUP:
+        return _classify_privileged_group_change(change)
 
     return "low", f"An Okta configuration record changed ({record_type or 'unknown record type'})."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Privileged identity / administrator role classifiers (Okta message 5 of 8)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Severity-by-tier convention (grant/added events), matching this
+# codebase's existing AWS AdministratorAccess-attachment precedent
+# (`_classify_iam_policy_attachment_change` in risk_rules/aws.py, which
+# already uses "critical" for an equivalently unrestricted grant) and
+# GitHub's collaborator-permission-rank precedent
+# (`_classify_collaborator` in risk_rules/github.py):
+#   critical tier (SUPER_ADMIN)                -> critical
+#   high tier (ORG_ADMIN, API_ACCESS_MGMT, ...) -> high
+#   medium tier (APP/USER/GROUP/HELP_DESK/...)  -> medium
+#   read_only / low tier                        -> low
+#   unknown tier                                -> medium (never assumed safe)
+# Removal is ALWAYS low/improvement regardless of tier — hardening is
+# never High just because the role being removed was important.
+
+_TIER_GRANT_SEVERITY: dict = {
+    PRIVILEGE_TIER_CRITICAL: "critical",
+    PRIVILEGE_TIER_HIGH: "high",
+    PRIVILEGE_TIER_MEDIUM: "medium",
+    PRIVILEGE_TIER_READ_ONLY: "low",
+    "low": "low",
+    PRIVILEGE_TIER_UNKNOWN: "medium",
+}
+
+
+def _severity_for_tier_grant(tier: object) -> str:
+    return _TIER_GRANT_SEVERITY.get(tier, "medium")
+
+
+def _tier_rank(tier: object) -> int:
+    return PRIVILEGE_TIER_RANK.get(tier, 0) if isinstance(tier, str) else 0
+
+
+def _reactivation_severity(privilege_tier: object) -> str:
+    """Severity for a privileged identity's user_status transitioning
+    into ACTIVE from a restrictive status (SUSPENDED/LOCKED_OUT/
+    DEPROVISIONED) — reactivation restores whatever privilege the
+    identity still holds, so severity follows the SAME tier mapping as a
+    fresh grant."""
+    return _severity_for_tier_grant(privilege_tier)
+
+
+# ── okta_admin_role ─────────────────────────────────────────────────────────
+
+
+def _classify_admin_role_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    pm = _get(change, "provider_metadata")
+    pm = pm if isinstance(pm, dict) else {}
+    role_type = pm.get("role_type") or "unknown"
+    tier = pm.get("privilege_tier") or PRIVILEGE_TIER_UNKNOWN
+
+    if ct == "added":
+        # Cataloging a newly-observed role DEFINITION is informational —
+        # the actual privilege grant is the separate assignment record's
+        # own "added" event. A custom role whose permissions imply
+        # high/critical tier is still worth a look at definition time.
+        if tier in (PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH):
+            return (
+                "medium",
+                f"A new Okta administrator role ({role_type!r}) was observed with "
+                f"a {tier} privilege tier.",
+            )
+        return "low", f"A new Okta administrator role ({role_type!r}) was observed."
+    if ct == "removed":
+        return (
+            "low",
+            f"An Okta administrator role ({role_type!r}) is no longer visible to "
+            "ConfigTrace. This does not by itself confirm the role was deleted.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "privilege_tier":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_r, nv_r = _tier_rank(pv), _tier_rank(nv)
+        if nv_r > pv_r:
+            return (
+                _severity_for_tier_grant(nv),
+                f"An Okta administrator role's privilege tier increased ({pv} -> {nv}).",
+            )
+        if nv_r < pv_r:
+            return "low", f"An Okta administrator role's privilege tier decreased ({pv} -> {nv})."
+        return "medium", "An Okta administrator role's privilege tier became unrecognized."
+    if fp == "permissions_count":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return "medium", f"An Okta custom administrator role's permission count increased ({pv} -> {nv})."
+        return "low", "An Okta custom administrator role's permission count changed."
+    if fp == "role_label":
+        return "low", "An Okta administrator role was renamed."
+    return "low", "An Okta administrator role's configuration changed."
+
+
+# ── okta_user_admin_role_assignment / okta_group_admin_role_assignment ──────
+
+
+def _classify_admin_role_assignment_change(change: object, *, principal_noun: str) -> tuple[str, str]:
+    """Shared logic for user- and group-admin-role assignment Changes —
+    the only difference between the two record types is the wording
+    ("A user"/"A group")."""
+    ct = (_get(change, "change_type") or "").lower()
+    pm = _get(change, "provider_metadata")
+    pm = pm if isinstance(pm, dict) else {}
+    role_type = pm.get("role_type") or "unknown"
+    tier = pm.get("privilege_tier") or PRIVILEGE_TIER_UNKNOWN
+
+    if ct == "added":
+        severity = _severity_for_tier_grant(tier)
+        if role_type == "SUPER_ADMIN":
+            return severity, f"{principal_noun} was granted the Super Administrator role."
+        return severity, f"{principal_noun} was granted the {role_type!r} administrator role."
+    if ct == "removed":
+        return (
+            "low",
+            f"{principal_noun}'s {role_type!r} administrator role assignment is no longer "
+            "visible to ConfigTrace.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "privilege_tier":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_r, nv_r = _tier_rank(pv), _tier_rank(nv)
+        if nv_r > pv_r:
+            return _severity_for_tier_grant(nv), f"{principal_noun}'s administrator privilege tier increased ({pv} -> {nv})."
+        if nv_r < pv_r:
+            return "low", f"{principal_noun}'s administrator privilege tier decreased ({pv} -> {nv})."
+        return "medium", f"{principal_noun}'s administrator privilege tier became unrecognized."
+    if fp == "role_type":
+        nv = _get(change, "new_value")
+        if nv == "SUPER_ADMIN":
+            return "critical", f"{principal_noun}'s administrator role was changed to Super Administrator."
+        return "medium", f"{principal_noun}'s administrator role type changed."
+    if fp == "assignment_scope_category":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if nv == "all" and pv == "scoped":
+            severity = "high" if tier in (PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH) else "medium"
+            return severity, f"{principal_noun}'s {role_type!r} administrator role scope was broadened to all resources."
+        if nv == "scoped" and pv == "all":
+            return "low", f"{principal_noun}'s {role_type!r} administrator role scope was narrowed."
+        return "medium", f"{principal_noun}'s administrator role scope became unrecognized."
+    if fp == "resource_set_scope_category":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if nv == "all_resources" and pv == "scoped":
+            severity = "high" if tier in (PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH) else "medium"
+            return severity, f"{principal_noun}'s custom-role resource set was broadened to all resources."
+        if nv == "scoped" and pv == "all_resources":
+            return "low", f"{principal_noun}'s custom-role resource set was narrowed."
+        return "medium", f"{principal_noun}'s custom-role resource-set scope became unrecognized."
+    if fp == "active":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "low", f"{principal_noun}'s {role_type!r} administrator role assignment was deactivated."
+        return "medium", f"{principal_noun}'s {role_type!r} administrator role assignment was activated."
+    if fp == "user_status":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        restrictive = {"SUSPENDED", "LOCKED_OUT", "DEPROVISIONED"}
+        if nv == "ACTIVE" and pv in restrictive:
+            return (
+                _reactivation_severity(tier),
+                f"{principal_noun} holding the {role_type!r} administrator role was "
+                f"reactivated (was {pv}). This restores whatever privilege the role grants.",
+            )
+        if nv in restrictive:
+            return "low", f"{principal_noun} holding the {role_type!r} administrator role became {nv}."
+        return "medium", f"{principal_noun} holding the {role_type!r} administrator role has an unrecognized status."
+    if fp == "custom":
+        return "low", f"{principal_noun}'s administrator role assignment custom-role flag changed."
+    return "low", f"{principal_noun}'s administrator role assignment configuration changed."
+
+
+def _classify_user_admin_role_assignment_change(change: object) -> tuple[str, str]:
+    return _classify_admin_role_assignment_change(change, principal_noun="A user")
+
+
+def _classify_group_admin_role_assignment_change(change: object) -> tuple[str, str]:
+    return _classify_admin_role_assignment_change(change, principal_noun="A group")
+
+
+# ── okta_privileged_identity ─────────────────────────────────────────────────
+
+
+def _classify_privileged_identity_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    pm = _get(change, "provider_metadata")
+    pm = pm if isinstance(pm, dict) else {}
+    tier = pm.get("highest_privilege_tier") or PRIVILEGE_TIER_UNKNOWN
+
+    if ct == "added":
+        return (
+            _severity_for_tier_grant(tier),
+            f"A user became a privileged Okta identity (highest privilege tier: {tier}).",
+        )
+    if ct == "removed":
+        return "low", "A user is no longer a privileged Okta identity (holds no admin roles ConfigTrace can see)."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "has_super_admin":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return "critical", "A user was granted the Super Administrator role."
+        return "low", "A user's Super Administrator privilege was removed."
+    if fp == "has_high_privilege":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return "high", "A user gained high-tier Okta administrative privilege."
+        return "low", "A user's high-tier Okta administrative privilege was removed."
+    if fp == "highest_privilege_tier":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_r, nv_r = _tier_rank(pv), _tier_rank(nv)
+        if nv_r > pv_r:
+            return _severity_for_tier_grant(nv), f"A privileged Okta identity's highest privilege tier increased ({pv} -> {nv})."
+        if nv_r < pv_r:
+            return "low", f"A privileged Okta identity's highest privilege tier decreased ({pv} -> {nv})."
+        return "medium", "A privileged Okta identity's highest privilege tier became unrecognized."
+    if fp == "privileged_via_group":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return _severity_for_tier_grant(tier), "A user gained administrative privilege via group membership."
+        return "low", "A user no longer holds administrative privilege via group membership."
+    if fp == "privileged_via_direct_assignment":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return _severity_for_tier_grant(tier), "A user gained administrative privilege via a direct role assignment."
+        return "low", "A user no longer holds a direct administrative role assignment."
+    if fp in ("direct_admin_role_count", "group_admin_role_count", "custom_admin_role_count"):
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return "medium", f"A privileged Okta identity's {fp.replace('_', ' ')} increased ({pv} -> {nv})."
+        return "low", f"A privileged Okta identity's {fp.replace('_', ' ')} changed."
+    if fp == "application_admin_scope":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if nv == "all" and pv == "scoped":
+            return "medium", "A privileged Okta identity's application-admin scope was broadened to all applications."
+        return "low", "A privileged Okta identity's application-admin scope changed."
+    if fp == "user_status":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        restrictive = {"SUSPENDED", "LOCKED_OUT", "DEPROVISIONED"}
+        if nv == "ACTIVE" and pv in restrictive:
+            return (
+                _reactivation_severity(tier),
+                f"A privileged Okta identity (highest tier: {tier}) was reactivated (was {pv}), "
+                "restoring its administrative privilege.",
+            )
+        if nv in restrictive:
+            return "low", f"A privileged Okta identity became {nv}. Its admin privilege remains assigned but is not currently usable."
+        return "medium", "A privileged Okta identity's status became unrecognized."
+    if fp == "dormant_privileged_category":
+        return "low", "A privileged Okta identity's login-activity posture changed."
+    return "low", "A privileged Okta identity's derived posture changed."
+
+
+# ── okta_privileged_group ────────────────────────────────────────────────────
+
+
+def _classify_privileged_group_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    pm = _get(change, "provider_metadata")
+    pm = pm if isinstance(pm, dict) else {}
+    tier = pm.get("highest_privilege_tier") or PRIVILEGE_TIER_UNKNOWN
+
+    if ct == "added":
+        return (
+            _severity_for_tier_grant(tier),
+            f"A group became an Okta privileged group (highest privilege tier: {tier}). "
+            "Every current and future member of this group inherits that privilege.",
+        )
+    if ct == "removed":
+        return "low", "A group is no longer an Okta privileged group (holds no direct admin-role assignment ConfigTrace can see)."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "highest_privilege_tier":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        pv_r, nv_r = _tier_rank(pv), _tier_rank(nv)
+        if nv_r > pv_r:
+            return _severity_for_tier_grant(nv), f"An Okta privileged group's highest privilege tier increased ({pv} -> {nv})."
+        if nv_r < pv_r:
+            return "low", f"An Okta privileged group's highest privilege tier decreased ({pv} -> {nv})."
+        return "medium", "An Okta privileged group's highest privilege tier became unrecognized."
+    if fp == "admin_role_count":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return _severity_for_tier_grant(tier), f"An Okta privileged group's admin-role count increased ({pv} -> {nv})."
+        return "low", "An Okta privileged group's admin-role count decreased."
+    if fp == "member_count":
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return "medium", f"An Okta privileged group's membership grew ({pv} -> {nv}). More users now inherit its admin privilege."
+        return "low", "An Okta privileged group's membership shrank."
+    if fp in ("contains_suspended_members", "contains_deprovisioned_members"):
+        pv, nv = _get(change, "prev_value"), _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return "medium", f"An Okta privileged group now contains more {fp.replace('contains_', '').replace('_', ' ')} ({pv} -> {nv})."
+        return "low", f"An Okta privileged group's {fp.replace('contains_', '').replace('_', ' ')} count decreased."
+    return "low", "An Okta privileged group's derived posture changed."

@@ -3523,6 +3523,66 @@ _OKTA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         # "inherence_factor" is never tracked — it is always None (never
         # fabricated), so tracking it would never produce a meaningful Change.
     ),
+    "okta_admin_role": (
+        "role_type",
+        "role_label",
+        "privilege_tier",
+        "custom",
+        "built_in",
+        "permissions_count",
+        # "collection_completeness" is a collection-provenance marker, not a
+        # posture field, so it is intentionally not tracked.
+    ),
+    "okta_user_admin_role_assignment": (
+        "user_status",
+        "role_type",
+        "privilege_tier",
+        "custom",
+        "direct_assignment",
+        "assignment_scope_category",
+        "resource_set_scope_category",
+        "active",
+        # "user_login" is display-only; renames alone should not produce a
+        # Change on an assignment edge (mirrors okta_group_membership's
+        # precedent of not tracking a purely-cosmetic denormalized field).
+        # "resource_set_app_count"/"resource_set_group_count"/
+        # "resource_set_user_count" are intentionally NOT tracked at the
+        # field level, for the same reason okta_policy_rule doesn't track
+        # its raw group/user targeting counts — "resource_set_scope_category"
+        # (the collapsed posture) is tracked instead.
+    ),
+    "okta_group_admin_role_assignment": (
+        "group_name",
+        "role_type",
+        "privilege_tier",
+        "custom",
+        "assignment_scope_category",
+        "resource_set_scope_category",
+        "active",
+    ),
+    "okta_privileged_identity": (
+        "user_status",
+        "direct_admin_role_count",
+        "group_admin_role_count",
+        "highest_privilege_tier",
+        "has_super_admin",
+        "has_high_privilege",
+        "privileged_via_group",
+        "privileged_via_direct_assignment",
+        "custom_admin_role_count",
+        "application_admin_scope",
+        "dormant_privileged_category",
+        # "last_login_category" is tracked via "dormant_privileged_category"
+        # (its own derived posture); tracking both would duplicate the same
+        # underlying signal into two Change rows for one real-world event.
+    ),
+    "okta_privileged_group": (
+        "member_count",
+        "admin_role_count",
+        "highest_privilege_tier",
+        "contains_suspended_members",
+        "contains_deprovisioned_members",
+    ),
 }
 
 
@@ -4079,6 +4139,41 @@ def _build_provider_metadata(
         metadata["key"] = context_record.get("key") or record.get("key") or ""
         metadata["phishing_resistant_category"] = (
             context_record.get("phishing_resistant_category") or record.get("phishing_resistant_category") or ""
+        )
+    if record.get("record_type") == "okta_admin_role":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["role_id"] = context_record.get("role_id") or record.get("role_id") or ""
+        metadata["role_type"] = context_record.get("role_type") or record.get("role_type") or ""
+        metadata["privilege_tier"] = context_record.get("privilege_tier") or record.get("privilege_tier") or ""
+    if record.get("record_type") == "okta_user_admin_role_assignment":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["user_login"] = context_record.get("user_login") or record.get("user_login") or ""
+        metadata["role_id"] = context_record.get("role_id") or record.get("role_id") or ""
+        metadata["role_type"] = context_record.get("role_type") or record.get("role_type") or ""
+        metadata["privilege_tier"] = context_record.get("privilege_tier") or record.get("privilege_tier") or ""
+    if record.get("record_type") == "okta_group_admin_role_assignment":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+        metadata["role_id"] = context_record.get("role_id") or record.get("role_id") or ""
+        metadata["role_type"] = context_record.get("role_type") or record.get("role_type") or ""
+        metadata["privilege_tier"] = context_record.get("privilege_tier") or record.get("privilege_tier") or ""
+    if record.get("record_type") == "okta_privileged_identity":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["login"] = context_record.get("login") or record.get("login") or ""
+        metadata["highest_privilege_tier"] = (
+            context_record.get("highest_privilege_tier") or record.get("highest_privilege_tier") or ""
+        )
+        metadata["privileged_via_direct_assignment"] = context_record.get("privileged_via_direct_assignment")
+        metadata["privileged_via_group"] = context_record.get("privileged_via_group")
+    if record.get("record_type") == "okta_privileged_group":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+        metadata["highest_privilege_tier"] = (
+            context_record.get("highest_privilege_tier") or record.get("highest_privilege_tier") or ""
         )
 
     return metadata

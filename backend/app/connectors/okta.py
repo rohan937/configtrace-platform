@@ -83,36 +83,47 @@ from app.connectors.okta_schema import (
     FAMILY_DENIED,
     FAMILY_PARTIAL,
     FAMILY_UNAVAILABLE,
+    OKTA_ADMIN_ROLE,
     OKTA_API_CAPABILITY,
     OKTA_APPLICATION,
     OKTA_APPLICATION_GROUP_ASSIGNMENT,
     OKTA_APPLICATION_USER_ASSIGNMENT,
     OKTA_AUTHENTICATOR,
     OKTA_GROUP,
+    OKTA_GROUP_ADMIN_ROLE_ASSIGNMENT,
     OKTA_GROUP_MEMBERSHIP,
     OKTA_ORGANIZATION,
     OKTA_POLICY,
     OKTA_POLICY_RULE,
+    OKTA_PRIVILEGED_GROUP,
+    OKTA_PRIVILEGED_IDENTITY,
     OKTA_USER,
+    OKTA_USER_ADMIN_ROLE_ASSIGNMENT,
     categorize_access,
+    categorize_admin_assignment_scope,
     categorize_algorithm,
     categorize_app_status,
     categorize_app_type,
     categorize_assignment_scope,
     categorize_authenticator_key,
+    categorize_dormant_privileged,
     categorize_group_type,
     categorize_hardware_protection,
     categorize_last_login,
     categorize_membership_count,
     categorize_org_status,
     categorize_password_min_length,
+    categorize_permission,
     categorize_policy_type,
     categorize_redirect_uris,
+    categorize_resource_set_resources,
+    categorize_role_type,
     categorize_scope,
     categorize_session_lifetime_minutes,
     categorize_sign_on_mode,
     categorize_token_auth_method,
     categorize_user_status,
+    highest_privilege_tier,
     is_everyone_group,
     is_knowledge_authenticator,
     is_possession_authenticator,
@@ -122,6 +133,8 @@ from app.connectors.okta_schema import (
     parse_iso8601_duration_to_minutes,
     phishing_resistance_for_authenticator_key,
     phishing_resistance_from_possession_constraint,
+    privilege_tier_for_permissions,
+    privilege_tier_for_role_type,
     protocol_category_for_sign_on_mode,
 )
 
@@ -174,6 +187,33 @@ _MAX_RULES_PER_POLICY = 5_000
 _MAX_POLICIES_FOR_RULE_ENUMERATION = 5_000
 _MAX_TOTAL_RULES = 200_000
 _MAX_AUTHENTICATORS = 1_000
+
+# ── Admin-role / privileged-identity collection bounds (Okta message 5) ────
+#
+# Okta exposes no single tenant-wide "list every admin-role assignment"
+# endpoint for BUILT-IN roles — assignments are only enumerable per-user
+# (``GET /api/v1/users/{userId}/roles``) or per-group
+# (``GET /api/v1/groups/{groupId}/roles``). Unlike groups (far fewer than
+# users in a real tenant, so a per-group membership walk is cheap), a
+# per-USER role-assignment walk genuinely is proportional to the total
+# user count and IS a real N+1 concern at scale (a 20,000-user tenant
+# would need 20,000 additional requests just to find its handful of
+# admins). This connector deliberately caps the per-user walk at
+# ``_MAX_USERS_FOR_ROLE_ENUMERATION`` — well below ``_MAX_USERS`` — and
+# reports FAMILY_PARTIAL when the cap is hit, rather than silently
+# scanning only a prefix of the user list and calling it complete.
+# Message 7 owns further scale hardening of this specific bound (e.g.
+# System-Log-driven admin discovery, or Okta's newer Identity Governance
+# assignee-search endpoints where available).
+_MAX_USERS_FOR_ROLE_ENUMERATION = 2_000
+_MAX_GROUPS_FOR_ROLE_ENUMERATION = 2_000
+_MAX_ROLES_PER_PRINCIPAL = 200
+_MAX_TOTAL_USER_ADMIN_ROLE_ASSIGNMENTS = 50_000
+_MAX_TOTAL_GROUP_ADMIN_ROLE_ASSIGNMENTS = 50_000
+_MAX_CUSTOM_ADMIN_ROLES = 500
+_MAX_PERMISSIONS_PER_ROLE = 300
+_MAX_RESOURCE_SETS = 500
+_MAX_RESOURCES_PER_SET = 1_000
 
 # 429 retry bounds — bounded exponential backoff with jitter, mirroring the
 # Kubernetes reliability pattern (message 8 of the Kubernetes arc).
@@ -1320,6 +1360,174 @@ class OktaConnector(BaseConnector):
             "hardware_backed_category": hardware_backed_category,
         }
 
+    # ── Admin-role / privileged-identity normalizers (Okta message 5) ──────
+
+    @staticmethod
+    def _parse_role_assignment(raw: dict) -> Optional[dict]:
+        """Parse one raw Okta role-assignment object (from
+        ``/api/v1/users/{id}/roles`` or ``/api/v1/groups/{id}/roles``)
+        into a small safe dict — never returns the raw object itself.
+
+        SECURITY: only ``id``, ``label``, ``type``, ``status``, ``role``
+        (custom role ID reference), and the PRESENCE (not contents) of a
+        ``_links.targets``/``_links.resource-set`` entry are ever read.
+        """
+        assignment_id = raw.get("id")
+        assignment_id = assignment_id.strip()[:_MAX_STR_LEN] if isinstance(assignment_id, str) and assignment_id.strip() else None
+        if assignment_id is None:
+            return None
+
+        label = raw.get("label")
+        label = label.strip()[:_MAX_STR_LEN] if isinstance(label, str) and label.strip() else None
+
+        role_type = categorize_role_type(raw.get("type"))
+        status = categorize_app_status(raw.get("status"))
+
+        custom_role_id: Optional[str] = None
+        resource_set_id: Optional[str] = None
+        if role_type == "CUSTOM":
+            raw_role_ref = raw.get("role")
+            if isinstance(raw_role_ref, str) and raw_role_ref.strip():
+                custom_role_id = raw_role_ref.strip()[:_MAX_STR_LEN]
+            raw_rs_ref = raw.get("resource-set")
+            if isinstance(raw_rs_ref, str) and raw_rs_ref.strip():
+                resource_set_id = raw_rs_ref.strip()[:_MAX_STR_LEN]
+
+        raw_links = raw.get("_links")
+        if isinstance(raw_links, dict):
+            # An unscoped ("all resources of this type") assignment still
+            # carries a `_links` block (e.g. `self`) — it simply lacks a
+            # `targets` entry, which is definitive "not scoped" information,
+            # not an unknown. Only a MISSING `_links` block entirely (an
+            # unexpected/malformed response shape) is unknown.
+            has_targets_link: Optional[bool] = "targets" in raw_links
+        else:
+            has_targets_link = None
+        scope_category = categorize_admin_assignment_scope(has_targets_link=has_targets_link)
+
+        return {
+            "assignment_id": assignment_id,
+            "label": label,
+            "role_type": role_type,
+            "status": status,
+            "active": status == "ACTIVE",
+            "custom_role_id": custom_role_id,
+            "resource_set_id": resource_set_id,
+            "scope_category": scope_category,
+        }
+
+    @staticmethod
+    def _normalize_builtin_admin_role(tenant_id: str, role_type: str, label: Optional[str]) -> dict:
+        """Build the local role-catalog entry for a BUILT-IN role type
+        discovered via an assignment. Okta has no endpoint that lists the
+        built-in role catalog directly — this is the connector's own
+        deduplicated view of every distinct built-in type it has seen."""
+        return {
+            "record_type": OKTA_ADMIN_ROLE,
+            "record_id": f"{tenant_id}/admin_role/{role_type}",
+            "provider_resource_id": f"iam/roles/{role_type}",
+            "tenant_id": tenant_id,
+            "role_id": role_type,
+            "role_type": role_type,
+            "role_label": label,
+            "built_in": True,
+            "custom": False,
+            "privilege_tier": privilege_tier_for_role_type(role_type),
+            "permissions_count": None,
+            "collection_completeness": "derived_from_assignments",
+        }
+
+    @staticmethod
+    def _normalize_custom_admin_role(tenant_id: str, raw: dict, permissions: list) -> Optional[dict]:
+        """Normalize one custom role from ``GET /api/v1/iam/roles``.
+
+        SECURITY: only ``id``, ``label``, and the raw permission
+        IDENTIFIER STRINGS (never permission "conditions"/resource-scope
+        sub-objects) are read. ``permissions`` here is the already-fetched
+        list of identifier strings from
+        ``GET /api/v1/iam/roles/{id}/permissions`` — the raw response
+        body for that call is never stored on the record, only the
+        derived count and privilege tier.
+        """
+        role_id = raw.get("id")
+        if not isinstance(role_id, str) or not role_id.strip():
+            return None
+
+        label = raw.get("label")
+        label = label.strip()[:_MAX_STR_LEN] if isinstance(label, str) and label.strip() else None
+
+        safe_permissions = [p for p in permissions if isinstance(p, str)] if isinstance(permissions, list) else None
+
+        return {
+            "record_type": OKTA_ADMIN_ROLE,
+            "record_id": f"{tenant_id}/admin_role/{role_id}",
+            "provider_resource_id": f"iam/roles/{role_id}",
+            "tenant_id": tenant_id,
+            "role_id": role_id,
+            "role_type": "CUSTOM",
+            "role_label": label,
+            "built_in": False,
+            "custom": True,
+            "privilege_tier": privilege_tier_for_permissions(safe_permissions),
+            "permissions_count": len(safe_permissions) if safe_permissions is not None else None,
+            "collection_completeness": "collected",
+        }
+
+    @staticmethod
+    def _normalize_user_admin_role_assignment(
+        tenant_id: str, user_record: dict, parsed: dict, admin_role_record: dict,
+    ) -> dict:
+        role_id = admin_role_record["role_id"]
+        scope = parsed["scope_category"]
+        return {
+            "record_type": OKTA_USER_ADMIN_ROLE_ASSIGNMENT,
+            "record_id": f"{tenant_id}/user_admin_role/{user_record['user_id']}/{role_id}/{scope}",
+            "provider_resource_id": f"users/{user_record['user_id']}/roles/{parsed['assignment_id']}",
+            "tenant_id": tenant_id,
+            "user_id": user_record["user_id"],
+            "user_login": user_record.get("login"),
+            "user_status": user_record.get("status"),
+            "role_id": role_id,
+            "role_type": admin_role_record["role_type"],
+            "custom": admin_role_record["custom"],
+            "privilege_tier": admin_role_record["privilege_tier"],
+            "direct_assignment": True,
+            "assignment_scope_category": scope,
+            "resource_set_id": parsed.get("resource_set_id"),
+            "resource_set_scope_category": None,
+            "resource_set_app_count": None,
+            "resource_set_group_count": None,
+            "resource_set_user_count": None,
+            "active": parsed["active"],
+        }
+
+    @staticmethod
+    def _normalize_group_admin_role_assignment(
+        tenant_id: str, group_record: dict, parsed: dict, admin_role_record: dict,
+    ) -> dict:
+        role_id = admin_role_record["role_id"]
+        scope = parsed["scope_category"]
+        return {
+            "record_type": OKTA_GROUP_ADMIN_ROLE_ASSIGNMENT,
+            "record_id": f"{tenant_id}/group_admin_role/{group_record['group_id']}/{role_id}/{scope}",
+            "provider_resource_id": f"groups/{group_record['group_id']}/roles/{parsed['assignment_id']}",
+            "tenant_id": tenant_id,
+            "group_id": group_record["group_id"],
+            "group_name": group_record.get("group_name"),
+            "group_type": group_record.get("group_type"),
+            "role_id": role_id,
+            "role_type": admin_role_record["role_type"],
+            "custom": admin_role_record["custom"],
+            "privilege_tier": admin_role_record["privilege_tier"],
+            "assignment_scope_category": scope,
+            "resource_set_id": parsed.get("resource_set_id"),
+            "resource_set_scope_category": None,
+            "resource_set_app_count": None,
+            "resource_set_group_count": None,
+            "resource_set_user_count": None,
+            "active": parsed["active"],
+        }
+
     # ── Family collection (Okta message 2) ──────────────────────────────────
 
     @staticmethod
@@ -1861,6 +2069,493 @@ class OktaConnector(BaseConnector):
                 records.append(rec)
         return records, completeness
 
+    # ── Admin-role / privileged-identity collection (Okta message 5) ───────
+
+    @staticmethod
+    def _fetch_iam_object_list(
+        client: httpx.Client, trusted_origin: str, path: str, list_key: str,
+        *, cap: int, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Fetch an Okta IAM-API list endpoint that wraps its array in a
+        JSON object (e.g. ``{"roles": [...], "_links": {"next": {...}}}``)
+        rather than the bare-array shape every other endpoint in this
+        connector uses (handled by ``paginate()``/``_collect_family()``).
+        Bounded by ``_MAX_PAGES`` pages and ``cap`` total items, same
+        DENIED/UNAVAILABLE/PARTIAL/COMPLETE semantics as
+        ``_collect_family()``. Defensively also accepts a bare-array
+        response, in case a given Okta API version/edition returns one.
+        """
+        items: list[dict] = []
+        url = path
+        params: Optional[dict] = {"limit": str(_DEFAULT_PAGE_LIMIT)}
+        trusted_netloc = urlparse(trusted_origin).netloc
+
+        for page_num in range(_MAX_PAGES):
+            outcome = call_okta(client, "GET", url, params=params, _sleep_fn=_sleep_fn)
+            if not outcome.ok:
+                if page_num == 0:
+                    if outcome.category == CATEGORY_PERMISSION_DENIED:
+                        return [], FAMILY_DENIED
+                    return [], FAMILY_UNAVAILABLE
+                break
+
+            try:
+                body = outcome.response.json()
+            except ValueError:
+                if page_num == 0:
+                    return [], FAMILY_UNAVAILABLE
+                break
+
+            if isinstance(body, dict):
+                page_items = body.get(list_key)
+            elif isinstance(body, list):
+                page_items = body
+            else:
+                page_items = None
+            if not isinstance(page_items, list):
+                if page_num == 0:
+                    return [], FAMILY_UNAVAILABLE
+                break
+            items.extend(page_items)
+
+            next_url = None
+            if isinstance(body, dict):
+                links = body.get("_links") if isinstance(body.get("_links"), dict) else {}
+                next_link = links.get("next") if isinstance(links.get("next"), dict) else {}
+                candidate = next_link.get("href")
+                if isinstance(candidate, str) and candidate and urlparse(candidate).netloc == trusted_netloc:
+                    next_url = candidate
+            if not next_url or len(items) >= cap:
+                break
+            url = next_url
+            params = None
+
+        if len(items) >= cap:
+            return items[:cap], FAMILY_PARTIAL
+        return items, FAMILY_COMPLETE
+
+    @classmethod
+    def _resolve_resource_set_scope(
+        cls,
+        client: httpx.Client,
+        trusted_origin: str,
+        resource_set_id: Optional[str],
+        cache: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> dict:
+        """Resolve a custom-role ASSIGNMENT's resource-set scope posture.
+
+        Only resolves resource sets that are ACTUALLY referenced by a
+        collected assignment — never a blind walk of every resource set
+        in the tenant — and caches by ``resource_set_id`` so the same set
+        referenced by multiple assignments is only fetched once. Returns
+        a dict merge-able onto an assignment record; never raw resource
+        ORNs/paths beyond the categorized counts.
+        """
+        empty = {
+            "resource_set_scope_category": None,
+            "resource_set_app_count": None,
+            "resource_set_group_count": None,
+            "resource_set_user_count": None,
+        }
+        if not resource_set_id:
+            return empty
+        if resource_set_id in cache:
+            return cache[resource_set_id]
+
+        raw_resources, completeness = cls._fetch_iam_object_list(
+            client, trusted_origin, f"/api/v1/iam/resource-sets/{resource_set_id}/resources", "resources",
+            cap=_MAX_RESOURCES_PER_SET, _sleep_fn=_sleep_fn,
+        )
+        if completeness not in (FAMILY_COMPLETE, FAMILY_PARTIAL):
+            result = dict(empty)
+        else:
+            scope, app_count, group_count, user_count = categorize_resource_set_resources(raw_resources)
+            result = {
+                "resource_set_scope_category": scope,
+                "resource_set_app_count": app_count,
+                "resource_set_group_count": group_count,
+                "resource_set_user_count": user_count,
+            }
+        cache[resource_set_id] = result
+        return result
+
+    @classmethod
+    def _fetch_custom_admin_roles(
+        cls, client: httpx.Client, trusted_origin: str, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Collect real custom admin roles from ``GET /api/v1/iam/roles``
+        (tenant-wide, not per-principal) plus, per role, its permission
+        identifiers from ``GET /api/v1/iam/roles/{roleId}/permissions``
+        (bounded — one call per custom role, and real tenants have at
+        most a few dozen custom roles, never proportional to user count).
+        """
+        raw_roles, completeness = cls._fetch_iam_object_list(
+            client, trusted_origin, "/api/v1/iam/roles", "roles",
+            cap=_MAX_CUSTOM_ADMIN_ROLES, _sleep_fn=_sleep_fn,
+        )
+        records: list[dict] = []
+        for raw_role in raw_roles:
+            if not isinstance(raw_role, dict):
+                continue
+            role_id = raw_role.get("id")
+            if not isinstance(role_id, str) or not role_id.strip():
+                continue
+            permissions, perm_completeness = cls._fetch_iam_object_list(
+                client, trusted_origin, f"/api/v1/iam/roles/{role_id}/permissions", "permissions",
+                cap=_MAX_PERMISSIONS_PER_ROLE, _sleep_fn=_sleep_fn,
+            )
+            permission_ids = [
+                p.get("label") if isinstance(p, dict) else p
+                for p in permissions
+            ] if perm_completeness in (FAMILY_COMPLETE, FAMILY_PARTIAL) else None
+            rec = cls._normalize_custom_admin_role(tenant_id, raw_role, permission_ids)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
+    @classmethod
+    def _fetch_user_admin_role_assignments(
+        cls,
+        client: httpx.Client,
+        trusted_origin: str,
+        tenant_id: str,
+        user_records: list[dict],
+        custom_role_records_by_id: dict,
+        resource_set_cache: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict]:
+        """Collect user<->admin-role direct assignment edges.
+
+        Call-complexity design: Okta has no tenant-wide endpoint listing
+        every built-in role assignment — only ``GET /api/v1/users/{id}/roles``
+        exists. This genuinely IS one request per user walked (unlike
+        groups/apps/policies, where the parent collection itself is the
+        bottleneck resource). Bounded at
+        ``_MAX_USERS_FOR_ROLE_ENUMERATION`` (see that constant's docstring
+        for the scale rationale) — a truncated walk is reported
+        FAMILY_PARTIAL, never silently treated as "these users have no
+        admin roles".
+
+        Returns ``(assignment_records, completeness, builtin_role_records_by_type)``.
+        """
+        if not user_records:
+            return [], FAMILY_COMPLETE, {}
+
+        users_to_walk = user_records[:_MAX_USERS_FOR_ROLE_ENUMERATION]
+        truncated_user_list = len(user_records) > len(users_to_walk)
+
+        records: list[dict] = []
+        builtin_roles_by_type: dict = {}
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for user_record in users_to_walk:
+            user_id = user_record.get("user_id")
+            if not isinstance(user_id, str) or not user_id.strip():
+                continue
+
+            raw_assignments, completeness = cls._collect_family(
+                client, trusted_origin, f"/api/v1/users/{user_id}/roles",
+                params=None, cap=_MAX_ROLES_PER_PRINCIPAL, _sleep_fn=_sleep_fn,
+            )
+            if completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if completeness == FAMILY_PARTIAL:
+                cap_hit = True
+            succeeded += 1
+
+            for raw_assignment in raw_assignments:
+                if not isinstance(raw_assignment, dict):
+                    continue
+                parsed = cls._parse_role_assignment(raw_assignment)
+                if parsed is None:
+                    continue
+
+                if parsed["role_type"] == "CUSTOM":
+                    admin_role_record = custom_role_records_by_id.get(parsed["custom_role_id"])
+                    if admin_role_record is None:
+                        continue
+                else:
+                    admin_role_record = builtin_roles_by_type.get(parsed["role_type"])
+                    if admin_role_record is None:
+                        admin_role_record = cls._normalize_builtin_admin_role(
+                            tenant_id, parsed["role_type"], parsed.get("label"),
+                        )
+                        builtin_roles_by_type[parsed["role_type"]] = admin_role_record
+
+                if len(records) >= _MAX_TOTAL_USER_ADMIN_ROLE_ASSIGNMENTS:
+                    cap_hit = True
+                    break
+                assignment_record = cls._normalize_user_admin_role_assignment(
+                    tenant_id, user_record, parsed, admin_role_record,
+                )
+                if parsed["role_type"] == "CUSTOM" and parsed.get("resource_set_id"):
+                    assignment_record.update(cls._resolve_resource_set_scope(
+                        client, trusted_origin, parsed["resource_set_id"], resource_set_cache,
+                        _sleep_fn=_sleep_fn,
+                    ))
+                records.append(assignment_record)
+            if len(records) >= _MAX_TOTAL_USER_ADMIN_ROLE_ASSIGNMENTS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            overall = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            overall = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_user_list:
+            overall = FAMILY_PARTIAL
+        else:
+            overall = FAMILY_COMPLETE
+
+        return records, overall, builtin_roles_by_type
+
+    @classmethod
+    def _fetch_group_admin_role_assignments(
+        cls,
+        client: httpx.Client,
+        trusted_origin: str,
+        tenant_id: str,
+        group_records: list[dict],
+        custom_role_records_by_id: dict,
+        builtin_roles_by_type: dict,
+        resource_set_cache: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Collect group<->admin-role direct assignment edges via
+        ``GET /api/v1/groups/{id}/roles``. Real tenants have far fewer
+        groups than users, so — unlike the user-role walk — this is not
+        specially capped below the groups family's own size, mirroring
+        message 2's membership-walk precedent.
+
+        ``builtin_roles_by_type`` is shared/mutated with the user-role
+        walk's discovered catalog so the SAME built-in role type observed
+        on both a user and a group resolves to one identical
+        ``okta_admin_role`` record.
+        """
+        if not group_records:
+            return [], FAMILY_COMPLETE
+
+        groups_to_walk = group_records[:_MAX_GROUPS_FOR_ROLE_ENUMERATION]
+        truncated_group_list = len(group_records) > len(groups_to_walk)
+
+        records: list[dict] = []
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for group_record in groups_to_walk:
+            group_id = group_record.get("group_id")
+            if not isinstance(group_id, str) or not group_id.strip():
+                continue
+
+            raw_assignments, completeness = cls._collect_family(
+                client, trusted_origin, f"/api/v1/groups/{group_id}/roles",
+                params=None, cap=_MAX_ROLES_PER_PRINCIPAL, _sleep_fn=_sleep_fn,
+            )
+            if completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if completeness == FAMILY_PARTIAL:
+                cap_hit = True
+            succeeded += 1
+
+            for raw_assignment in raw_assignments:
+                if not isinstance(raw_assignment, dict):
+                    continue
+                parsed = cls._parse_role_assignment(raw_assignment)
+                if parsed is None:
+                    continue
+
+                if parsed["role_type"] == "CUSTOM":
+                    admin_role_record = custom_role_records_by_id.get(parsed["custom_role_id"])
+                    if admin_role_record is None:
+                        continue
+                else:
+                    admin_role_record = builtin_roles_by_type.get(parsed["role_type"])
+                    if admin_role_record is None:
+                        admin_role_record = cls._normalize_builtin_admin_role(
+                            tenant_id, parsed["role_type"], parsed.get("label"),
+                        )
+                        builtin_roles_by_type[parsed["role_type"]] = admin_role_record
+
+                if len(records) >= _MAX_TOTAL_GROUP_ADMIN_ROLE_ASSIGNMENTS:
+                    cap_hit = True
+                    break
+                assignment_record = cls._normalize_group_admin_role_assignment(
+                    tenant_id, group_record, parsed, admin_role_record,
+                )
+                if parsed["role_type"] == "CUSTOM" and parsed.get("resource_set_id"):
+                    assignment_record.update(cls._resolve_resource_set_scope(
+                        client, trusted_origin, parsed["resource_set_id"], resource_set_cache,
+                        _sleep_fn=_sleep_fn,
+                    ))
+                records.append(assignment_record)
+            if len(records) >= _MAX_TOTAL_GROUP_ADMIN_ROLE_ASSIGNMENTS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            overall = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            overall = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_group_list:
+            overall = FAMILY_PARTIAL
+        else:
+            overall = FAMILY_COMPLETE
+
+        return records, overall
+
+    @staticmethod
+    def _derive_privileged_identities(
+        tenant_id: str,
+        user_index: dict,
+        user_admin_assignments: list[dict],
+        group_admin_assignments: list[dict],
+        membership_records: list[dict],
+    ) -> list[dict]:
+        """Derive one ``okta_privileged_identity`` per user with >=1
+        effective admin role — direct, or inherited via a privileged
+        group membership. Pure local join over already-collected records
+        — no additional API calls.
+        """
+        direct_by_user: dict = {}
+        for a in user_admin_assignments:
+            direct_by_user.setdefault(a["user_id"], []).append(a)
+
+        # group_id -> list of that group's direct admin-role assignments
+        group_roles: dict = {}
+        for a in group_admin_assignments:
+            group_roles.setdefault(a["group_id"], []).append(a)
+
+        # user_id -> set of group_ids they belong to (from message-2 memberships)
+        groups_by_user: dict = {}
+        for m in membership_records:
+            if m.get("group_id") in group_roles:
+                groups_by_user.setdefault(m["user_id"], set()).add(m["group_id"])
+
+        privileged_user_ids = set(direct_by_user) | set(groups_by_user)
+        records: list[dict] = []
+
+        for user_id in privileged_user_ids:
+            direct_assignments = direct_by_user.get(user_id, [])
+            inherited_group_ids = groups_by_user.get(user_id, set())
+            inherited_assignments: list[dict] = []
+            for gid in inherited_group_ids:
+                inherited_assignments.extend(group_roles.get(gid, []))
+
+            if not direct_assignments and not inherited_assignments:
+                continue
+
+            tiers = [a["privilege_tier"] for a in direct_assignments + inherited_assignments]
+            highest_tier = highest_privilege_tier(tiers)
+            has_super_admin = any(a["role_type"] == "SUPER_ADMIN" for a in direct_assignments + inherited_assignments)
+
+            app_admin_scopes = {
+                a["assignment_scope_category"] for a in direct_assignments
+                if a["role_type"] == "APP_ADMIN"
+            }
+            if "all" in app_admin_scopes:
+                app_admin_scope: Optional[str] = "all"
+            elif "scoped" in app_admin_scopes:
+                app_admin_scope = "scoped"
+            elif app_admin_scopes:
+                app_admin_scope = "unknown"
+            else:
+                app_admin_scope = None
+
+            user_record = user_index.get(user_id)
+            last_login_category = user_record.get("last_login_category") if user_record else "unknown"
+
+            records.append({
+                "record_type": OKTA_PRIVILEGED_IDENTITY,
+                "record_id": f"{tenant_id}/privileged_identity/{user_id}",
+                "provider_resource_id": f"users/{user_id}",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "login": user_record.get("login") if user_record else None,
+                "user_status": user_record.get("status") if user_record else "UNKNOWN",
+                "direct_admin_role_count": len(direct_assignments),
+                "group_admin_role_count": len(inherited_assignments),
+                "highest_privilege_tier": highest_tier,
+                "has_super_admin": has_super_admin,
+                "has_high_privilege": highest_tier in ("critical", "high"),
+                "privileged_via_group": len(inherited_assignments) > 0,
+                "privileged_via_direct_assignment": len(direct_assignments) > 0,
+                "custom_admin_role_count": sum(
+                    1 for a in direct_assignments + inherited_assignments if a.get("custom")
+                ),
+                "application_admin_scope": app_admin_scope,
+                "last_login_category": last_login_category,
+                "dormant_privileged_category": categorize_dormant_privileged(last_login_category),
+            })
+
+        return records
+
+    @staticmethod
+    def _derive_privileged_groups(
+        tenant_id: str,
+        group_index: dict,
+        group_admin_assignments: list[dict],
+        membership_records: list[dict],
+        user_index: dict,
+    ) -> list[dict]:
+        """Derive one ``okta_privileged_group`` per group with >=1 direct
+        admin-role assignment. Pure local join — no additional API
+        calls, and never duplicates every member's full profile (only
+        aggregate suspended/deprovisioned counts)."""
+        roles_by_group: dict = {}
+        for a in group_admin_assignments:
+            roles_by_group.setdefault(a["group_id"], []).append(a)
+
+        members_by_group: dict = {}
+        for m in membership_records:
+            members_by_group.setdefault(m["group_id"], []).append(m["user_id"])
+
+        records: list[dict] = []
+        for group_id, assignments in roles_by_group.items():
+            group_record = group_index.get(group_id)
+            tiers = [a["privilege_tier"] for a in assignments]
+
+            suspended = 0
+            deprovisioned = 0
+            for user_id in members_by_group.get(group_id, []):
+                user_record = user_index.get(user_id)
+                if user_record is None:
+                    continue
+                if user_record.get("status") == "SUSPENDED":
+                    suspended += 1
+                elif user_record.get("status") == "DEPROVISIONED":
+                    deprovisioned += 1
+
+            records.append({
+                "record_type": OKTA_PRIVILEGED_GROUP,
+                "record_id": f"{tenant_id}/privileged_group/{group_id}",
+                "provider_resource_id": f"groups/{group_id}",
+                "tenant_id": tenant_id,
+                "group_id": group_id,
+                "group_name": group_record.get("group_name") if group_record else None,
+                "member_count": group_record.get("membership_count") if group_record else None,
+                "admin_role_count": len(assignments),
+                "highest_privilege_tier": highest_privilege_tier(tiers),
+                "contains_suspended_members": suspended,
+                "contains_deprovisioned_members": deprovisioned,
+            })
+
+        return records
+
     # ── Capability probes ──────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET with the smallest
@@ -2106,6 +2801,48 @@ class OktaConnector(BaseConnector):
                 client, org_url, tenant_id, _sleep_fn=_sleep_fn,
             )
 
+            # ── Custom admin roles (tenant-wide) ────────────────────────────
+            custom_admin_role_records, custom_admin_roles_completeness = self._fetch_custom_admin_roles(
+                client, org_url, tenant_id, _sleep_fn=_sleep_fn,
+            )
+            custom_role_records_by_id = {r["role_id"]: r for r in custom_admin_role_records}
+            # Shared across both walks so a resource set referenced by both
+            # a user- and a group-scoped custom-role assignment is only
+            # ever fetched once.
+            resource_set_cache: dict = {}
+
+            # ── User admin-role assignments (per-user walk — see
+            #    _MAX_USERS_FOR_ROLE_ENUMERATION for the bounded N+1 design) ──
+            user_admin_role_assignment_records, user_admin_roles_completeness, builtin_roles_by_type = (
+                self._fetch_user_admin_role_assignments(
+                    client, org_url, tenant_id, user_records, custom_role_records_by_id,
+                    resource_set_cache, _sleep_fn=_sleep_fn,
+                )
+            )
+
+            # ── Group admin-role assignments (per-group walk) ───────────────
+            group_admin_role_assignment_records, group_admin_roles_completeness = (
+                self._fetch_group_admin_role_assignments(
+                    client, org_url, tenant_id, group_records, custom_role_records_by_id,
+                    builtin_roles_by_type, resource_set_cache, _sleep_fn=_sleep_fn,
+                )
+            )
+
+            admin_role_records = list(custom_admin_role_records) + list(builtin_roles_by_type.values())
+
+            # ── Effective privileged identity / group derivation (local
+            #    join over already-collected records — no extra API calls) ──
+            group_index = {g["group_id"]: g for g in group_records}
+            privileged_identity_records = self._derive_privileged_identities(
+                tenant_id, user_index,
+                user_admin_role_assignment_records, group_admin_role_assignment_records,
+                membership_records,
+            )
+            privileged_group_records = self._derive_privileged_groups(
+                tenant_id, group_index,
+                group_admin_role_assignment_records, membership_records, user_index,
+            )
+
             org_record = self._normalize_organization(
                 org_hostname, raw_org,
                 family_completeness={
@@ -2118,6 +2855,9 @@ class OktaConnector(BaseConnector):
                     "policies": policies_completeness,
                     "policy_rules": policy_rules_completeness,
                     "authenticators": authenticators_completeness,
+                    "custom_admin_roles": custom_admin_roles_completeness,
+                    "user_admin_role_assignments": user_admin_roles_completeness,
+                    "group_admin_role_assignments": group_admin_roles_completeness,
                 },
             )
 
@@ -2131,6 +2871,11 @@ class OktaConnector(BaseConnector):
             records.extend(policy_records)
             records.extend(policy_rule_records)
             records.extend(authenticator_records)
+            records.extend(admin_role_records)
+            records.extend(user_admin_role_assignment_records)
+            records.extend(group_admin_role_assignment_records)
+            records.extend(privileged_identity_records)
+            records.extend(privileged_group_records)
             records.extend(self._probe_capabilities(client, tenant_id))
 
         return records

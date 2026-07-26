@@ -1,4 +1,4 @@
-"""Okta provider schema (Okta messages 1-4 of 8).
+"""Okta provider schema (Okta messages 1-5 of 8).
 
 Defines the record-type constants and safe category vocabularies for the
 Okta provider. Record types so far:
@@ -36,9 +36,44 @@ Okta provider. Record types so far:
                                     deterministic phishing-resistance
                                     posture only, never enrollment or
                                     secret material.
+  okta_admin_role                  — one record per distinct administrator
+                                    role "definition" observed in the
+                                    tenant (msg 5): built-in role TYPEs
+                                    (discovered from assignments — Okta
+                                    has no endpoint that lists the fixed
+                                    built-in role catalog, only assignment
+                                    endpoints that carry a ``type``) plus
+                                    real custom roles from
+                                    ``GET /api/v1/iam/roles``. Privilege
+                                    tier, permission-derived for custom
+                                    roles, never raw permission payloads.
+  okta_user_admin_role_assignment   — one record per user<->admin-role
+                                    direct assignment edge (msg 5), from
+                                    ``GET /api/v1/users/{userId}/roles``.
+  okta_group_admin_role_assignment  — one record per group<->admin-role
+                                    direct assignment edge (msg 5), from
+                                    ``GET /api/v1/groups/{groupId}/roles``.
+                                    For CUSTOM-role assignments, carries
+                                    the resource-set scope of THAT
+                                    assignment — in Okta's model a
+                                    resource set scopes an *assignment*
+                                    (role + resource-set + principal), not
+                                    the role definition itself, since one
+                                    custom role can be assigned with
+                                    different resource sets to different
+                                    principals.
+  okta_privileged_identity          — one derived record per user who has
+                                    >=1 effective admin role, direct or
+                                    via group (msg 5). Never created for
+                                    ordinary users.
+  okta_privileged_group             — one derived record per group that
+                                    itself carries >=1 direct admin-role
+                                    assignment (msg 5). Never created for
+                                    ordinary groups.
 
-Later messages (5) will add record types for privileged/admin roles. This
-module intentionally defines ONLY the message 1-4 taxonomy.
+This module now defines the message 1-5 taxonomy. Message 6 (Security
+Findings), message 7 (Change/reliability certification), and message 8
+(Live launch) are still pending.
 
 SENSITIVE-DATA BOUNDARY (permanent, re-affirmed every later message)
 ----------------------------------------------------------------------
@@ -50,7 +85,8 @@ Never collected or stored by this connector, at any stage:
   custom profile attributes), application client secrets, signing
   certificates/private keys, raw SAML metadata XML, app-user credentials
   or custom profile mappings, factor/challenge secrets, recovery codes,
-  device secrets, raw policy condition/action maps.
+  device secrets, raw policy condition/action maps, raw admin-role
+  permission response bodies, arbitrary resource-set resource paths/URLs.
 """
 
 from __future__ import annotations
@@ -70,6 +106,11 @@ OKTA_APPLICATION_GROUP_ASSIGNMENT = "okta_application_group_assignment"
 OKTA_POLICY = "okta_policy"
 OKTA_POLICY_RULE = "okta_policy_rule"
 OKTA_AUTHENTICATOR = "okta_authenticator"
+OKTA_ADMIN_ROLE = "okta_admin_role"
+OKTA_USER_ADMIN_ROLE_ASSIGNMENT = "okta_user_admin_role_assignment"
+OKTA_GROUP_ADMIN_ROLE_ASSIGNMENT = "okta_group_admin_role_assignment"
+OKTA_PRIVILEGED_IDENTITY = "okta_privileged_identity"
+OKTA_PRIVILEGED_GROUP = "okta_privileged_group"
 
 OKTA_RECORD_TYPES = frozenset({
     OKTA_ORGANIZATION,
@@ -83,6 +124,11 @@ OKTA_RECORD_TYPES = frozenset({
     OKTA_POLICY,
     OKTA_POLICY_RULE,
     OKTA_AUTHENTICATOR,
+    OKTA_ADMIN_ROLE,
+    OKTA_USER_ADMIN_ROLE_ASSIGNMENT,
+    OKTA_GROUP_ADMIN_ROLE_ASSIGNMENT,
+    OKTA_PRIVILEGED_IDENTITY,
+    OKTA_PRIVILEGED_GROUP,
 })
 
 # ── Org status categories ───────────────────────────────────────────────────
@@ -963,3 +1009,376 @@ def is_possession_authenticator(key: str) -> "bool | None":
     if key in _KNOWLEDGE_AUTHENTICATOR_KEYS:
         return False
     return None
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Privileged identity / administrator role taxonomy (Okta message 5 of 8)
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Okta has no single endpoint that lists the fixed catalog of BUILT-IN
+# admin role types — they are a closed, Okta-defined enum that only shows
+# up as the ``type`` field on role-ASSIGNMENT objects
+# (``GET /api/v1/users/{userId}/roles`` / ``GET /api/v1/groups/{groupId}/roles``).
+# CUSTOM roles, by contrast, ARE a real listable resource
+# (``GET /api/v1/iam/roles``) with their own permission set. Both are
+# normalized into the same ``okta_admin_role`` record type, distinguished
+# by the ``built_in``/``custom`` booleans.
+
+ROLE_TYPE_SUPER_ADMIN = "SUPER_ADMIN"
+ROLE_TYPE_ORG_ADMIN = "ORG_ADMIN"
+ROLE_TYPE_APP_ADMIN = "APP_ADMIN"
+ROLE_TYPE_USER_ADMIN = "USER_ADMIN"
+ROLE_TYPE_GROUP_ADMIN = "GROUP_ADMIN"
+ROLE_TYPE_HELP_DESK_ADMIN = "HELP_DESK_ADMIN"
+ROLE_TYPE_READ_ONLY_ADMIN = "READ_ONLY_ADMIN"
+ROLE_TYPE_MOBILE_ADMIN = "MOBILE_ADMIN"
+ROLE_TYPE_API_ACCESS_MANAGEMENT_ADMIN = "API_ACCESS_MANAGEMENT_ADMIN"
+ROLE_TYPE_REPORT_ADMIN = "REPORT_ADMIN"
+ROLE_TYPE_CUSTOM = "CUSTOM"
+ROLE_TYPE_UNKNOWN = "unknown"
+
+_KNOWN_BUILT_IN_ROLE_TYPES = frozenset({
+    ROLE_TYPE_SUPER_ADMIN, ROLE_TYPE_ORG_ADMIN, ROLE_TYPE_APP_ADMIN,
+    ROLE_TYPE_USER_ADMIN, ROLE_TYPE_GROUP_ADMIN, ROLE_TYPE_HELP_DESK_ADMIN,
+    ROLE_TYPE_READ_ONLY_ADMIN, ROLE_TYPE_MOBILE_ADMIN,
+    ROLE_TYPE_API_ACCESS_MANAGEMENT_ADMIN, ROLE_TYPE_REPORT_ADMIN,
+})
+
+ROLE_TYPES = frozenset(_KNOWN_BUILT_IN_ROLE_TYPES | {ROLE_TYPE_CUSTOM, ROLE_TYPE_UNKNOWN})
+
+
+def categorize_role_type(raw_type: object) -> str:
+    """Map a raw Okta role-assignment ``type`` to the fixed ROLE_TYPE_* set.
+
+    ``"CUSTOM"`` is Okta's own literal value for a custom-role assignment
+    (the actual custom role is then identified separately, via the
+    assignment's ``role``/``resourceSet`` fields). Anything else not in
+    the known built-in set returns ``ROLE_TYPE_UNKNOWN`` — NEVER inferred
+    from a role's display label, and never silently treated as an
+    ordinary/ambient role.
+    """
+    if isinstance(raw_type, str) and raw_type in _KNOWN_BUILT_IN_ROLE_TYPES:
+        return raw_type
+    if raw_type == ROLE_TYPE_CUSTOM:
+        return ROLE_TYPE_CUSTOM
+    return ROLE_TYPE_UNKNOWN
+
+
+# ── Privilege tier ───────────────────────────────────────────────────────
+#
+# A bounded, documented tier used ONLY for Change-classification severity
+# and for `okta_privileged_identity`/`okta_privileged_group` rollups —
+# never as a substitute for Okta's own permission model.
+#
+# Tier justification (built-in roles):
+#   critical   — SUPER_ADMIN: unrestricted tenant-wide administrative
+#                control (users, groups, apps, policies, other admins).
+#                Directly analogous to this codebase's existing
+#                AdministratorAccess-attached-to-IAM-principal precedent
+#                (`_classify_iam_policy_attachment_change` in
+#                risk_rules/aws.py), which already uses "critical" for an
+#                equivalently unrestricted grant.
+#   high       — ORG_ADMIN (nearly all SUPER_ADMIN capability except
+#                managing other administrators/API tokens in some Okta
+#                editions) and API_ACCESS_MANAGEMENT_ADMIN (can create/
+#                modify authorization servers, scopes, and access
+#                policies — i.e. can reshape what OAuth/OIDC clients are
+#                allowed to do tenant-wide, a policy-altering capability).
+#   medium     — APP_ADMIN / USER_ADMIN / GROUP_ADMIN / MOBILE_ADMIN:
+#                scoped administrative capability over one resource
+#                category (apps, users, groups, or mobile device
+#                management) rather than the whole tenant. Also
+#                HELP_DESK_ADMIN: per Okta's documented Help Desk
+#                Administrator permissions, this role CAN reset a user's
+#                password and unlock their account — a real
+#                credential-reset capability, materially more than
+#                read-only — but (unlike ORG_ADMIN/SUPER_ADMIN) cannot
+#                reset MFA factors, manage groups/apps, or alter policies,
+#                so it is scoped to end-user account recovery, not tenant
+#                configuration.
+#   read_only  — READ_ONLY_ADMIN (explicitly read-only per Okta's own
+#                naming and documented permissions) and REPORT_ADMIN
+#                (reporting/read access only).
+#   unknown    — any role type Okta introduces that this connector
+#                doesn't yet recognize, and any custom role whose
+#                permission set could not be determined. Unknown is
+#                NEVER treated as safe/low — see `_classify_*` in
+#                risk_rules/okta.py.
+
+PRIVILEGE_TIER_CRITICAL = "critical"
+PRIVILEGE_TIER_HIGH = "high"
+PRIVILEGE_TIER_MEDIUM = "medium"
+PRIVILEGE_TIER_LOW = "low"
+PRIVILEGE_TIER_READ_ONLY = "read_only"
+PRIVILEGE_TIER_UNKNOWN = "unknown"
+
+PRIVILEGE_TIERS = frozenset({
+    PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH, PRIVILEGE_TIER_MEDIUM,
+    PRIVILEGE_TIER_LOW, PRIVILEGE_TIER_READ_ONLY, PRIVILEGE_TIER_UNKNOWN,
+})
+
+# Used only for directional "highest tier"/"tier increased or decreased"
+# comparisons — never persisted. `PRIVILEGE_TIER_LOW` sits between
+# read_only and medium: it is reserved for custom roles whose permission
+# set grants some real but narrow write capability (see
+# `privilege_tier_for_permissions()` below) — no BUILT_IN role maps to it.
+PRIVILEGE_TIER_RANK: dict = {
+    PRIVILEGE_TIER_UNKNOWN: 1,
+    PRIVILEGE_TIER_READ_ONLY: 2,
+    PRIVILEGE_TIER_LOW: 3,
+    PRIVILEGE_TIER_MEDIUM: 4,
+    PRIVILEGE_TIER_HIGH: 5,
+    PRIVILEGE_TIER_CRITICAL: 6,
+}
+
+_BUILT_IN_ROLE_TIER: dict = {
+    ROLE_TYPE_SUPER_ADMIN: PRIVILEGE_TIER_CRITICAL,
+    ROLE_TYPE_ORG_ADMIN: PRIVILEGE_TIER_HIGH,
+    ROLE_TYPE_API_ACCESS_MANAGEMENT_ADMIN: PRIVILEGE_TIER_HIGH,
+    ROLE_TYPE_APP_ADMIN: PRIVILEGE_TIER_MEDIUM,
+    ROLE_TYPE_USER_ADMIN: PRIVILEGE_TIER_MEDIUM,
+    ROLE_TYPE_GROUP_ADMIN: PRIVILEGE_TIER_MEDIUM,
+    ROLE_TYPE_MOBILE_ADMIN: PRIVILEGE_TIER_MEDIUM,
+    ROLE_TYPE_HELP_DESK_ADMIN: PRIVILEGE_TIER_MEDIUM,
+    ROLE_TYPE_READ_ONLY_ADMIN: PRIVILEGE_TIER_READ_ONLY,
+    ROLE_TYPE_REPORT_ADMIN: PRIVILEGE_TIER_READ_ONLY,
+}
+
+
+def privilege_tier_for_role_type(role_type: str) -> str:
+    """Tier for a BUILT-IN role type. Unrecognized/CUSTOM types return
+    ``PRIVILEGE_TIER_UNKNOWN`` — a custom role's tier is instead derived
+    from its actual permissions via `privilege_tier_for_permissions()`."""
+    return _BUILT_IN_ROLE_TIER.get(role_type, PRIVILEGE_TIER_UNKNOWN)
+
+
+def highest_privilege_tier(tiers: "list[str]") -> str:
+    """Return the highest-ranked tier in ``tiers``, or unknown if empty.
+
+    A known tier always outranks `unknown` (rank 1 is the floor, not the
+    ceiling) — a user holding one ORG_ADMIN role and one role of an
+    unrecognized future type is reported as `high`, not `unknown`,
+    because the known evidence is more informative than the unknown one.
+    """
+    if not tiers:
+        return PRIVILEGE_TIER_UNKNOWN
+    return max(tiers, key=lambda t: PRIVILEGE_TIER_RANK.get(t, 0))
+
+
+# ── Assignment scope ─────────────────────────────────────────────────────
+#
+# Okta's role-assignment objects indicate a SCOPED (as opposed to
+# tenant-wide/"all") grant via the presence of a `_links.targets` (or
+# equivalent resource-set binding) rather than a plain enum field. This
+# connector categorizes scope WITHOUT following that targets link (doing
+# so would add a third level of per-assignment N+1 API calls) — it only
+# distinguishes "some scope-narrowing link is present" from "absent",
+# never enumerates or persists the specific target apps/groups/users.
+
+ASSIGNMENT_SCOPE_ALL = "all"
+ASSIGNMENT_SCOPE_SCOPED = "scoped"
+ASSIGNMENT_SCOPE_UNKNOWN = "unknown"
+
+ADMIN_ASSIGNMENT_SCOPE_CATEGORIES = frozenset({
+    ASSIGNMENT_SCOPE_ALL, ASSIGNMENT_SCOPE_SCOPED, ASSIGNMENT_SCOPE_UNKNOWN,
+})
+
+
+def categorize_admin_assignment_scope(*, has_targets_link: object) -> str:
+    """``has_targets_link`` should be ``True``/``False`` (whether a
+    ``_links.targets`` — or equivalent per-resource scoping link — was
+    present on the raw assignment), or ``None`` if that couldn't be
+    determined. Missing/malformed input is NEVER coerced to "all" —
+    unknown scope must never be reported as tenant-wide."""
+    if has_targets_link is True:
+        return ASSIGNMENT_SCOPE_SCOPED
+    if has_targets_link is False:
+        return ASSIGNMENT_SCOPE_ALL
+    return ASSIGNMENT_SCOPE_UNKNOWN
+
+
+# ── Resource-set scope (custom-role assignments only) ────────────────────
+#
+# A resource set scopes an ASSIGNMENT (role + resource-set + principal),
+# not the custom role definition itself — the same custom role can be
+# assigned with different resource sets to different principals. Only a
+# categorized posture is kept (never raw resource URLs/paths).
+
+RESOURCE_SET_SCOPE_ALL_RESOURCES = "all_resources"
+RESOURCE_SET_SCOPE_SCOPED = "scoped"
+RESOURCE_SET_SCOPE_UNKNOWN = "unknown"
+
+RESOURCE_SET_SCOPE_CATEGORIES = frozenset({
+    RESOURCE_SET_SCOPE_ALL_RESOURCES, RESOURCE_SET_SCOPE_SCOPED, RESOURCE_SET_SCOPE_UNKNOWN,
+})
+
+# Okta represents an "all resources of this type" binding with a resource
+# ORN ending in a wildcard segment, e.g. "okta:apps:*" / "okta:groups:*" /
+# "okta:users:*" — vs. a specific resource ORN naming one concrete
+# app/group/user. Only the wildcard suffix is inspected; no other part of
+# the ORN (which can carry a real resource ID) is ever persisted.
+_RESOURCE_SET_ALL_MARKER_SUFFIX = ":*"
+
+
+def categorize_resource_set_resources(raw_resource_orns: object) -> tuple:
+    """From a list of raw resource ORN strings, return
+    ``(scope_category, app_count, group_count, user_count)``.
+
+    Counts are per-category tallies of NON-wildcard (specifically scoped)
+    resource entries only — a wildcard "all X" entry contributes to the
+    scope category but is not counted as a specific app/group/user.
+    Returns ``(RESOURCE_SET_SCOPE_UNKNOWN, None, None, None)`` if
+    ``raw_resource_orns`` isn't a usable list — never guessed as scoped
+    or all-resources.
+    """
+    if not isinstance(raw_resource_orns, list):
+        return RESOURCE_SET_SCOPE_UNKNOWN, None, None, None
+
+    app_count = 0
+    group_count = 0
+    user_count = 0
+    saw_all_marker = False
+    saw_specific = False
+
+    for entry in raw_resource_orns:
+        orn = entry.get("orn") if isinstance(entry, dict) else entry
+        if not isinstance(orn, str) or not orn:
+            continue
+        if orn.endswith(_RESOURCE_SET_ALL_MARKER_SUFFIX):
+            saw_all_marker = True
+            continue
+        saw_specific = True
+        if ":apps:" in orn or ":app:" in orn:
+            app_count += 1
+        elif ":groups:" in orn or ":group:" in orn:
+            group_count += 1
+        elif ":users:" in orn or ":user:" in orn:
+            user_count += 1
+
+    if not saw_all_marker and not saw_specific:
+        return RESOURCE_SET_SCOPE_UNKNOWN, None, None, None
+    if saw_all_marker:
+        return RESOURCE_SET_SCOPE_ALL_RESOURCES, app_count, group_count, user_count
+    return RESOURCE_SET_SCOPE_SCOPED, app_count, group_count, user_count
+
+
+# ── Dangerous permission taxonomy (custom roles) ─────────────────────────
+#
+# Deterministic mapping from actual Okta IAM custom-role permission
+# identifiers (e.g. "okta.users.manage") to a bounded category set. Based
+# on Okta's documented permission-string convention:
+# "okta.<resource>.<action>" where <action> is typically "manage" (write)
+# or "read". Never invents permission names — an identifier not in this
+# map returns `PERMISSION_CATEGORY_UNKNOWN`.
+
+PERMISSION_CATEGORY_ADMIN_MANAGEMENT = "administrator_management"
+PERMISSION_CATEGORY_USER_LIFECYCLE = "user_lifecycle_mutation"
+PERMISSION_CATEGORY_GROUP_MUTATION = "group_mutation"
+PERMISSION_CATEGORY_APPLICATION_MANAGEMENT = "application_management"
+PERMISSION_CATEGORY_POLICY_MANAGEMENT = "policy_management"
+PERMISSION_CATEGORY_AUTHENTICATOR_MANAGEMENT = "authenticator_management"
+PERMISSION_CATEGORY_API_ACCESS_MANAGEMENT = "api_access_management"
+PERMISSION_CATEGORY_CREDENTIAL_RESET = "credential_reset"
+PERMISSION_CATEGORY_PRIVILEGE_ASSIGNMENT = "privilege_assignment"
+PERMISSION_CATEGORY_BROAD_TENANT_CONFIGURATION = "broad_tenant_configuration"
+PERMISSION_CATEGORY_READ_ONLY = "read_only"
+PERMISSION_CATEGORY_UNKNOWN = "unknown"
+
+# Exact Okta IAM permission identifiers -> category. Deliberately an exact
+# allowlist (not a prefix/substring guess) so a future Okta permission
+# string this connector has never seen returns "unknown", not a guess.
+_PERMISSION_CATEGORY_MAP: dict = {
+    "okta.roles.manage": PERMISSION_CATEGORY_ADMIN_MANAGEMENT,
+    "okta.roles.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.authzServers.manage": PERMISSION_CATEGORY_API_ACCESS_MANAGEMENT,
+    "okta.authzServers.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.users.manage": PERMISSION_CATEGORY_USER_LIFECYCLE,
+    "okta.users.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.users.lifecycle.manage": PERMISSION_CATEGORY_USER_LIFECYCLE,
+    "okta.users.credentials.manage": PERMISSION_CATEGORY_CREDENTIAL_RESET,
+    "okta.users.userprofile.manage": PERMISSION_CATEGORY_USER_LIFECYCLE,
+    "okta.groups.manage": PERMISSION_CATEGORY_GROUP_MUTATION,
+    "okta.groups.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.groups.members.manage": PERMISSION_CATEGORY_GROUP_MUTATION,
+    "okta.groups.appAssignments.manage": PERMISSION_CATEGORY_GROUP_MUTATION,
+    "okta.apps.manage": PERMISSION_CATEGORY_APPLICATION_MANAGEMENT,
+    "okta.apps.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.apps.assignment.manage": PERMISSION_CATEGORY_APPLICATION_MANAGEMENT,
+    "okta.policies.manage": PERMISSION_CATEGORY_POLICY_MANAGEMENT,
+    "okta.policies.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.authenticators.manage": PERMISSION_CATEGORY_AUTHENTICATOR_MANAGEMENT,
+    "okta.authenticators.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.governance.accessRequests.manage": PERMISSION_CATEGORY_PRIVILEGE_ASSIGNMENT,
+    "okta.governance.accessCertifications.manage": PERMISSION_CATEGORY_PRIVILEGE_ASSIGNMENT,
+    "okta.orgs.manage": PERMISSION_CATEGORY_BROAD_TENANT_CONFIGURATION,
+    "okta.orgs.read": PERMISSION_CATEGORY_READ_ONLY,
+    "okta.customizations.manage": PERMISSION_CATEGORY_BROAD_TENANT_CONFIGURATION,
+}
+
+_PERMISSION_CATEGORY_TIER: dict = {
+    PERMISSION_CATEGORY_ADMIN_MANAGEMENT: PRIVILEGE_TIER_CRITICAL,
+    PERMISSION_CATEGORY_PRIVILEGE_ASSIGNMENT: PRIVILEGE_TIER_CRITICAL,
+    PERMISSION_CATEGORY_POLICY_MANAGEMENT: PRIVILEGE_TIER_HIGH,
+    PERMISSION_CATEGORY_AUTHENTICATOR_MANAGEMENT: PRIVILEGE_TIER_HIGH,
+    PERMISSION_CATEGORY_API_ACCESS_MANAGEMENT: PRIVILEGE_TIER_HIGH,
+    PERMISSION_CATEGORY_BROAD_TENANT_CONFIGURATION: PRIVILEGE_TIER_HIGH,
+    PERMISSION_CATEGORY_USER_LIFECYCLE: PRIVILEGE_TIER_MEDIUM,
+    PERMISSION_CATEGORY_GROUP_MUTATION: PRIVILEGE_TIER_MEDIUM,
+    PERMISSION_CATEGORY_APPLICATION_MANAGEMENT: PRIVILEGE_TIER_MEDIUM,
+    PERMISSION_CATEGORY_CREDENTIAL_RESET: PRIVILEGE_TIER_MEDIUM,
+    PERMISSION_CATEGORY_READ_ONLY: PRIVILEGE_TIER_READ_ONLY,
+}
+
+
+def categorize_permission(raw_permission: object) -> str:
+    """Map one raw Okta custom-role permission identifier to the bounded
+    category set. Unrecognized/malformed input returns
+    ``PERMISSION_CATEGORY_UNKNOWN`` — never guessed from substring
+    matching a permission name this connector has never been told about.
+    """
+    if isinstance(raw_permission, str) and raw_permission in _PERMISSION_CATEGORY_MAP:
+        return _PERMISSION_CATEGORY_MAP[raw_permission]
+    return PERMISSION_CATEGORY_UNKNOWN
+
+
+def privilege_tier_for_permissions(raw_permissions: object) -> str:
+    """Derive a custom role's overall privilege tier as the HIGHEST tier
+    implied by any one of its permissions.
+
+    Returns ``PRIVILEGE_TIER_UNKNOWN`` (never "read_only"/"low"/"safe")
+    when ``raw_permissions`` is missing/empty/malformed, or when every
+    permission present maps to an unrecognized category — an unknown
+    permission set is never assumed safe.
+    """
+    if not isinstance(raw_permissions, list) or not raw_permissions:
+        return PRIVILEGE_TIER_UNKNOWN
+
+    categories = {categorize_permission(p) for p in raw_permissions}
+    tiers = [
+        _PERMISSION_CATEGORY_TIER.get(c, PRIVILEGE_TIER_UNKNOWN) for c in categories
+    ]
+    if not tiers or all(t == PRIVILEGE_TIER_UNKNOWN for t in tiers):
+        return PRIVILEGE_TIER_UNKNOWN
+    return highest_privilege_tier(tiers)
+
+
+# ── Dormant privileged-identity posture ──────────────────────────────────
+#
+# Reuses message-2's `LAST_LOGIN_*` categories (never a new threshold) —
+# purely descriptive posture, NOT a Finding. Message 6 decides whether a
+# dormant privileged identity becomes a Finding.
+
+DORMANT_PRIVILEGED_NEVER_LOGGED_IN = "privileged_never_logged_in"
+DORMANT_PRIVILEGED_STALE_LOGIN = "privileged_stale_login"
+DORMANT_PRIVILEGED_RECENT_LOGIN = "privileged_recent_login"
+DORMANT_PRIVILEGED_UNKNOWN = "unknown"
+
+_LAST_LOGIN_TO_DORMANT_PRIVILEGED: dict = {
+    LAST_LOGIN_NEVER: DORMANT_PRIVILEGED_NEVER_LOGGED_IN,
+    LAST_LOGIN_STALE: DORMANT_PRIVILEGED_STALE_LOGIN,
+    LAST_LOGIN_RECENT: DORMANT_PRIVILEGED_RECENT_LOGIN,
+}
+
+
+def categorize_dormant_privileged(last_login_category: str) -> str:
+    return _LAST_LOGIN_TO_DORMANT_PRIVILEGED.get(last_login_category, DORMANT_PRIVILEGED_UNKNOWN)
