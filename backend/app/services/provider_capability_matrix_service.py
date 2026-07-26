@@ -1514,7 +1514,7 @@ _OKTA = ProviderCapability(
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1525,26 +1525,34 @@ _OKTA = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Okta message 1 of 8 (foundation). Establishes a secure, read-only "
-        "connector using an Okta API token: org_url normalization/SSRF "
-        "guard, SSWS-header authentication, a stable tenant identity "
-        "(preferring the org's immutable id, falling back to the "
-        "normalized org hostname), RFC5988 Link-header pagination with "
-        "same-origin enforcement and cycle detection, bounded 429 retry "
-        "with injectable-sleep backoff, and read-only capability probes "
-        "for the seven future record families (users, groups, "
-        "applications, policies, authenticators, admin roles, System "
-        "Log) — never a broad enumeration. Only two record types exist "
-        "at this stage: okta_organization and okta_api_capability. Users, "
-        "groups, applications, policies, authenticators, admin roles, and "
-        "System Log events are NOT collected yet — see "
-        "okta_foundation_contract.md for the full sensitive-data boundary "
-        "and the message 2-8 roadmap. The provider is registered "
-        "internally (dispatch, schema, capability matrix, sync scheduling) "
-        "but is NOT publicly connectable — excluded from the frontend's "
-        "PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Okta message 8. "
-        "planned_next_stage: Okta message 2: users, groups, memberships, "
-        "lifecycle posture."
+        "Okta message 6 of 8 (security findings). Messages 1-5 built a "
+        "secure, read-only connector (API-token auth, org_url/SSRF safety, "
+        "stable tenant identity, Link-header pagination, bounded 429 "
+        "retry) collecting: users/groups/memberships with lifecycle "
+        "posture (message 2); applications with OIDC/OAuth and SAML "
+        "posture (message 3); authentication policies, policy rules, "
+        "password posture, authenticators, and phishing-resistance "
+        "posture (message 4); administrator roles (built-in and custom), "
+        "user/group admin-role assignments, resource-set scope, and "
+        "derived privileged-identity/privileged-group summaries with "
+        "Critical Super Admin Change classification (message 5). Message "
+        "6 adds 30 static Security Finding rules "
+        "(security_rules=True) spanning privileged identities/admin "
+        "roles, authentication/MFA, password policy, applications/SSO, "
+        "and identity-lifecycle entitlement combinations — see "
+        "backend/tests/reports/okta_security_findings_matrix.md for the "
+        "full rule inventory and backend/app/services/security_rules/"
+        "okta.py's module docstring for rules deliberately deferred as "
+        "too noisy, legacy-overclaiming, or requiring cross-record "
+        "semantics not yet supported. Activity ingestion, signals, "
+        "correlations, demo/QA seeding, and case reporting are not "
+        "implemented for this provider. The provider remains registered "
+        "internally only (dispatch, schema, capability matrix, sync "
+        "scheduling) and is NOT publicly connectable — excluded from the "
+        "frontend's PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS and from "
+        "security_coverage_service.PROVIDERS until Okta message 8. "
+        "planned_next_stage: Okta message 7: exhaustive Change/"
+        "reliability hardening and Finding-vs-Change QA."
     ),
 )
 

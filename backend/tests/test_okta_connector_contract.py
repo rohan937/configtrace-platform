@@ -208,7 +208,11 @@ class TestCapabilityMatrix:
         assert "okta" in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
         assert "okta" not in {p.provider for p in PROVIDER_CAPABILITIES}
 
-    def test_okta_drift_snapshots_true_but_security_stack_entirely_false(self):
+    def test_okta_drift_snapshots_true_security_rules_true_rest_false(self):
+        # Okta message 6 of 8 implemented static Security Findings, so
+        # security_rules flipped to True — the rest of the security stack
+        # (activity ingestion/signals/correlations/demo/case-report/
+        # evidence) remains unimplemented for this provider.
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("okta")
@@ -217,7 +221,7 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_diff is True
         assert cap.drift.drift_risk_classification is True
         assert cap.drift.drift_review_workflow is False
-        assert cap.security.security_rules is False
+        assert cap.security.security_rules is True
         assert cap.security.activity_ingestion is False
         assert cap.security.demo_seed_clear is False
 

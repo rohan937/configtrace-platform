@@ -667,6 +667,40 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "kubernetes_privileged_identity_in_weak_namespace": ("kubernetes_namespace_governance_posture",),
     "kubernetes_privileged_workload_without_isolation": ("kubernetes_namespace_governance_posture",),
     "kubernetes_namespace_resource_governance_missing": ("kubernetes_namespace_governance_posture",),
+    # Okta (message 6 of 8) — "okta" is intentionally NOT in PROVIDERS above
+    # (non-connectable until message 8), so these entries do not yet drive
+    # any live coverage report; they exist so the mapping is complete and
+    # ready the moment Okta becomes connectable.
+    "okta_super_admin_assigned": ("okta_privileged_identity",),
+    "okta_high_tier_admin_assigned": ("okta_privileged_identity",),
+    "okta_custom_admin_role_high_risk": ("okta_admin_role",),
+    "okta_admin_role_broad_resource_set": ("okta_user_admin_role_assignment", "okta_group_admin_role_assignment"),
+    "okta_unscoped_admin_role_assignment": ("okta_user_admin_role_assignment", "okta_group_admin_role_assignment"),
+    "okta_deprovisioned_identity_retains_admin_privilege": ("okta_privileged_identity",),
+    "okta_suspended_identity_retains_admin_privilege": ("okta_privileged_identity",),
+    "okta_dormant_privileged_identity": ("okta_privileged_identity",),
+    "okta_never_used_privileged_identity": ("okta_privileged_identity",),
+    "okta_privileged_group_grants_super_admin": ("okta_privileged_group",),
+    "okta_privileged_group_grants_high_tier_admin": ("okta_privileged_group",),
+    "okta_broad_privileged_group": ("okta_privileged_group",),
+    "okta_signon_mfa_not_required": ("okta_policy_rule",),
+    "okta_signon_mfa_optional": ("okta_policy_rule",),
+    "okta_broad_allow_rule_without_mfa": ("okta_policy_rule",),
+    "okta_phishing_resistant_not_required": ("okta_policy_rule",),
+    "okta_weak_authenticator_enabled": ("okta_authenticator",),
+    "okta_password_policy_weak_min_length": ("okta_policy",),
+    "okta_password_policy_no_lockout": ("okta_policy",),
+    "okta_password_policy_no_history": ("okta_policy",),
+    "okta_password_policy_no_complexity": ("okta_policy",),
+    "okta_oidc_wildcard_redirect": ("okta_application",),
+    "okta_oidc_http_redirect": ("okta_application",),
+    "okta_oidc_custom_scheme_redirect_non_native": ("okta_application",),
+    "okta_saml_response_signing_disabled": ("okta_application",),
+    "okta_saml_assertion_signing_disabled": ("okta_application",),
+    "okta_weak_token_endpoint_auth": ("okta_application",),
+    "okta_app_assigned_to_everyone_group": ("okta_application_group_assignment",),
+    "okta_deprovisioned_user_retains_app_assignment": ("okta_application_user_assignment",),
+    "okta_suspended_user_retains_app_assignment": ("okta_application_user_assignment",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
