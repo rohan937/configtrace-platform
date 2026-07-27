@@ -43,9 +43,7 @@ export type ProviderId =
   | "terraform_cloud"
   // ── Kubernetes message 9 — public launch (fully connectable) ──────────────
   | "kubernetes"
-  // ── Okta message 1 — provider architecture foundation (not yet
-  //    user-connectable; intentionally excluded from PROVIDER_IDS and
-  //    CONNECTABLE_PROVIDER_IDS until Okta message 8) ─────────────────────
+  // ── Okta message 8 — public launch (fully connectable) ────────────────────
   | "okta";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
@@ -560,26 +558,22 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     borderColor: "rgba(50,108,229,0.25)",
   },
 
-  // ── Okta message 1 — provider architecture foundation ──────────────────────
-  // NOT included in PROVIDER_IDS or CONNECTABLE_PROVIDER_IDS yet — there is
-  // no connect-form UI built yet, so this entry exists only so
-  // getProviderMeta("okta") resolves safely if referenced. Do not surface
-  // this provider as connectable or "Live" until Okta message 8.
+  // ── Okta message 8 — public launch ─────────────────────────────────────────
   okta: {
     id: "okta",
     label: "Okta",
     shortLabel: "Okta",
     category: "identity",
     description:
-      "Connect an Okta org with a read-only API token. ConfigTrace will monitor user/group lifecycle posture, application assignments and SSO configuration, sign-on and MFA policy posture, and privileged admin role assignments.",
+      "Connect an Okta org with a read-only API token. ConfigTrace tracks configuration drift and flags security risk across privileged admin roles, authentication and MFA policy posture, credential complexity/lockout policy configuration, and application SSO (OIDC/SAML) configuration.",
     monitoredSurfaces: [
-      "Users, groups, and group memberships (planned)",
-      "Applications, assignments, and SSO configuration (planned)",
-      "Policies, MFA/authenticator configuration, and sign-on controls (planned)",
-      "Privileged/admin role assignments and identity-risk posture (planned)",
+      "Users, groups, and group memberships (lifecycle status only — no profile attributes)",
+      "Applications, assignments, and SSO (OIDC/SAML) configuration",
+      "Authentication policies, sign-on rules, MFA/authenticator posture, and credential complexity/lockout policy configuration",
+      "Administrator role assignments and privileged-identity / privileged-group posture",
     ],
     trustNote:
-      "ConfigTrace stores your Okta API token encrypted and uses it only to read org configuration metadata. It does not store the API token value, passwords, password hashes, recovery answers, MFA secrets, OTP seeds, session/refresh/access tokens, private keys, or raw System Log payloads. This provider is in architecture-foundation stage: only org identity and read-permission capability metadata are currently collected. User, group, application, policy, and admin-role monitoring are planned in upcoming stages and are not yet live.",
+      "ConfigTrace stores your Okta API token encrypted and uses it only to read org configuration metadata. It does not store the API token value, passwords, password hashes, recovery answers, MFA secrets, OTP seeds, session/refresh/access tokens, private keys, or System Log payloads. Okta API tokens inherit the exact permissions of the administrator account that generated them — ConfigTrace never requests broader access than what that account already has, and cannot see more than a least-privileged read-only admin role exposes. ConfigTrace does not perform System Log threat detection, session monitoring, device telemetry, per-user effective-MFA evaluation, password-breach intelligence, or runtime attack detection — coverage is limited to the configuration and policy metadata listed above.",
     color: "#007DC1",
     bgColor: "rgba(0,125,193,0.10)",
     borderColor: "rgba(0,125,193,0.25)",
@@ -643,6 +637,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "terraform_cloud",
   // ── Kubernetes message 9 — public launch ─────────────────────────────────
   "kubernetes",
+  // ── Okta message 8 — public launch ───────────────────────────────────────
+  "okta",
 ];
 
 /**
@@ -683,6 +679,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "terraform_cloud",
   // ── Kubernetes message 9 — public launch ─────────────────────────────────
   "kubernetes",
+  // ── Okta message 8 — public launch ───────────────────────────────────────
+  "okta",
 ];
 
 /**

@@ -149,13 +149,13 @@ class TestPackParity:
 
 
 class TestCoverageParity:
-    def test_okta_not_in_connectable_providers_list(self):
-        # Okta remains non-connectable until message 8 — it must NOT appear
-        # in the live connected-integration coverage surface.
-        assert "okta" not in security_coverage_service.PROVIDERS
+    def test_okta_in_connectable_providers_list(self):
+        # Okta became connectable in message 8 — it must appear in the live
+        # connected-integration coverage surface.
+        assert "okta" in security_coverage_service.PROVIDERS
 
-    def test_okta_not_in_provider_surfaces(self):
-        assert "okta" not in security_coverage_service.PROVIDER_SURFACES
+    def test_okta_in_provider_surfaces(self):
+        assert "okta" in security_coverage_service.PROVIDER_SURFACES
 
     def test_every_registered_okta_rule_has_record_types(self):
         missing = _registry_okta_keys() - _coverage_okta_keys()

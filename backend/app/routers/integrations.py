@@ -893,6 +893,38 @@ def reconnect_integration(
                 detail=f"Could not reach the Kubernetes API server: {exc}",
             ) from exc
         return _build_response(integration, db)
+    elif integration.provider == "okta":
+        if not body.okta_api_token:
+            raise HTTPException(
+                status_code=422,
+                detail="okta_api_token is required for Okta integrations.",
+            )
+        try:
+            integration = integration_service.reconnect_credentials_okta(
+                integration_id=integration_id,
+                user_id=current_user.id,
+                new_org_url=body.okta_org_url,
+                new_api_token=body.okta_api_token,
+                db=db,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Authentication failed: {exc}",
+            ) from exc
+        except ConnectorError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider validation error: {exc}",
+            ) from exc
+        except NetworkError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach the Okta org: {exc}",
+            ) from exc
+        return _build_response(integration, db)
     else:
         raise HTTPException(
             status_code=400,

@@ -1510,7 +1510,7 @@ _OKTA = ProviderCapability(
         drift_snapshots=True,
         drift_diff=True,
         drift_risk_classification=True,
-        drift_review_workflow=False,
+        drift_review_workflow=True,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
@@ -1525,10 +1525,10 @@ _OKTA = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Okta message 6 of 8 (security findings). Messages 1-5 built a "
-        "secure, read-only connector (API-token auth, org_url/SSRF safety, "
-        "stable tenant identity, Link-header pagination, bounded 429 "
-        "retry) collecting: users/groups/memberships with lifecycle "
+        "Okta message 8 of 8 — public launch complete. Messages 1-5 built "
+        "a secure, read-only connector (API-token auth, org_url/SSRF "
+        "safety, stable tenant identity, Link-header pagination, bounded "
+        "429 retry) collecting: users/groups/memberships with lifecycle "
         "posture (message 2); applications with OIDC/OAuth and SAML "
         "posture (message 3); authentication policies, policy rules, "
         "password posture, authenticators, and phishing-resistance "
@@ -1536,25 +1536,34 @@ _OKTA = ProviderCapability(
         "user/group admin-role assignments, resource-set scope, and "
         "derived privileged-identity/privileged-group summaries with "
         "Critical Super Admin Change classification (message 5). Message "
-        "6 adds 30 static Security Finding rules "
-        "(security_rules=True) spanning privileged identities/admin "
-        "roles, authentication/MFA, password policy, applications/SSO, "
-        "and identity-lifecycle entitlement combinations — see "
+        "6 added 30 static Security Finding rules (security_rules=True) "
+        "spanning privileged identities/admin roles, authentication/MFA, "
+        "password policy, applications/SSO, and identity-lifecycle "
+        "entitlement combinations — see "
         "backend/tests/reports/okta_security_findings_matrix.md for the "
-        "full rule inventory and backend/app/services/security_rules/"
-        "okta.py's module docstring for rules deliberately deferred as "
-        "too noisy, legacy-overclaiming, or requiring cross-record "
-        "semantics not yet supported. Activity ingestion, signals, "
-        "correlations, demo/QA seeding, and case reporting are not "
-        "implemented for this provider. The provider remains registered "
-        "internally only (dispatch, schema, capability matrix, sync "
-        "scheduling) and is NOT publicly connectable — excluded from the "
-        "frontend's PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS and from "
-        "security_coverage_service.PROVIDERS until Okta message 8. "
-        "planned_next_stage: Okta message 7: exhaustive Change/"
-        "reliability hardening and Finding-vs-Change QA."
+        "full rule inventory. Message 7 completed exhaustive Change-"
+        "classification QA and partial-sync/pagination reliability "
+        "hardening (4 bugs fixed — see "
+        "backend/tests/reports/okta_reliability_change_matrix.md). "
+        "Message 8 completed public launch certification: the credential "
+        "path (org_url + api_token) is wired end-to-end through the "
+        "standard integration creation and reconnect flow, creation now "
+        "runs synchronous create-time validation (GET /api/v1/org), "
+        "Full/Partial/Invalid coverage diagnostics are available via "
+        "build_okta_permission_diagnostics(), reconnect rejects a token "
+        "for a genuinely different tenant, and the integration card and "
+        "setup form are live — see "
+        "backend/tests/reports/okta_provider_certification.md. Activity "
+        "ingestion, signals, risk x activity correlations, demo/QA "
+        "seeding, and case reporting are not built for this provider — "
+        "Okta's security stack is drift + Security Findings only, the "
+        "same dual-stack scope as Kubernetes. Okta provider expansion is "
+        "complete."
     ),
 )
+
+
+PROVIDER_CAPABILITIES.append(_OKTA)
 
 
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
@@ -1570,7 +1579,6 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
-    _OKTA,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

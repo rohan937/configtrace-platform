@@ -1007,6 +1007,27 @@ class IntegrationReconnectRequest(BaseModel):
         None,
         description="Optional namespace allowlist update. Kubernetes integrations only.",
     )
+    okta_org_url: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Optional new Okta org base URL. Okta integrations only. Only "
+            "needed when rotating to a token from a different Okta org URL "
+            "for the SAME tenant (e.g. a custom-domain migration) — a token "
+            "rotation with no org URL change may omit this field. A URL "
+            "that resolves to a genuinely different Okta tenant is rejected."
+        ),
+    )
+    okta_api_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Okta API token. Required for Okta integrations. A rotated "
+            "token for the SAME tenant is accepted; a token for a different "
+            "tenant is rejected. Stored encrypted — never returned in API "
+            "responses."
+        ),
+    )
 
 
 class IntegrationResponse(BaseModel):

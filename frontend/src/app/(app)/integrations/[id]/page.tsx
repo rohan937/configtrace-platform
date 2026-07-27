@@ -772,6 +772,84 @@ function ProviderOverview({
     );
   }
 
+  if (integration.provider === "okta") {
+    const orgResource =
+      resources.find((r) => r.provider_resource_type === "okta_organization") ?? resource;
+    const meta = (orgResource?.metadata ?? {}) as Record<string, unknown>;
+    const orgHostname = (meta.org_hostname as string | undefined) ?? (meta.org_url as string | undefined) ?? "—";
+    const orgDisplayName = meta.org_display_name as string | undefined;
+
+    return (
+      <Panel title="Okta overview">
+        <MetaRow
+          label="Org"
+          value={<span style={{ color: "#8b90a0" }}>{orgHostname}</span>}
+        />
+        {orgDisplayName && (
+          <MetaRow
+            label="Display name"
+            value={<span style={{ color: "#8b90a0" }}>{orgDisplayName}</span>}
+          />
+        )}
+        <MetaRow
+          label="Last snapshot"
+          value={
+            orgResource?.last_snapshot_at ? (
+              <span title={formatAbsoluteTime(orgResource.last_snapshot_at)}>
+                {formatRelativeTime(orgResource.last_snapshot_at)}
+              </span>
+            ) : (
+              <span style={{ color: "#565b6e" }}>Never</span>
+            )
+          }
+        />
+        <div style={{ marginTop: "8px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "6px",
+            }}
+          >
+            Monitored categories
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {[
+              "Users, groups, and group memberships",
+              "Applications, assignments, and SSO (OIDC/SAML) configuration",
+              "Authentication policies, sign-on rules, and MFA/authenticator posture",
+              "Password policy",
+              "Administrator role assignments and privileged-identity / privileged-group posture",
+            ].map((cat) => (
+              <li
+                key={cat}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  padding: "2px 0",
+                  paddingLeft: "12px",
+                  position: "relative",
+                }}
+              >
+                <span style={{ position: "absolute", left: 0, color: "#3a3d4a" }}>·</span>
+                {cat}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <p style={{ margin: "10px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          Passwords, password hashes, recovery answers, MFA secrets, OTP seeds, session/refresh/
+          access tokens, private keys, and System Log payloads are never accessed. Coverage may
+          be partial if some API families are not readable by the supplied credential&apos;s
+          admin role — previously-known resources are never reported as removed merely because
+          a permission was revoked.
+        </p>
+      </Panel>
+    );
+  }
+
   return (
     <Panel title="Provider overview">
       <p style={{ fontSize: "12px", color: "#565b6e", margin: 0 }}>

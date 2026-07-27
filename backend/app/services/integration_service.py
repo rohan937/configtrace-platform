@@ -1635,18 +1635,31 @@ def _create_okta_integration(
     NEVER copied into resource_metadata. Only the user-supplied display
     name and the non-secret org_url are used for resource identity.
 
-    Live API validation (parsing org_url, confirming the token is accepted
-    and the org is reachable via GET /api/v1/org) is deferred to the first
-    sync, matching the established pattern for the majority of ConfigTrace
-    providers (Auth0, GitLab, Jira, Kubernetes, etc.) — this avoids leaking
-    tenant-reachability details through a synchronous create-time error
-    message.
+    Message 8 (public launch): the token/org are validated synchronously
+    against the live Okta org-info endpoint before anything is written —
+    ``validate_credentials()`` calls the narrowest official endpoint
+    (``GET /api/v1/org``) that simultaneously proves the token is accepted
+    and the org is reachable, without requiring any broader read
+    permission. This matches Kubernetes' message-9 launch precedent and
+    gives the "Invalid" launch-certification state (malformed org_url,
+    401, unreachable tenant, TLS failure) immediate feedback instead of a
+    silent 201.
 
-    Okta is registered internally (dispatch, schema, capability matrix) but
-    is NOT publicly connectable — it is excluded from the frontend's
-    PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Okta message 8.
+    Full resource collection across the 12 monitored API families (and
+    therefore the Full/Partial coverage determination —
+    ``build_okta_permission_diagnostics()``) is intentionally NOT run
+    synchronously here — a least-privileged admin role legitimately cannot
+    read every family (e.g. custom admin roles), and probing that requires
+    dozens of calls, so it stays on the first sync, same as every other
+    multi-resource provider (Kubernetes included).
     """
+    from app.connectors.okta import OktaConnector
+
     org_url = (credentials.get("org_url") or "").strip()
+
+    # Raises AuthenticationError / NetworkError / ConnectorError — caught by
+    # the router and returned as a 400/502, matching every other provider.
+    OktaConnector().validate_credentials(credentials)
 
     # ── 1. Encrypt credentials ────────────────────────────────────────────────
     ciphertext, iv = encrypt_credentials(credentials)
@@ -2310,6 +2323,112 @@ def reconnect_credentials_kubernetes(
             "This kubeconfig points to a different Kubernetes cluster than the "
             "one this integration is connected to. To monitor a different "
             "cluster, create a new integration instead of replacing this one's "
+            "credentials."
+        )
+
+    # Encrypt and store.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
+    if integration.status in ("error", "needs_reconnect"):
+        integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_okta(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_org_url: str | None,
+    new_api_token: str,
+    db: Session,
+) -> Integration:
+    """Replace the API token (and optionally the org URL) for an existing
+    Okta integration.
+
+    The new credentials are validated against the live Okta org before the
+    database row is updated. If the new credentials resolve to a genuinely
+    different Okta tenant (different immutable org ``id``, or a different
+    hostname when no ``id`` is available) than the one this integration was
+    originally connected to, the update is rejected rather than silently
+    overwriting the identity — a rotated token for the SAME tenant is
+    always accepted, but pointing this integration at a different tenant is
+    not.
+
+    SECURITY: the API token is stored encrypted only. It is NEVER logged or
+    returned.
+    """
+    from urllib.parse import urlparse
+
+    from app.connectors.okta import OktaConnector
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # org_url may be omitted for a token-only rotation — fall back to the
+    # existing encrypted org_url so the same tenant's endpoint is reused.
+    existing_creds = decrypt_credentials(
+        integration.encrypted_credentials,
+        integration.credential_iv,
+    )
+    org_url = (new_org_url or existing_creds.get("org_url") or "").strip()
+
+    new_creds = {"org_url": org_url, "api_token": new_api_token}
+
+    connector = OktaConnector()
+    # Validates org_url shape/SSRF safety and that the token is accepted.
+    # Raises AuthenticationError/NetworkError/ConnectorError on failure.
+    connector.validate_credentials(new_creds)
+
+    # Resolve the new tenant's identity via the same org-info call used in
+    # production, then compare it against the identity already on file.
+    normalized_org_url, api_token = OktaConnector._credentials(new_creds)
+    with OktaConnector._make_client(normalized_org_url, api_token) as http_client:
+        from app.connectors.okta import _raise_for_outcome, call_okta
+
+        outcome = call_okta(http_client, "GET", "/api/v1/org")
+        resp = _raise_for_outcome(outcome, context="GET /api/v1/org")
+        raw_org = resp.json()
+
+    org_hostname = urlparse(normalized_org_url).netloc
+    new_tenant_id = connector.compute_tenant_id(org_hostname, raw_org if isinstance(raw_org, dict) else {})
+
+    existing_org_resource = (
+        db.query(Resource)
+        .filter(
+            Resource.integration_id == integration_id,
+            Resource.provider_resource_type == "okta_organization",
+        )
+        .first()
+    )
+    # A pre-first-sync resource row still has the creation-time placeholder
+    # provider_resource_id (str(integration.id)) rather than a real
+    # "org/<tenant_id>" identity — only compare once a real identity has
+    # actually been recorded, otherwise every reconnect before the first
+    # sync would spuriously look like a tenant mismatch.
+    existing_resource_id = (
+        existing_org_resource.provider_resource_id if existing_org_resource is not None else None
+    )
+    existing_tenant_id = (
+        existing_resource_id[len("org/"):]
+        if isinstance(existing_resource_id, str) and existing_resource_id.startswith("org/")
+        else None
+    )
+
+    if existing_tenant_id and new_tenant_id and existing_tenant_id != new_tenant_id:
+        raise ConnectorError(
+            "These credentials point to a different Okta org than the one "
+            "this integration is connected to. To monitor a different Okta "
+            "org, create a new integration instead of replacing this one's "
             "credentials."
         )
 

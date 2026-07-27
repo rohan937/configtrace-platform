@@ -53,6 +53,7 @@ PROVIDERS = [
     "gitlab",
     "terraform_cloud",
     "kubernetes",
+    "okta",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -667,10 +668,7 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "kubernetes_privileged_identity_in_weak_namespace": ("kubernetes_namespace_governance_posture",),
     "kubernetes_privileged_workload_without_isolation": ("kubernetes_namespace_governance_posture",),
     "kubernetes_namespace_resource_governance_missing": ("kubernetes_namespace_governance_posture",),
-    # Okta (message 6 of 8) — "okta" is intentionally NOT in PROVIDERS above
-    # (non-connectable until message 8), so these entries do not yet drive
-    # any live coverage report; they exist so the mapping is complete and
-    # ready the moment Okta becomes connectable.
+    # Okta (message 6 of 8; connectable as of message 8)
     "okta_super_admin_assigned": ("okta_privileged_identity",),
     "okta_high_tier_admin_assigned": ("okta_privileged_identity",),
     "okta_custom_admin_role_high_risk": ("okta_admin_role",),
@@ -851,6 +849,15 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Admission webhooks",
         "Pod Security Admission",
         "Namespace governance posture",
+    ],
+    "okta": [
+        "Administrator role assignments",
+        "Privileged identity / group posture",
+        "Authentication policies & sign-on rules",
+        "MFA & authenticator enrollment posture",
+        "Password policy",
+        "Application SSO (OIDC/SAML) configuration",
+        "Application user/group assignments",
     ],
 }
 

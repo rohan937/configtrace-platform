@@ -186,7 +186,9 @@ export interface IntegrationCreateRequest {
     // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
     | "terraform_cloud"
     // ── Kubernetes message 9 — public launch ───────────────────────────────────
-    | "kubernetes";
+    | "kubernetes"
+    // ── Okta message 8 — public launch ─────────────────────────────────────────
+    | "okta";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -411,6 +413,20 @@ export interface IntegrationCreateRequest {
   cluster_name?: string;
   /** Optional namespace allowlist. Omitted means all visible namespaces are collected. */
   namespace_allowlist?: string[];
+  // ── Okta fields (message 8 — public launch) ─────────────────────────────────
+  /**
+   * Okta org base URL, e.g. "https://example.okta.com". Custom domains
+   * are supported. Required for the okta provider.
+   */
+  okta_org_url?: string;
+  /**
+   * Okta API token (SSWS). Inherits the permissions of the admin account
+   * that generated it — see the setup guidance for the least-privileged
+   * role to use. Sent to backend once; never stored in frontend state
+   * after submission, never logged, never echoed back. Stored encrypted
+   * server-side — NEVER returned in API responses.
+   */
+  okta_api_token?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

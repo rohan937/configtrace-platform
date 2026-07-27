@@ -2950,3 +2950,124 @@ class OktaConnector(BaseConnector):
             records.extend(self._probe_capabilities(client, tenant_id))
 
         return records
+
+
+# ── Permission diagnostics (Okta message 8 — public launch) ────────────────
+#
+# The 12 monitored API families, in the order surfaced to the user. Each key
+# matches a key in ``okta_organization.family_completeness`` (see
+# ``OktaConnector.fetch()`` above).
+_OKTA_DIAGNOSTIC_FAMILIES: tuple[tuple[str, str], ...] = (
+    ("users", "Users"),
+    ("groups", "Groups"),
+    ("memberships", "Group memberships"),
+    ("applications", "Applications"),
+    ("app_user_assignments", "Application user assignments"),
+    ("app_group_assignments", "Application group assignments"),
+    ("policies", "Authentication / password policies"),
+    ("policy_rules", "Policy rules"),
+    ("authenticators", "Authenticators (MFA factor types)"),
+    ("custom_admin_roles", "Custom administrator roles"),
+    ("user_admin_role_assignments", "User administrator-role assignments"),
+    ("group_admin_role_assignments", "Group administrator-role assignments"),
+)
+
+_OKTA_DIAGNOSTIC_STATUS_LABEL: dict[str, str] = {
+    FAMILY_COMPLETE: "readable",
+    FAMILY_PARTIAL: "partially readable",
+    FAMILY_DENIED: "denied by this token's admin role",
+    FAMILY_UNAVAILABLE: "unavailable",
+    "unknown": "status unknown",
+}
+
+
+def build_okta_permission_diagnostics(records: list[dict]) -> dict:
+    """Build a redacted, user-facing permission/coverage diagnostics report
+    from a normalized Okta record list (the output of ``fetch()``).
+
+    Never includes the API token, Authorization header value, or any raw
+    Okta API response — only category labels and the per-family
+    ``family_completeness`` status already present on the
+    ``okta_organization`` record.
+
+    Coverage semantics (Okta message 8):
+      * ``"full"``    — every monitored family reports ``"complete"``.
+      * ``"partial"`` — the org is reachable and at least one family is
+        readable, but one or more of the 12 families is denied,
+        unavailable, or only partially collected. This is NOT rejected —
+        Okta API tokens inherit the creating admin's role, and a
+        least-privileged (non-Super-Admin) role commonly cannot see custom
+        admin roles, System Log, or every admin-role-assignment edge case.
+      * ``"invalid"`` — the org record itself could not be found (the org
+        call never succeeded), or literally zero of the 12 families are
+        readable — a token that can prove tenant identity but reads
+        nothing meaningful is not useful for monitoring.
+    """
+    org_record = next((r for r in records if r.get("record_type") == OKTA_ORGANIZATION), None)
+    if org_record is None:
+        return {
+            "org_reachable": False,
+            "coverage": "invalid",
+            "sections": [],
+            "security_findings_note": (
+                "Security Findings were not evaluated — the Okta org could not be reached."
+            ),
+            "change_detection_note": "Change detection is unavailable without a successful sync.",
+        }
+
+    family_completeness = org_record.get("family_completeness") or {}
+    entries = []
+    complete_count = 0
+    readable_count = 0
+    for family_key, label in _OKTA_DIAGNOSTIC_FAMILIES:
+        status = family_completeness.get(family_key, "unknown")
+        entries.append({
+            "resource": label,
+            "status": status,
+            "status_label": _OKTA_DIAGNOSTIC_STATUS_LABEL.get(status, "status unknown"),
+        })
+        if status == FAMILY_COMPLETE:
+            complete_count += 1
+        if status in (FAMILY_COMPLETE, FAMILY_PARTIAL):
+            readable_count += 1
+
+    if readable_count == 0:
+        coverage = "invalid"
+    elif complete_count == len(_OKTA_DIAGNOSTIC_FAMILIES):
+        coverage = "full"
+    else:
+        coverage = "partial"
+
+    return {
+        "org_reachable": True,
+        "tenant_id": org_record.get("tenant_id"),
+        "org_hostname": org_record.get("org_hostname"),
+        "sections": [{"name": "Monitored API families", "resources": entries}],
+        "coverage": coverage,
+        "security_findings_note": (
+            "Security Findings are evaluated only for families ConfigTrace could read; "
+            "denied/unavailable families are excluded, never assumed safe."
+        ),
+        "change_detection_note": (
+            "Change detection is available for every family marked readable above; "
+            "denied/unavailable/partial families never generate false removal Changes."
+        ),
+        "record_count": len(records),
+    }
+
+
+def format_okta_permission_diagnostics_text(report: dict) -> str:
+    """Render ``build_okta_permission_diagnostics()``'s output as a plain-text
+    report. Purely a display helper — contains no information not already in
+    the structured report."""
+    if not report.get("org_reachable"):
+        return "Okta connection could not be validated.\n\n" + report.get("security_findings_note", "")
+
+    lines = ["Okta connection validated", "", f"Coverage:\n  {report['coverage'].capitalize()}", ""]
+    for section in report["sections"]:
+        lines.append(f"{section['name']}:")
+        for entry in section["resources"]:
+            lines.append(f"  {entry['resource']}: {entry['status_label']}")
+    lines.append("")
+    lines.append(f"Security Findings:\n  {report['security_findings_note']}")
+    return "\n".join(lines)

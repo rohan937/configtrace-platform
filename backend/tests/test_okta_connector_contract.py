@@ -47,18 +47,22 @@ class TestProviderDispatchWiring:
     def test_create_integration_creates_row_without_leaking_token(
         self, test_user, db_session,
     ):
+        from unittest.mock import patch
+
+        from app.connectors.okta import OktaConnector
         from app.models.resource import Resource
         from app.schemas.integration import IntegrationResponse
         from app.services import integration_service
 
         credentials = {"org_url": _ORG_URL, "api_token": _TOKEN}
-        integration = integration_service.create_integration(
-            user_id=test_user.id,
-            provider="okta",
-            display_name="okta-test",
-            credentials=credentials,
-            db=db_session,
-        )
+        with patch.object(OktaConnector, "validate_credentials", return_value=True):
+            integration = integration_service.create_integration(
+                user_id=test_user.id,
+                provider="okta",
+                display_name="okta-test",
+                credentials=credentials,
+                db=db_session,
+            )
         try:
             assert integration.provider == "okta"
             assert integration.encrypted_credentials is not None
@@ -199,20 +203,25 @@ class TestDiffAndRiskDispatch:
 # ── Capability matrix ──────────────────────────────────────────────────────────
 
 class TestCapabilityMatrix:
-    def test_okta_registered_in_partial_list_not_complete_list(self):
+    def test_okta_registered_in_complete_list_not_partial_list(self):
+        # Okta message 8: launched and moved to the public/complete list —
+        # maturity stays "partial" (drift + Security Findings only, no
+        # activity ingestion/demo/case-report stack), but list membership
+        # now reflects public-launch status, matching Kubernetes' pattern.
         from app.services.provider_capability_matrix_service import (
             PROVIDER_CAPABILITIES,
             PROVIDER_CAPABILITIES_PARTIAL,
         )
 
-        assert "okta" in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
-        assert "okta" not in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "okta" in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "okta" not in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
 
     def test_okta_drift_snapshots_true_security_rules_true_rest_false(self):
-        # Okta message 6 of 8 implemented static Security Findings, so
-        # security_rules flipped to True — the rest of the security stack
-        # (activity ingestion/signals/correlations/demo/case-report/
-        # evidence) remains unimplemented for this provider.
+        # Okta message 8 flips drift_review_workflow to True (generic
+        # review UI, no provider-specific code needed) as part of public
+        # launch, matching Kubernetes' message-9 precedent. The rest of the
+        # security stack (activity ingestion/signals/correlations/demo/
+        # case-report/evidence) remains unimplemented for this provider.
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("okta")
@@ -220,7 +229,7 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_snapshots is True
         assert cap.drift.drift_diff is True
         assert cap.drift.drift_risk_classification is True
-        assert cap.drift.drift_review_workflow is False
+        assert cap.drift.drift_review_workflow is True
         assert cap.security.security_rules is True
         assert cap.security.activity_ingestion is False
         assert cap.security.demo_seed_clear is False
@@ -243,23 +252,21 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("okta")
         assert cap.maturity in MATURITY_LEVELS
 
-    def test_get_matrix_does_not_include_okta_yet(self):
-        """okta is in PROVIDER_CAPABILITIES_PARTIAL (a staging list), not
-        PROVIDER_CAPABILITIES — get_matrix() only reports the latter, so
-        Okta must not appear in the public matrix endpoint's provider list
-        until a later message promotes it."""
+    def test_get_matrix_includes_okta(self):
+        """okta is now in PROVIDER_CAPABILITIES (message 8 public launch),
+        so it must appear in the public matrix endpoint's provider list."""
         from app.services.provider_capability_matrix_service import get_matrix
 
         matrix = get_matrix()
         provider_ids = {p["provider"] for p in matrix["providers"]}
-        assert "okta" not in provider_ids
+        assert "okta" in provider_ids
 
 
 # ── Frontend catalog state ────────────────────────────────────────────────────
 
 class TestFrontendCatalogState:
-    """Source-scan checks (no TS execution) confirming Okta is present for
-    metadata lookups but NOT yet user-connectable."""
+    """Source-scan checks (no TS execution) confirming Okta is present and,
+    as of message 8, fully user-connectable/Live."""
 
     def _providers_ts_text(self) -> str:
         from pathlib import Path
@@ -278,26 +285,27 @@ class TestFrontendCatalogState:
         text = self._providers_ts_text()
         assert "okta: {" in text
 
-    def test_okta_not_in_connectable_provider_ids(self):
+    def test_okta_in_connectable_provider_ids(self):
         text = self._providers_ts_text()
         start = text.index("export const CONNECTABLE_PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"okta"' not in block
+        assert '"okta"' in block
 
-    def test_okta_not_in_provider_ids_display_order(self):
+    def test_okta_in_provider_ids_display_order(self):
         text = self._providers_ts_text()
         start = text.index("export const PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"okta"' not in block
+        assert '"okta"' in block
 
-    def test_okta_trust_note_does_not_claim_live_coverage(self):
+    def test_okta_card_copy_does_not_use_stale_planned_wording(self):
         text = self._providers_ts_text()
         start = text.index("okta: {")
         end = text.index("\n  },", start)
         block = text[start:end]
-        assert "foundation" in block.lower() or "planned" in block.lower()
+        assert "(planned)" not in block
+        assert "foundation stage" not in block.lower()
 
     def test_okta_card_copy_does_not_claim_unsupported_features(self):
         """The card-facing description/monitoredSurfaces copy must not

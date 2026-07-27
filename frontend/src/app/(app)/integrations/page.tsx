@@ -40,6 +40,7 @@ import GitLabIntegrationForm from "@/components/integrations/GitLabIntegrationFo
 // ── M88A — Terraform Cloud drift provider foundation ──────────────────────────
 import TerraformCloudIntegrationForm from "@/components/integrations/TerraformCloudIntegrationForm";
 import KubernetesIntegrationForm from "@/components/integrations/KubernetesIntegrationForm";
+import OktaIntegrationForm from "@/components/integrations/OktaIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -1127,6 +1128,50 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── Okta message 8 — public launch setup guide ────────────────────────────
+
+  if (provider === "okta") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect an Okta org
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Create a dedicated read-only admin account.",
+            body: <>Do not generate the token from a Super Admin account. Assign the
+              built-in <strong style={{ color: "#e8eaf0" }}>Read-Only Administrator</strong> role
+              (or a custom admin role with equivalent read access to Users, Groups,
+              Applications, Authentication Policies, and Administrator Role assignments)
+              to a dedicated service-account admin.</>,
+          },
+          {
+            heading: "Generate an API token from that account.",
+            body: <>Sign in as that admin and open{" "}
+              <strong style={{ color: "#e8eaf0" }}>Security → API → Tokens</strong> in the
+              Okta Admin Console, then create a new token. Copy it — it is only shown once.
+              Okta API tokens inherit the exact permissions of the account that created
+              them; there is no separate scoping mechanism.</>,
+          },
+          {
+            heading: "Enter your org URL and paste the token below.",
+            body: <>Use your full org base URL (e.g. https://example.okta.com), including
+              a custom domain if you use one. ConfigTrace validates the token and org
+              reachability before saving.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores your Okta API token encrypted and uses it only to read org
+          configuration metadata. It does not store passwords, password hashes, recovery
+          answers, MFA secrets, OTP seeds, session/refresh/access tokens, private keys, or
+          System Log payloads. Coverage may be partial if some API families are not readable
+          by the supplied credential's admin role — connection diagnostics are shown after
+          the first sync.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -1300,6 +1345,10 @@ export default function IntegrationsPage() {
     // ── Kubernetes message 9 — public launch ─────────────────────────────────────
     if (selectedProvider === "kubernetes") {
       return <KubernetesIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── Okta message 8 — public launch ───────────────────────────────────────────
+    if (selectedProvider === "okta") {
+      return <OktaIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {
