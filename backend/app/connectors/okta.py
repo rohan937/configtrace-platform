@@ -559,7 +559,7 @@ def paginate(
     params: Optional[dict] = None,
     max_pages: int = _MAX_PAGES,
     _sleep_fn: Callable[[float], None] = None,
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """Follow Okta's Link-header (``rel="next"``) pagination safely.
 
     Bounded by ``max_pages``. Detects a repeated ``next`` URL (a
@@ -576,12 +576,23 @@ def paginate(
     was collected so far, since the first page already proved the
     credential works — a transient failure mid-pagination should degrade
     to partial results, not lose everything already fetched.
+
+    Returns ``(items, truncated)``. ``truncated`` is ``True`` (Okta
+    message 7) when pagination stopped for a reason OTHER than a natural
+    end-of-list — a later-page failure (403/429/5xx/timeout/malformed
+    body), a repeated Link, or a rejected cross-origin Link. The caller
+    (``_collect_family``) must treat a truncated result as PARTIAL even
+    when it happens to be under the record cap — silently reporting a
+    mid-pagination failure as "complete" would make later diffs treat an
+    incomplete page set as fully trustworthy and infer false removals for
+    every record that would have been on the unread pages.
     """
     items: list[dict] = []
     seen_ids: set = set()
     seen_urls: set = set()
     url = start_url
     current_params: Optional[dict] = params
+    truncated = False
 
     for page_num in range(max_pages):
         outcome = call_okta(client, "GET", url, params=current_params, _sleep_fn=_sleep_fn)
@@ -589,6 +600,7 @@ def paginate(
             if page_num == 0:
                 _raise_for_outcome(outcome, context=f"page {page_num + 1}")
             logger.debug("okta_connector: pagination stopped early on page %d (%s)", page_num + 1, outcome.category)
+            truncated = True
             break
 
         resp = outcome.response
@@ -597,10 +609,12 @@ def paginate(
         except ValueError:
             if page_num == 0:
                 raise ConnectorError("okta: response was not valid JSON")
+            truncated = True
             break
         if not isinstance(page_items, list):
             if page_num == 0:
                 raise ConnectorError("okta: expected a JSON array response")
+            truncated = True
             break
 
         for raw in page_items:
@@ -612,17 +626,33 @@ def paginate(
 
         next_url = _extract_next_link(resp, trusted_origin=trusted_origin)
         if not next_url:
+            # A completely absent Link header is a genuine natural end.
+            # But a Link header that DID advertise a rel="next" candidate
+            # (rejected only because it failed the cross-origin/malformed
+            # checks in `_extract_next_link`) means the server claimed
+            # there was more data — we deliberately don't follow it for
+            # safety, but the result must still be treated as truncated,
+            # not a confirmed-complete natural end.
+            raw_link_header = resp.headers.get("Link") or ""
+            if "rel=\"next\"" in raw_link_header or "rel=next" in raw_link_header.replace(" ", ""):
+                truncated = True
             break
         if next_url in seen_urls:
             logger.warning("okta_connector: repeated pagination Link detected; stopping")
+            truncated = True
             break
         seen_urls.add(next_url)
         url = next_url
         # The next URL already carries its own query string — do not
         # re-apply the original params on subsequent requests.
         current_params = None
+    else:
+        # The `for` loop's `max_pages` bound was hit without a `break` —
+        # there may be more pages beyond what we read, so this is also a
+        # truncated (partial) result, not a confirmed complete one.
+        truncated = True
 
-    return items
+    return items, truncated
 
 
 # ── Connector ──────────────────────────────────────────────────────────────
@@ -1061,8 +1091,14 @@ class OktaConnector(BaseConnector):
             "group_id": group_id,
             "group_name": group_record.get("group_name") if group_record else None,
             "group_type": group_record.get("group_type") if group_record else "unknown",
-            "built_in_group": bool(group_record.get("built_in")) if group_record else False,
-            "everyone_group": bool(group_record.get("everyone_group")) if group_record else False,
+            # When the group's own record couldn't be resolved (e.g. group
+            # collection was denied/partial while app-group-assignment
+            # collection succeeded), whether this is the built-in/Everyone
+            # group is genuinely UNKNOWN — never coerced to False, which
+            # would silently suppress a real Everyone-group assignment
+            # Finding.
+            "built_in_group": bool(group_record.get("built_in")) if group_record else None,
+            "everyone_group": bool(group_record.get("everyone_group")) if group_record else None,
         }
 
     # ── Policy / rule / authenticator normalizers (Okta message 4) ─────────
@@ -1545,12 +1581,14 @@ class OktaConnector(BaseConnector):
 
         Returns ``(items, completeness)`` where completeness is one of
         ``FAMILY_COMPLETE`` / ``FAMILY_PARTIAL`` / ``FAMILY_DENIED`` /
-        ``FAMILY_UNAVAILABLE``. Hitting ``cap`` is treated as
-        ``FAMILY_PARTIAL`` (unknown-safe: never claim complete when the
-        result may have been truncated).
+        ``FAMILY_UNAVAILABLE``. Hitting ``cap`` OR a mid-pagination
+        failure (``paginate()``'s ``truncated`` flag — Okta message 7) is
+        treated as ``FAMILY_PARTIAL``: unknown-safe, never claim complete
+        when the result may have been truncated by a later-page 403/429/
+        5xx/timeout, a repeated Link, or a rejected cross-origin Link.
         """
         try:
-            items = paginate(
+            items, truncated = paginate(
                 client, trusted_origin, path, params=params,
                 max_pages=_MAX_PAGES, _sleep_fn=_sleep_fn,
             )
@@ -1565,6 +1603,8 @@ class OktaConnector(BaseConnector):
 
         if len(items) >= cap:
             return items[:cap], FAMILY_PARTIAL
+        if truncated:
+            return items, FAMILY_PARTIAL
         return items, FAMILY_COMPLETE
 
     @classmethod
@@ -1625,9 +1665,15 @@ class OktaConnector(BaseConnector):
 
         Also returns a ``membership_count_by_group_id`` dict so
         ``_normalize_group()`` can report a count derived from what was
-        actually collected, without a separate per-group count API call.
+        actually collected, without a separate per-group count API call,
+        and a ``status_by_group_id`` dict (Okta message 7) recording each
+        walked group's OWN completeness — this lets diff-time false-
+        removal suppression scope itself to just the groups whose walk
+        actually failed, rather than suppressing every membership removal
+        tenant-wide whenever any single group's walk fails (see
+        ``_okta_removal_suppressed`` in diff_service.py).
 
-        Returns ``(records, completeness, membership_count_by_group_id)``.
+        Returns ``(records, completeness, membership_count_by_group_id, status_by_group_id)``.
         completeness is FAMILY_COMPLETE only if every walked group
         succeeded; FAMILY_DENIED if the walk never got any group members
         due to permission; FAMILY_PARTIAL if some groups succeeded and
@@ -1638,13 +1684,14 @@ class OktaConnector(BaseConnector):
         if not raw_groups:
             # No groups at all -> trivially complete, zero memberships —
             # never inferred as "unknown"/"denied".
-            return [], FAMILY_COMPLETE, {}
+            return [], FAMILY_COMPLETE, {}, {}
 
         groups_to_walk = raw_groups[:_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION]
         truncated_group_list = len(raw_groups) > len(groups_to_walk)
 
         records: list[dict] = []
         counts_by_group: dict = {}
+        status_by_group: dict = {}
         succeeded = 0
         denied = 0
         other_failed = 0
@@ -1665,6 +1712,7 @@ class OktaConnector(BaseConnector):
                 params={"limit": str(_DEFAULT_PAGE_LIMIT)},
                 cap=_MAX_MEMBERS_PER_GROUP, _sleep_fn=_sleep_fn,
             )
+            status_by_group[group_id] = group_completeness
             if group_completeness == FAMILY_DENIED:
                 denied += 1
                 continue
@@ -1706,7 +1754,7 @@ class OktaConnector(BaseConnector):
         else:
             completeness = FAMILY_COMPLETE
 
-        return records, completeness, counts_by_group
+        return records, completeness, counts_by_group, status_by_group
 
     # ── Application collection (Okta message 3) ─────────────────────────────
 
@@ -1742,16 +1790,20 @@ class OktaConnector(BaseConnector):
         app list itself. Bounded and documented, not silently unbounded —
         message 7 owns further scale hardening.
 
-        Returns ``(records, completeness, user_assignment_count_by_app_id)``.
+        Returns ``(records, completeness, user_assignment_count_by_app_id, status_by_app_id)``.
+        ``status_by_app_id`` (Okta message 7) records each walked app's OWN
+        completeness for per-parent false-removal suppression — see
+        ``_fetch_memberships``'s docstring for the same rationale.
         """
         if not raw_apps:
-            return [], FAMILY_COMPLETE, {}
+            return [], FAMILY_COMPLETE, {}, {}
 
         apps_to_walk = raw_apps[:_MAX_APPS_FOR_ASSIGNMENT_ENUMERATION]
         truncated_app_list = len(raw_apps) > len(apps_to_walk)
 
         records: list[dict] = []
         counts_by_app: dict = {}
+        status_by_app: dict = {}
         succeeded = 0
         denied = 0
         other_failed = 0
@@ -1772,6 +1824,7 @@ class OktaConnector(BaseConnector):
                 params={"limit": str(_DEFAULT_PAGE_LIMIT)},
                 cap=_MAX_ASSIGNEES_PER_APP, _sleep_fn=_sleep_fn,
             )
+            status_by_app[app_id] = app_completeness
             if app_completeness == FAMILY_DENIED:
                 denied += 1
                 continue
@@ -1813,7 +1866,7 @@ class OktaConnector(BaseConnector):
         else:
             completeness = FAMILY_COMPLETE
 
-        return records, completeness, counts_by_app
+        return records, completeness, counts_by_app, status_by_app
 
     @classmethod
     def _fetch_app_group_assignments(
@@ -1833,16 +1886,17 @@ class OktaConnector(BaseConnector):
         over ``raw_apps`` as user assignments (never a duplicate,
         redundant enumeration of the app list itself).
 
-        Returns ``(records, completeness, group_assignment_count_by_app_id)``.
+        Returns ``(records, completeness, group_assignment_count_by_app_id, status_by_app_id)``.
         """
         if not raw_apps:
-            return [], FAMILY_COMPLETE, {}
+            return [], FAMILY_COMPLETE, {}, {}
 
         apps_to_walk = raw_apps[:_MAX_APPS_FOR_ASSIGNMENT_ENUMERATION]
         truncated_app_list = len(raw_apps) > len(apps_to_walk)
 
         records: list[dict] = []
         counts_by_app: dict = {}
+        status_by_app: dict = {}
         succeeded = 0
         denied = 0
         other_failed = 0
@@ -1863,6 +1917,7 @@ class OktaConnector(BaseConnector):
                 params={"limit": str(_DEFAULT_PAGE_LIMIT)},
                 cap=_MAX_ASSIGNEES_PER_APP, _sleep_fn=_sleep_fn,
             )
+            status_by_app[app_id] = app_completeness
             if app_completeness == FAMILY_DENIED:
                 denied += 1
                 continue
@@ -1904,7 +1959,7 @@ class OktaConnector(BaseConnector):
         else:
             completeness = FAMILY_COMPLETE
 
-        return records, completeness, counts_by_app
+        return records, completeness, counts_by_app, status_by_app
 
     # ── Policy / rule / authenticator collection (Okta message 4) ──────────
 
@@ -1979,16 +2034,17 @@ class OktaConnector(BaseConnector):
         alternative broader enumeration, and never re-fetches the policy
         list itself.
 
-        Returns ``(records, completeness, rule_count_by_policy_id)``.
+        Returns ``(records, completeness, rule_count_by_policy_id, status_by_policy_id)``.
         """
         if not raw_policies:
-            return [], FAMILY_COMPLETE, {}
+            return [], FAMILY_COMPLETE, {}, {}
 
         policies_to_walk = raw_policies[:_MAX_POLICIES_FOR_RULE_ENUMERATION]
         truncated_policy_list = len(raw_policies) > len(policies_to_walk)
 
         records: list[dict] = []
         counts_by_policy: dict = {}
+        status_by_policy: dict = {}
         succeeded = 0
         denied = 0
         other_failed = 0
@@ -2009,6 +2065,7 @@ class OktaConnector(BaseConnector):
                 params={"limit": str(_DEFAULT_PAGE_LIMIT)},
                 cap=_MAX_RULES_PER_POLICY, _sleep_fn=_sleep_fn,
             )
+            status_by_policy[policy_id] = policy_completeness
             if policy_completeness == FAMILY_DENIED:
                 denied += 1
                 continue
@@ -2049,7 +2106,7 @@ class OktaConnector(BaseConnector):
         else:
             completeness = FAMILY_COMPLETE
 
-        return records, completeness, counts_by_policy
+        return records, completeness, counts_by_policy, status_by_policy
 
     @classmethod
     def _fetch_authenticators(
@@ -2446,7 +2503,10 @@ class OktaConnector(BaseConnector):
             if m.get("group_id") in group_roles:
                 groups_by_user.setdefault(m["user_id"], set()).add(m["group_id"])
 
-        privileged_user_ids = set(direct_by_user) | set(groups_by_user)
+        # Sorted for deterministic output ordering regardless of API
+        # response order or set/dict hash-iteration order — the same
+        # source data must always produce records in the same order.
+        privileged_user_ids = sorted(set(direct_by_user) | set(groups_by_user))
         records: list[dict] = []
 
         for user_id in privileged_user_ids:
@@ -2706,19 +2766,25 @@ class OktaConnector(BaseConnector):
                     group_records_by_id[group_id] = rec
 
             # ── Memberships ──────────────────────────────────────────────
-            membership_records, memberships_completeness, counts_by_group = self._fetch_memberships(
-                client, org_url, tenant_id, raw_groups, group_records_by_id, user_index,
-                _sleep_fn=_sleep_fn,
+            membership_records, memberships_completeness, counts_by_group, membership_status_by_group = (
+                self._fetch_memberships(
+                    client, org_url, tenant_id, raw_groups, group_records_by_id, user_index,
+                    _sleep_fn=_sleep_fn,
+                )
             )
 
             # Backfill membership_count only for groups whose own membership
             # walk actually succeeded — a group whose walk was denied/failed
-            # keeps membership_count=None (unknown), never 0.
+            # keeps membership_count=None (unknown), never 0. Also backfill
+            # each group's own membership_collection_status (Okta message 7)
+            # so diff-time false-removal suppression can scope itself to
+            # just the groups whose walk failed, not every group tenant-wide.
             group_records: list[dict] = []
             for group_id, group_rec in group_records_by_id.items():
                 count = counts_by_group.get(group_id)
                 group_rec["membership_count"] = count
                 group_rec["membership_count_category"] = categorize_membership_count(count)
+                group_rec["membership_collection_status"] = membership_status_by_group.get(group_id, "unknown")
                 group_records.append(group_rec)
 
             # ── Applications (raw kept for assignment walks; normalized after) ──
@@ -2740,7 +2806,7 @@ class OktaConnector(BaseConnector):
                     app_records_by_id[app_id] = rec
 
             # ── Application user assignments ────────────────────────────────
-            app_user_assignment_records, app_user_assignments_completeness, user_counts_by_app = (
+            app_user_assignment_records, app_user_assignments_completeness, user_counts_by_app, user_assignment_status_by_app = (
                 self._fetch_app_user_assignments(
                     client, org_url, tenant_id, raw_apps, app_records_by_id, user_index,
                     _sleep_fn=_sleep_fn,
@@ -2748,7 +2814,7 @@ class OktaConnector(BaseConnector):
             )
 
             # ── Application group assignments ───────────────────────────────
-            app_group_assignment_records, app_group_assignments_completeness, group_counts_by_app = (
+            app_group_assignment_records, app_group_assignments_completeness, group_counts_by_app, group_assignment_status_by_app = (
                 self._fetch_app_group_assignments(
                     client, org_url, tenant_id, raw_apps, app_records_by_id, group_records_by_id,
                     _sleep_fn=_sleep_fn,
@@ -2757,11 +2823,14 @@ class OktaConnector(BaseConnector):
 
             # Backfill assignment counts only for apps whose own assignment
             # walk actually succeeded — an app whose walk was denied/failed
-            # keeps the count=None (unknown), never 0.
+            # keeps the count=None (unknown), never 0. Also backfill each
+            # app's own per-parent collection status (Okta message 7).
             app_records: list[dict] = []
             for app_id, app_rec in app_records_by_id.items():
                 app_rec["user_assignment_count"] = user_counts_by_app.get(app_id)
                 app_rec["group_assignment_count"] = group_counts_by_app.get(app_id)
+                app_rec["user_assignment_collection_status"] = user_assignment_status_by_app.get(app_id, "unknown")
+                app_rec["group_assignment_collection_status"] = group_assignment_status_by_app.get(app_id, "unknown")
                 app_records.append(app_rec)
 
             # ── Policies (raw kept for rule walk; normalized after) ─────────
@@ -2781,7 +2850,7 @@ class OktaConnector(BaseConnector):
                     policy_records_by_id[policy_id] = rec
 
             # ── Policy rules ─────────────────────────────────────────────
-            policy_rule_records, policy_rules_completeness, rule_counts_by_policy = (
+            policy_rule_records, policy_rules_completeness, rule_counts_by_policy, rule_status_by_policy = (
                 self._fetch_policy_rules(
                     client, org_url, tenant_id, raw_policies, policy_records_by_id,
                     _sleep_fn=_sleep_fn,
@@ -2790,10 +2859,12 @@ class OktaConnector(BaseConnector):
 
             # Backfill rule_count only for policies whose own rule walk
             # actually succeeded — a policy whose walk was denied/failed
-            # keeps rule_count=None (unknown), never 0.
+            # keeps rule_count=None (unknown), never 0. Also backfill each
+            # policy's own rule_collection_status (Okta message 7).
             policy_records: list[dict] = []
             for policy_id, policy_rec in policy_records_by_id.items():
                 policy_rec["rule_count"] = rule_counts_by_policy.get(policy_id)
+                policy_rec["rule_collection_status"] = rule_status_by_policy.get(policy_id, "unknown")
                 policy_records.append(policy_rec)
 
             # ── Authenticators ───────────────────────────────────────────

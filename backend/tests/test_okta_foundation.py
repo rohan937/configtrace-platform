@@ -272,8 +272,9 @@ class TestPagination:
             return_value=httpx.Response(200, json=[{"id": "1"}, {"id": "2"}])
         )
         with httpx.Client(base_url=_ORG_URL) as client:
-            items = paginate(client, _ORG_URL, "/api/v1/things")
+            items, truncated = paginate(client, _ORG_URL, "/api/v1/things")
         assert len(items) == 2
+        assert truncated is False
 
     @respx.mock
     def test_multiple_pages_via_link_header(self):
@@ -288,8 +289,9 @@ class TestPagination:
         # both structurally match the same path.
         respx.get(url__regex=r".*/api/v1/things.*").mock(side_effect=[page1, page2])
         with httpx.Client(base_url=_ORG_URL) as client:
-            items = paginate(client, _ORG_URL, "/api/v1/things")
+            items, truncated = paginate(client, _ORG_URL, "/api/v1/things")
         assert {i["id"] for i in items} == {"1", "2"}
+        assert truncated is False  # reached a natural end (no further next link)
 
     def test_extract_next_link_parses_rel_next(self):
         resp = httpx.Response(
@@ -321,8 +323,9 @@ class TestPagination:
         )
         respx.get(f"{_ORG_URL}/api/v1/things").mock(return_value=page1)
         with httpx.Client(base_url=_ORG_URL) as client:
-            items = paginate(client, _ORG_URL, "/api/v1/things")
+            items, truncated = paginate(client, _ORG_URL, "/api/v1/things")
         assert len(items) == 1
+        assert truncated is True  # a next link existed but was rejected — not a natural end
 
     def test_page_cap_bounds_iteration(self):
         with httpx.Client(base_url=_ORG_URL) as client:
@@ -334,8 +337,9 @@ class TestPagination:
                         headers={"Link": f'<{_ORG_URL}/api/v1/things?p=2>; rel="next"'},
                     )
                 )
-                items = paginate(client, _ORG_URL, "/api/v1/things", max_pages=3)
+                items, truncated = paginate(client, _ORG_URL, "/api/v1/things", max_pages=3)
         assert len(items) <= 3
+        assert truncated is True  # hit max_pages with more data still available
 
     @respx.mock
     def test_repeated_next_link_detected_and_stopped(self):
@@ -346,9 +350,10 @@ class TestPagination:
         )
         respx.get(url__regex=r".*/api/v1/things.*").mock(return_value=loop_resp)
         with httpx.Client(base_url=_ORG_URL) as client:
-            items = paginate(client, _ORG_URL, "/api/v1/things", max_pages=50)
+            items, truncated = paginate(client, _ORG_URL, "/api/v1/things", max_pages=50)
         # Should terminate well before max_pages due to repeated-URL detection.
         assert len(items) < 50
+        assert truncated is True  # stopped due to a repeated Link, not a natural end
 
     def test_malformed_link_header_ignored(self):
         resp = httpx.Response(200, headers={"Link": "not a valid link header"})
@@ -364,10 +369,11 @@ class TestPagination:
         page2 = httpx.Response(200, json=[{"id": "2"}, {"id": "3"}])
         respx.get(url__regex=r".*/api/v1/things.*").mock(side_effect=[page1, page2])
         with httpx.Client(base_url=_ORG_URL) as client:
-            items = paginate(client, _ORG_URL, "/api/v1/things")
+            items, truncated = paginate(client, _ORG_URL, "/api/v1/things")
         ids = [i["id"] for i in items]
         assert ids.count("2") == 1
         assert set(ids) == {"1", "2", "3"}
+        assert truncated is False
 
 
 # ── Rate limiting ────────────────────────────────────────────────────────────

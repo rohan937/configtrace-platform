@@ -874,13 +874,28 @@ SCOPE_CATEGORIES = frozenset({SCOPE_ALL_USERS, SCOPE_SCOPED_GROUPS, SCOPE_SCOPED
 
 def categorize_scope(*, group_include_count: "int | None", user_include_count: "int | None") -> str:
     """Derive a targeting scope category from safe include-counts.
-    Unknown (both counts unavailable) is never coerced to "all_users"."""
-    if group_include_count is None and user_include_count is None:
-        return SCOPE_UNKNOWN
-    if (group_include_count or 0) > 0:
+
+    Positive evidence (an explicit non-zero count on either side) is
+    always deterministic and wins immediately. Otherwise:
+
+    - A missing/malformed ``conditions.people.groups.include`` list
+      (``group_include_count is None``) is treated as UNKNOWN, never
+      "all_users" — a real Okta sign-on/access rule almost always carries
+      a ``people.groups`` block (even an explicitly-empty one), so its
+      absence/malformation is an abnormal shape suggesting the data
+      couldn't be read, not routine "no group targeting configured".
+    - A missing ``conditions.people.users`` block
+      (``user_include_count is None``) on its own is NOT treated as
+      unknown — omitting user-level targeting entirely is Okta's own
+      routine default (most rules never set it), so this alone must not
+      force an "all_users" rule into "unknown".
+    """
+    if isinstance(group_include_count, int) and group_include_count > 0:
         return SCOPE_SCOPED_GROUPS
-    if (user_include_count or 0) > 0:
+    if isinstance(user_include_count, int) and user_include_count > 0:
         return SCOPE_SCOPED_USERS
+    if group_include_count is None:
+        return SCOPE_UNKNOWN
     return SCOPE_ALL_USERS
 
 

@@ -4250,6 +4250,137 @@ def _kubernetes_removal_suppressed(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Okta false-removal prevention (Okta message 7 of 8)
+#
+# Okta's API surface is many independent families (users, groups, memberships
+# per-group, applications, assignments per-app, policies, rules per-policy,
+# authenticators, custom roles, admin-role assignments per-user/per-group) —
+# any ONE of them can fail (permission scoped down, throttled to exhaustion,
+# an unsupported edition) while every other family collects normally. Naively
+# diffing two consecutive snapshots would then report every previously-known
+# record in the failed family as "removed" — a false drift signal.
+#
+# The Okta connector (app/connectors/okta.py) reports:
+#   - tenant-wide completeness via `okta_organization.family_completeness`
+#     (the single always-present org record, keyed by tenant_id — never a
+#     synthetic resource of its own);
+#   - PER-PARENT completeness for the three genuinely nested families, so a
+#     single failed group/app/policy doesn't suppress removals for every
+#     OTHER group/app/policy that collected fine:
+#       okta_group.membership_collection_status
+#       okta_application.user_assignment_collection_status
+#       okta_application.group_assignment_collection_status
+#       okta_policy.rule_collection_status
+#
+# This function consults those signals to decide whether an absent-from-the
+# -new-snapshot Okta record should be suppressed rather than reported removed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_OKTA_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE: dict[str, str] = {
+    "okta_user": "users",
+    "okta_group": "groups",
+    "okta_application": "applications",
+    "okta_policy": "policies",
+    "okta_authenticator": "authenticators",
+    "okta_user_admin_role_assignment": "user_admin_role_assignments",
+    "okta_group_admin_role_assignment": "group_admin_role_assignments",
+}
+
+
+def _okta_removal_suppressed(
+    prev_record: dict, new_index: dict[str, dict]
+) -> Optional[str]:
+    """Return a short reason string if *prev_record*'s absence from the new
+    snapshot must NOT be reported as a "removed" Change, or ``None`` if the
+    normal removal path should proceed.
+
+    Only ever inspects Okta records — every other provider's removal
+    behavior is completely unaffected (returns ``None`` immediately for
+    any non-``okta_*`` record).
+    """
+    record_type = prev_record.get("record_type")
+    if not isinstance(record_type, str) or not record_type.startswith("okta_"):
+        return None
+    # The org record's own disappearance is a real signal (integration lost
+    # all access / tenant reconfigured) — never suppressed.
+    if record_type == "okta_organization":
+        return None
+
+    tenant_id = prev_record.get("tenant_id")
+    org_record = new_index.get(tenant_id) if tenant_id else None
+    family_completeness = (
+        org_record.get("family_completeness") if isinstance(org_record, dict) else None
+    )
+    if not isinstance(family_completeness, dict):
+        # No org record (or a malformed one) in the new snapshot to
+        # consult at all — fall back to the normal (unsuppressed) removal
+        # path rather than guessing about completeness.
+        family_completeness = {}
+
+    def _incomplete(key: str) -> bool:
+        status = family_completeness.get(key)
+        return isinstance(status, str) and status != "complete"
+
+    # ── Per-parent completeness (nested families) ───────────────────────────
+    if record_type == "okta_group_membership":
+        parent = new_index.get(f"{tenant_id}/group/{prev_record.get('group_id')}")
+        if isinstance(parent, dict):
+            status = parent.get("membership_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:groups_or_memberships" if (_incomplete("groups") or _incomplete("memberships")) else None
+
+    if record_type == "okta_application_user_assignment":
+        parent = new_index.get(f"{tenant_id}/app/{prev_record.get('app_id')}")
+        if isinstance(parent, dict):
+            status = parent.get("user_assignment_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:applications_or_assignments" if (_incomplete("applications") or _incomplete("app_user_assignments")) else None
+
+    if record_type == "okta_application_group_assignment":
+        parent = new_index.get(f"{tenant_id}/app/{prev_record.get('app_id')}")
+        if isinstance(parent, dict):
+            status = parent.get("group_assignment_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:applications_or_assignments" if (_incomplete("applications") or _incomplete("app_group_assignments")) else None
+
+    if record_type == "okta_policy_rule":
+        parent = new_index.get(f"{tenant_id}/policy/{prev_record.get('policy_id')}")
+        if isinstance(parent, dict):
+            status = parent.get("rule_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:policies_or_rules" if (_incomplete("policies") or _incomplete("policy_rules")) else None
+
+    # ── Derived records (privileged identity/group, message 5) ─────────────
+    if record_type == "okta_privileged_identity":
+        # A user can be privileged via a direct OR a group-inherited
+        # assignment — either family being incomplete can make the
+        # derivation incomplete.
+        return "family_incomplete:admin_role_assignments" if (
+            _incomplete("user_admin_role_assignments") or _incomplete("group_admin_role_assignments")
+        ) else None
+    if record_type == "okta_privileged_group":
+        return "family_incomplete:group_admin_role_assignments" if _incomplete("group_admin_role_assignments") else None
+
+    # ── Admin role catalog (message 5) ──────────────────────────────────────
+    if record_type == "okta_admin_role":
+        if prev_record.get("custom") is True:
+            return "family_incomplete:custom_admin_roles" if _incomplete("custom_admin_roles") else None
+        # Built-in role catalog entries are DISCOVERED from assignments, not
+        # listed directly — suppress only if BOTH assignment walks failed;
+        # otherwise a built-in type's absence is real (no one holds it).
+        if _incomplete("user_admin_role_assignments") and _incomplete("group_admin_role_assignments"):
+            return "family_incomplete:admin_role_assignments"
+        return None
+
+    # ── Flat, tenant-wide families ───────────────────────────────────────────
+    key = _OKTA_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE.get(record_type)
+    if key and _incomplete(key):
+        return f"family_incomplete:{key}"
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Diff computation — pure, no DB
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -4315,7 +4446,10 @@ def compute_diff(
     # ── Removed records ──────────────────────────────────────────────────────
     for key, prev_record in prev_index.items():
         if key not in new_index:
-            suppress_reason = _kubernetes_removal_suppressed(prev_record, new_index)
+            suppress_reason = (
+                _kubernetes_removal_suppressed(prev_record, new_index)
+                or _okta_removal_suppressed(prev_record, new_index)
+            )
             if suppress_reason is not None:
                 logger.info(
                     "diff: suppressed false-removal  id=%s  label=%r  reason=%s",
