@@ -104,8 +104,23 @@ from app.connectors.entra_schema import (
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
     ENTRA_API_CAPABILITY,
+    ENTRA_GROUP,
+    ENTRA_GROUP_MEMBERSHIP,
     ENTRA_ORGANIZATION,
+    ENTRA_USER,
+    FAMILY_COMPLETE,
+    FAMILY_DENIED,
+    FAMILY_PARTIAL,
+    FAMILY_UNAVAILABLE,
+    GRAPH_MEMBER_TYPE_USER,
+    categorize_account_enabled,
+    categorize_external_user_state,
+    categorize_group_type,
+    categorize_membership_count,
     categorize_on_premises_sync,
+    categorize_user_type,
+    lifecycle_posture_for_user,
+    normalize_group_types,
     validate_client_id,
     validate_tenant_id,
 )
@@ -132,6 +147,24 @@ _GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 # Pagination bounds (reused by later messages' list collection).
 _MAX_PAGES = 50
+
+# Graph list page size — a single, connector-owned constant (never
+# user-controlled), applied via ``$top``.
+_PAGE_SIZE = 999  # Graph's own max page size for /users and /groups
+
+# ── Identity collection bounds (Entra message 2) ────────────────────────────
+#
+# Per-family caps bound pathological cases without imposing a flaky timing
+# threshold. Membership enumeration is per-group (see
+# ``_fetch_memberships()`` docstring for the call-complexity rationale), so
+# it additionally needs a cap on the number of groups walked and a global
+# cap on total membership records collected, to bound the worst case where
+# many large groups exist. Mirrors Okta's identical bounding pattern.
+_MAX_USERS = 20_000
+_MAX_GROUPS = 5_000
+_MAX_MEMBERS_PER_GROUP = 20_000
+_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION = 5_000
+_MAX_TOTAL_MEMBERSHIPS = 200_000
 
 # 429/5xx retry bounds — bounded exponential backoff with jitter, mirroring
 # the Okta/Kubernetes reliability pattern.
@@ -737,7 +770,7 @@ class EntraConnector(BaseConnector):
 
     @staticmethod
     def _normalize_organization(
-        tenant_id: str, raw: dict, *, capability_note: Optional[str] = None,
+        tenant_id: str, raw: dict, *, family_completeness: Optional[dict] = None,
     ) -> dict:
         """Normalize the Entra organization/tenant record.
 
@@ -750,6 +783,12 @@ class EntraConnector(BaseConnector):
         "tenant type" field for app-only reads — this is intentionally NOT
         fabricated (see instruction to never silently claim unsupported
         detail).
+
+        ``family_completeness`` (Entra message 2) reports what actually
+        happened collecting users/groups/memberships this fetch — e.g.
+        ``{"users": "complete", "groups": "complete", "memberships": "denied"}``
+        — informational only, never diff-tracked, so a permission change
+        alone never produces a noisy Change on its own.
         """
         display_name = raw.get("displayName") if isinstance(raw, dict) else None
         verified_domains = raw.get("verifiedDomains") if isinstance(raw, dict) else None
@@ -778,6 +817,7 @@ class EntraConnector(BaseConnector):
             "on_premises_sync_enabled_category": categorize_on_premises_sync(
                 raw.get("onPremisesSyncEnabled") if isinstance(raw, dict) else None
             ),
+            "family_completeness": dict(family_completeness) if family_completeness else {},
         }
 
     @staticmethod
@@ -790,6 +830,351 @@ class EntraConnector(BaseConnector):
             "family": family,
             "status": status,
         }
+
+    # ── User / group / membership normalizers (Entra message 2) ────────────
+
+    @staticmethod
+    def _normalize_user(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one Entra directory user record.
+
+        SECURITY: only the fields explicitly listed below are ever read
+        from ``raw``. Phone numbers, addresses, manager, employee ID,
+        extension properties, the ``identities`` array, ``proxyAddresses``,
+        ``passwordProfile``, and raw sign-in activity are NEVER read here,
+        even if present in the Graph response (which they should not be,
+        given the explicit ``$select`` used by ``_fetch_users``, but this
+        normalizer defends independently of that allowlist too).
+        """
+        user_id = raw.get("id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            return None
+
+        upn = raw.get("userPrincipalName")
+        upn = upn.strip()[:_MAX_STR_LEN] if isinstance(upn, str) and upn.strip() else None
+
+        display_name = raw.get("displayName")
+        display_name = display_name.strip()[:_MAX_STR_LEN] if isinstance(display_name, str) and display_name.strip() else None
+
+        account_enabled_category = categorize_account_enabled(raw.get("accountEnabled"))
+        user_type_category = categorize_user_type(raw.get("userType"))
+        lifecycle_posture = lifecycle_posture_for_user(account_enabled_category, user_type_category)
+
+        created = raw.get("createdDateTime")
+        created = created if isinstance(created, str) and created.strip() else None
+
+        return {
+            "record_type": ENTRA_USER,
+            "record_id": f"{tenant_id}/user/{user_id}",
+            "provider_resource_id": f"users/{user_id}",
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "user_principal_name": upn,
+            "display_name": display_name,
+            "account_enabled_category": account_enabled_category,
+            "user_type_category": user_type_category,
+            "guest": user_type_category == "Guest",
+            "member": user_type_category == "Member",
+            "lifecycle_posture": lifecycle_posture,
+            "external_user_state_category": categorize_external_user_state(raw.get("externalUserState")),
+            "on_premises_sync_enabled_category": categorize_on_premises_sync(raw.get("onPremisesSyncEnabled")),
+            # Informational only — NEVER diff-tracked (routine timestamp).
+            "created_date_time": created,
+        }
+
+    @staticmethod
+    def _normalize_group(
+        tenant_id: str, raw: dict, *, membership_count: Optional[int],
+    ) -> Optional[dict]:
+        """Normalize one Entra directory group record.
+
+        SECURITY: the raw dynamic-membership rule expression (which can
+        reveal internal business logic — department names, cost centers,
+        naming conventions), mail aliases, proxy addresses, owners, and the
+        group description are NEVER read here — only the boolean/derived
+        posture fields below.
+        """
+        group_id = raw.get("id")
+        if not isinstance(group_id, str) or not group_id.strip():
+            return None
+
+        display_name = raw.get("displayName")
+        display_name = display_name.strip()[:_MAX_STR_LEN] if isinstance(display_name, str) and display_name.strip() else None
+
+        security_enabled = raw.get("securityEnabled") if isinstance(raw.get("securityEnabled"), bool) else None
+        mail_enabled = raw.get("mailEnabled") if isinstance(raw.get("mailEnabled"), bool) else None
+        group_types = normalize_group_types(raw.get("groupTypes"))
+        group_type_category = categorize_group_type(security_enabled, mail_enabled, group_types)
+
+        role_assignable = raw.get("isAssignableToRole")
+        role_assignable = role_assignable if isinstance(role_assignable, bool) else None
+
+        return {
+            "record_type": ENTRA_GROUP,
+            "record_id": f"{tenant_id}/group/{group_id}",
+            "provider_resource_id": f"groups/{group_id}",
+            "tenant_id": tenant_id,
+            "group_id": group_id,
+            "display_name": display_name,
+            "security_enabled": security_enabled,
+            "mail_enabled": mail_enabled,
+            "group_types": group_types,
+            "group_type_category": group_type_category,
+            "dynamic_membership": "DynamicMembership" in group_types,
+            "microsoft_365_group": "Unified" in group_types,
+            "security_group": security_enabled is True,
+            "role_assignable": role_assignable,
+            "membership_count": membership_count,
+            "membership_count_category": categorize_membership_count(membership_count),
+        }
+
+    @staticmethod
+    def _normalize_membership(
+        tenant_id: str, user_record: Optional[dict], group_record: dict, user_id: str,
+    ) -> dict:
+        """Normalize one DIRECT user<->group membership edge.
+
+        Never duplicates the full user/group record — only denormalizes
+        the small set of display/context fields a Change needs (UPN, user
+        type, account-enabled state, group name/type posture) so downstream
+        consumers don't need a join back to the full records. Direct
+        membership only — transitive membership and nested-group
+        containment are never modeled here (see the connector's module
+        docstring).
+        """
+        group_id = group_record["group_id"]
+        user_upn = user_record.get("user_principal_name") if user_record else None
+        user_type_category = user_record.get("user_type_category") if user_record else "unknown"
+        account_enabled_category = user_record.get("account_enabled_category") if user_record else "unknown"
+
+        return {
+            "record_type": ENTRA_GROUP_MEMBERSHIP,
+            "record_id": f"{tenant_id}/membership/{group_id}/{user_id}",
+            "provider_resource_id": f"groups/{group_id}/members/{user_id}",
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "group_id": group_id,
+            "user_principal_name": user_upn,
+            "group_name": group_record.get("display_name"),
+            "user_type_category": user_type_category,
+            "account_enabled_category": account_enabled_category,
+            "group_type_category": group_record.get("group_type_category"),
+            "dynamic_group": bool(group_record.get("dynamic_membership")),
+            "role_assignable_group": group_record.get("role_assignable"),
+            "membership_type": "direct",
+        }
+
+    # ── Family collection helper (mirrors the Okta reliability pattern) ────
+
+    @classmethod
+    def _collect_family(
+        cls,
+        client: httpx.Client,
+        path: str,
+        *,
+        params: Optional[dict],
+        cap: int,
+        _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Paginate one Graph list endpoint, classifying the outcome into a
+        FAMILY_* completeness rather than raising for anything but a
+        first-page failure. Every family fails independently — a denied or
+        unavailable family never aborts the whole fetch.
+
+        Returns ``(items, completeness)``. Hitting ``cap`` OR a mid-
+        pagination failure (``paginate_graph()``'s ``truncated`` flag) is
+        treated as ``FAMILY_PARTIAL`` — never claim complete when the
+        result may have been truncated by a later-page 403/429/5xx/
+        timeout, a repeated nextLink, or a rejected cross-origin nextLink.
+        """
+        try:
+            items, truncated = paginate_graph(
+                client, path, params=params, max_pages=_MAX_PAGES, _sleep_fn=_sleep_fn,
+            )
+        except AuthenticationError:
+            return [], FAMILY_DENIED
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) == 403:
+                return [], FAMILY_DENIED
+            return [], FAMILY_UNAVAILABLE
+        except (NetworkError, RateLimitError):
+            return [], FAMILY_UNAVAILABLE
+
+        if len(items) >= cap:
+            return items[:cap], FAMILY_PARTIAL
+        if truncated:
+            return items, FAMILY_PARTIAL
+        return items, FAMILY_COMPLETE
+
+    # Explicit, connector-owned $select allowlists — never user-controlled,
+    # never "$select=*". Only the fields this message's normalizers read.
+    _USER_SELECT = (
+        "id,userPrincipalName,displayName,accountEnabled,userType,"
+        "createdDateTime,externalUserState,onPremisesSyncEnabled"
+    )
+    _GROUP_SELECT = "id,displayName,securityEnabled,mailEnabled,groupTypes,isAssignableToRole"
+
+    @classmethod
+    def _fetch_users(
+        cls, client: httpx.Client, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, "/users",
+            params={"$top": str(_PAGE_SIZE), "$select": cls._USER_SELECT},
+            cap=_MAX_USERS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_user(tenant_id, raw)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
+    @classmethod
+    def _fetch_groups_raw(
+        cls, client: httpx.Client,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        return cls._collect_family(
+            client, "/groups",
+            params={"$top": str(_PAGE_SIZE), "$select": cls._GROUP_SELECT},
+            cap=_MAX_GROUPS, _sleep_fn=_sleep_fn,
+        )
+
+    @classmethod
+    def _fetch_memberships(
+        cls,
+        client: httpx.Client,
+        tenant_id: str,
+        raw_groups: list[dict],
+        group_records_by_id: dict,
+        user_index: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict, dict]:
+        """Collect DIRECT user<->group membership edges.
+
+        Call-complexity design: Microsoft Graph has no single "list all
+        memberships across the tenant" endpoint — membership is only
+        enumerable per-group (``GET /groups/{id}/members``) or per-user
+        (``GET /users/{id}/memberOf``). This connector walks per-GROUP (one
+        paginated call per group, capped at
+        ``_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION`` groups) rather than
+        per-user, because a real tenant almost always has far fewer groups
+        than users (fewer top-level requests) — the exact same choice and
+        rationale as the Okta connector's ``_fetch_memberships()``. This is
+        intentionally NOT optimized further in this message — message 7
+        owns full partial-sync/scale hardening; here it is bounded and
+        documented, not silently unbounded.
+
+        ``/groups/{id}/members`` is polymorphic (users, groups, service
+        principals, devices). Rather than relying on the
+        ``/members/microsoft.graph.user`` OData type-cast segment (whose
+        app-only-permission behavior is not something to assume), each
+        returned directoryObject's own ``@odata.type`` annotation is
+        inspected locally and only ``#microsoft.graph.user`` members are
+        normalized — nested groups, service principals, and devices are
+        silently excluded from ``entra_group_membership`` (deferred to
+        messages 3/5, or permanently unmodeled for devices). Nested groups
+        are never flattened into direct user membership.
+
+        Also returns a ``membership_count_by_group_id`` dict so
+        ``_normalize_group()`` can report a count derived from what was
+        actually collected, without a separate per-group count API call,
+        and a ``status_by_group_id`` dict recording each walked group's OWN
+        completeness — this lets future false-removal suppression (message
+        7) scope itself to just the groups whose walk actually failed,
+        rather than suppressing every membership removal tenant-wide
+        whenever any single group's walk fails.
+
+        Returns ``(records, completeness, membership_count_by_group_id, status_by_group_id)``.
+        completeness is FAMILY_COMPLETE only if every walked group
+        succeeded; FAMILY_DENIED if the walk never got any group's members
+        due to permission; FAMILY_PARTIAL if some groups succeeded and
+        others didn't (or the group cap / total cap was hit); FAMILY_
+        UNAVAILABLE if every walked group failed for a non-permission
+        reason.
+        """
+        if not raw_groups:
+            # No groups at all -> trivially complete, zero memberships —
+            # never inferred as "unknown"/"denied".
+            return [], FAMILY_COMPLETE, {}, {}
+
+        groups_to_walk = raw_groups[:_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION]
+        truncated_group_list = len(raw_groups) > len(groups_to_walk)
+
+        records: list[dict] = []
+        counts_by_group: dict = {}
+        status_by_group: dict = {}
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for raw_group in groups_to_walk:
+            if not isinstance(raw_group, dict):
+                continue
+            group_id = raw_group.get("id")
+            if not isinstance(group_id, str) or not group_id.strip():
+                continue
+            group_record = group_records_by_id.get(group_id)
+            if group_record is None:
+                continue
+
+            members, group_completeness = cls._collect_family(
+                client, f"/groups/{group_id}/members",
+                params={"$top": str(_PAGE_SIZE), "$select": "id"},
+                cap=_MAX_MEMBERS_PER_GROUP, _sleep_fn=_sleep_fn,
+            )
+            status_by_group[group_id] = group_completeness
+            if group_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if group_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if group_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            member_ids: set = set()
+            for raw_member in members:
+                if not isinstance(raw_member, dict):
+                    continue
+                # Non-user directory members (nested groups, service
+                # principals, devices) are excluded — user members only.
+                odata_type = raw_member.get("@odata.type")
+                if odata_type != GRAPH_MEMBER_TYPE_USER:
+                    continue
+                member_id = raw_member.get("id")
+                if not isinstance(member_id, str) or not member_id.strip():
+                    continue
+                if member_id in member_ids:
+                    continue  # dedup within a single group's page set
+                member_ids.add(member_id)
+                if len(records) >= _MAX_TOTAL_MEMBERSHIPS:
+                    cap_hit = True
+                    break
+                user_record = user_index.get(member_id)
+                records.append(
+                    cls._normalize_membership(tenant_id, user_record, group_record, member_id)
+                )
+            counts_by_group[group_id] = len(member_ids)
+            if len(records) >= _MAX_TOTAL_MEMBERSHIPS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_group_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        return records, completeness, counts_by_group, status_by_group
 
     # ── Capability probes ──────────────────────────────────────────────────
     #
@@ -867,14 +1252,24 @@ class EntraConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
-        """Fetch the Entra tenant identity + API capability inventory:
-        ``entra_organization``, ``entra_api_capability`` probes.
+        """Fetch the Entra tenant identity + user/group/membership inventory
+        + API capability inventory: ``entra_organization``, ``entra_user``,
+        ``entra_group``, ``entra_group_membership``, ``entra_api_capability``
+        probes.
 
-        Does NOT collect users/groups/applications/service principals/
-        Conditional Access/authentication methods/directory roles/consent
-        grants yet — see the module docstring for the permanent sensitive-
-        data boundary and ``entra_schema.py`` for what later messages will
-        add.
+        Does NOT collect applications/service principals/app registrations
+        (message 3), Conditional Access/authentication methods (message 4),
+        or directory roles/privileged identities/consent grants (message 5)
+        yet — see the module docstring for the permanent sensitive-data
+        boundary and ``entra_schema.py`` for what later messages will add.
+
+        Every family (users/groups/memberships) fails independently: if
+        e.g. group memberships are denied while users and groups are
+        readable, the rest is still returned and
+        ``entra_organization.family_completeness`` reports the gap — a
+        family failure never aborts the whole fetch, and a denied/
+        unreadable family is never silently reported as "zero" (see
+        ``_collect_family``/``_fetch_memberships``).
 
         SECURITY: client_secret and access_token are used only within this
         method's scope (or the connector instance's token cache), never
@@ -884,8 +1279,8 @@ class EntraConnector(BaseConnector):
         Raises:
             AuthenticationError: Token rejected or malformed credentials.
             ConnectorError: Microsoft Graph returned an unexpected error
-                fetching the organization record itself (capability probes
-                fail soft instead of raising — see ``_probe_capabilities``).
+                fetching the organization record itself (every other family
+                fails soft instead of raising — see ``_collect_family``).
             NetworkError: Transport-level failure reaching the org endpoint.
         """
         tenant_id, client_id, client_secret = self._credentials(credentials)
@@ -913,8 +1308,63 @@ class EntraConnector(BaseConnector):
                 raw_org = body
 
             stable_tenant_id = self.compute_tenant_id(tenant_id, raw_org)
-            org_record = self._normalize_organization(stable_tenant_id, raw_org)
+
+            # ── Users ──────────────────────────────────────────────────────
+            user_records, users_completeness = self._fetch_users(
+                client, stable_tenant_id, _sleep_fn=_sleep_fn,
+            )
+            user_index = {u["user_id"]: u for u in user_records}
+
+            # ── Groups (raw kept for membership walk; normalized after) ────
+            raw_groups, groups_completeness = self._fetch_groups_raw(
+                client, _sleep_fn=_sleep_fn,
+            )
+            group_records_by_id: dict = {}
+            for raw_group in raw_groups:
+                if not isinstance(raw_group, dict):
+                    continue
+                group_id = raw_group.get("id")
+                if not isinstance(group_id, str) or not group_id.strip():
+                    continue
+                # membership_count filled in below once memberships are collected.
+                rec = self._normalize_group(stable_tenant_id, raw_group, membership_count=None)
+                if rec is not None:
+                    group_records_by_id[group_id] = rec
+
+            # ── Memberships ──────────────────────────────────────────────
+            membership_records, memberships_completeness, counts_by_group, _status_by_group = (
+                self._fetch_memberships(
+                    client, stable_tenant_id, raw_groups, group_records_by_id, user_index,
+                    _sleep_fn=_sleep_fn,
+                )
+            )
+
+            # Backfill membership_count only for groups whose own membership
+            # walk actually succeeded — a group whose walk was denied/failed
+            # keeps membership_count=None (unknown), never 0.
+            group_records: list[dict] = []
+            for group_id, group_rec in group_records_by_id.items():
+                count = counts_by_group.get(group_id)
+                group_rec["membership_count"] = count
+                group_rec["membership_count_category"] = categorize_membership_count(count)
+                group_records.append(group_rec)
+
+            org_record = self._normalize_organization(
+                stable_tenant_id, raw_org,
+                family_completeness={
+                    "users": users_completeness,
+                    "groups": groups_completeness,
+                    "memberships": memberships_completeness,
+                },
+            )
+
             records.append(org_record)
+            records.extend(user_records)
+            records.extend(group_records)
+            records.extend(membership_records)
             records.extend(self._probe_capabilities(client, stable_tenant_id))
 
+        # Deterministic ordering — API response ordering must never affect
+        # the normalized snapshot or its fingerprint.
+        records.sort(key=lambda r: (r["record_type"], r["record_id"]))
         return records

@@ -3606,6 +3606,42 @@ _ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "entra_api_capability": (
         "status",
     ),
+    # ── Entra identity lifecycle (Entra message 2 of 8) ─────────────────────
+    #
+    # created_date_time is intentionally NOT tracked — a routine timestamp,
+    # not durable configuration (see entra.py's _normalize_user docstring).
+    # Sign-in activity is not collected at all this message (deferred — see
+    # entra.py's module docstring).
+    "entra_user": (
+        "user_principal_name",
+        "display_name",
+        "account_enabled_category",
+        "user_type_category",
+        "guest",
+        "member",
+        "lifecycle_posture",
+        "external_user_state_category",
+        "on_premises_sync_enabled_category",
+    ),
+    "entra_group": (
+        "display_name",
+        "security_enabled",
+        "mail_enabled",
+        "group_type_category",
+        "group_types",
+        "dynamic_membership",
+        "role_assignable",
+        "membership_count",
+    ),
+    "entra_group_membership": (
+        "user_id",
+        "group_id",
+        "user_type_category",
+        "account_enabled_category",
+        "group_type_category",
+        "dynamic_group",
+        "role_assignable_group",
+    ),
 }
 
 
@@ -4126,6 +4162,30 @@ def _build_provider_metadata(
         metadata["user_login"] = context_record.get("user_login") or record.get("user_login") or ""
         metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
         metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+
+    # Entra identity records (message 2) carry no "name" field the generic
+    # record_name/record_content stanza above would populate — the risk
+    # classifier and UI need tenant/UPN/group-name context directly. Never
+    # includes client_secret, access_token, or arbitrary profile fields.
+    if record.get("record_type") == "entra_user":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["user_principal_name"] = (
+            context_record.get("user_principal_name") or record.get("user_principal_name") or ""
+        )
+    if record.get("record_type") == "entra_group":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+    if record.get("record_type") == "entra_group_membership":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["user_principal_name"] = (
+            context_record.get("user_principal_name") or record.get("user_principal_name") or ""
+        )
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+
     if record.get("record_type") == "okta_application":
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
         metadata["app_id"] = context_record.get("app_id") or record.get("app_id") or ""
