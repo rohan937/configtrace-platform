@@ -3642,6 +3642,73 @@ _ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "dynamic_group",
         "role_assignable_group",
     ),
+    # ── Entra application security (Entra message 3 of 8) ───────────────────
+    #
+    # object_id/app_id are identity, not tracked as Change-worthy fields.
+    # Raw redirect URIs, requiredResourceAccess, appRoles, and
+    # oauth2PermissionScopes are never stored at all (see entra.py's
+    # normalizer docstrings) so there is nothing raw to accidentally track.
+    "entra_application": (
+        "display_name",
+        "sign_in_audience_category",
+        "publisher_domain",
+        "web_redirect_count",
+        "spa_redirect_count",
+        "public_client_redirect_count",
+        "has_http_redirect",
+        "web_has_http_redirect",
+        "has_localhost_redirect",
+        "has_loopback_redirect",
+        "has_custom_scheme_redirect",
+        "has_wildcard_redirect",
+        "requested_delegated_permission_count",
+        "requested_application_permission_count",
+        "password_credential_count",
+        "key_credential_count",
+        "nearest_credential_expiry_category",
+    ),
+    "entra_service_principal": (
+        "display_name",
+        "service_principal_type_category",
+        "account_enabled",
+        "assignment_required",
+        "app_owner_organization_category",
+        "verified_publisher_category",
+        "app_role_count",
+        "oauth2_permission_scope_count",
+        "password_credential_count",
+        "key_credential_count",
+        "nearest_credential_expiry_category",
+    ),
+    "entra_application_user_assignment": (
+        "user_id",
+        "service_principal_id",
+        "app_role_category",
+        "account_enabled_category",
+        "user_type_category",
+    ),
+    "entra_application_group_assignment": (
+        "group_id",
+        "service_principal_id",
+        "app_role_category",
+        "group_type_category",
+        "dynamic_group",
+        "role_assignable_group",
+    ),
+    "entra_service_principal_app_role_assignment": (
+        "principal_service_principal_id",
+        "resource_service_principal_id",
+        "app_role_category",
+        "app_role_risk_category",
+    ),
+    "entra_oauth2_permission_grant": (
+        "client_service_principal_id",
+        "resource_service_principal_id",
+        "consent_type_category",
+        "principal_id",
+        "scopes",
+        "high_risk_scope_present",
+    ),
 }
 
 
@@ -4185,6 +4252,47 @@ def _build_provider_metadata(
         )
         metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
         metadata["group_name"] = context_record.get("group_name") or record.get("group_name") or ""
+
+    # Entra application/service-principal/assignment/grant records (message
+    # 3) — never includes client_secret, access_token, or any raw
+    # Graph payload.
+    if record.get("record_type") == "entra_application":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["object_id"] = context_record.get("object_id") or record.get("object_id") or ""
+        metadata["app_id"] = context_record.get("app_id") or record.get("app_id") or ""
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+    if record.get("record_type") == "entra_service_principal":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["service_principal_id"] = (
+            context_record.get("service_principal_id") or record.get("service_principal_id") or ""
+        )
+        metadata["app_id"] = context_record.get("app_id") or record.get("app_id") or ""
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+    if record.get("record_type") in ("entra_application_user_assignment", "entra_application_group_assignment"):
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["service_principal_id"] = (
+            context_record.get("service_principal_id") or record.get("service_principal_id") or ""
+        )
+        metadata["application_name"] = context_record.get("application_name") or record.get("application_name") or ""
+        metadata["app_role_category"] = context_record.get("app_role_category") or record.get("app_role_category") or ""
+    if record.get("record_type") == "entra_service_principal_app_role_assignment":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["resource_service_principal_id"] = (
+            context_record.get("resource_service_principal_id") or record.get("resource_service_principal_id") or ""
+        )
+        metadata["resource_name"] = context_record.get("resource_name") or record.get("resource_name") or ""
+        metadata["principal_name"] = context_record.get("principal_name") or record.get("principal_name") or ""
+        metadata["app_role_category"] = context_record.get("app_role_category") or record.get("app_role_category") or ""
+        metadata["app_role_risk_category"] = (
+            context_record.get("app_role_risk_category") or record.get("app_role_risk_category") or ""
+        )
+    if record.get("record_type") == "entra_oauth2_permission_grant":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["client_name"] = context_record.get("client_name") or record.get("client_name") or ""
+        metadata["resource_name"] = context_record.get("resource_name") or record.get("resource_name") or ""
+        metadata["consent_type_category"] = (
+            context_record.get("consent_type_category") or record.get("consent_type_category") or ""
+        )
 
     if record.get("record_type") == "okta_application":
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""

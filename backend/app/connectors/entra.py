@@ -104,23 +104,44 @@ from app.connectors.entra_schema import (
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
     ENTRA_API_CAPABILITY,
+    ENTRA_APPLICATION,
+    ENTRA_APPLICATION_GROUP_ASSIGNMENT,
+    ENTRA_APPLICATION_USER_ASSIGNMENT,
     ENTRA_GROUP,
     ENTRA_GROUP_MEMBERSHIP,
+    ENTRA_OAUTH2_PERMISSION_GRANT,
     ENTRA_ORGANIZATION,
+    ENTRA_SERVICE_PRINCIPAL,
+    ENTRA_SERVICE_PRINCIPAL_APP_ROLE_ASSIGNMENT,
     ENTRA_USER,
     FAMILY_COMPLETE,
     FAMILY_DENIED,
     FAMILY_PARTIAL,
     FAMILY_UNAVAILABLE,
     GRAPH_MEMBER_TYPE_USER,
+    GRAPH_PRINCIPAL_TYPE_GROUP,
+    GRAPH_PRINCIPAL_TYPE_SERVICE_PRINCIPAL,
+    GRAPH_PRINCIPAL_TYPE_USER,
+    MICROSOFT_FIRST_PARTY_TENANT_ID,
+    MICROSOFT_GRAPH_APP_ID,
     categorize_account_enabled,
+    categorize_app_owner_organization,
+    categorize_consent_type,
     categorize_external_user_state,
     categorize_group_type,
     categorize_membership_count,
+    categorize_nearest_credential_expiry,
     categorize_on_premises_sync,
+    categorize_permission_risk,
+    categorize_service_principal_type,
+    categorize_sign_in_audience,
     categorize_user_type,
+    categorize_verified_publisher,
     lifecycle_posture_for_user,
     normalize_group_types,
+    normalize_scopes,
+    summarize_application_redirects,
+    summarize_required_resource_access,
     validate_client_id,
     validate_tenant_id,
 )
@@ -165,6 +186,22 @@ _MAX_GROUPS = 5_000
 _MAX_MEMBERS_PER_GROUP = 20_000
 _MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION = 5_000
 _MAX_TOTAL_MEMBERSHIPS = 200_000
+
+# ── Application/service-principal collection bounds (Entra message 3) ──────
+#
+# App-role-assignment enumeration is per-resource-service-principal (see
+# ``_fetch_app_role_assignments()`` docstring for the call-complexity
+# rationale) — same bounding pattern as message 2's per-group membership
+# walk. OAuth2 permission grants are tenant-wide (a single family, no
+# per-parent walk needed).
+_MAX_APPLICATIONS = 5_000
+_MAX_SERVICE_PRINCIPALS = 10_000
+_MAX_ASSIGNMENTS_PER_SP = 20_000
+_MAX_SPS_FOR_ASSIGNMENT_ENUMERATION = 10_000
+_MAX_TOTAL_APP_USER_ASSIGNMENTS = 200_000
+_MAX_TOTAL_APP_GROUP_ASSIGNMENTS = 200_000
+_MAX_TOTAL_SP_APP_ROLE_ASSIGNMENTS = 200_000
+_MAX_OAUTH2_PERMISSION_GRANTS = 200_000
 
 # 429/5xx retry bounds — bounded exponential backoff with jitter, mirroring
 # the Okta/Kubernetes reliability pattern.
@@ -963,6 +1000,324 @@ class EntraConnector(BaseConnector):
             "membership_type": "direct",
         }
 
+    # ── Application / service-principal normalizers (Entra message 3) ──────
+
+    @staticmethod
+    def _normalize_application(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one Entra application (app registration) record.
+
+        SECURITY: ``passwordCredentials``/``keyCredentials`` are read ONLY
+        for their ``endDateTime`` (via ``categorize_nearest_credential_expiry``)
+        — ``secretText``/``key``/certificate bytes are never read.
+        ``requiredResourceAccess`` is summarized into counts only (never
+        equated with granted access). Redirect URIs are summarized into
+        structural counts/booleans only — never stored raw.
+        """
+        object_id = raw.get("id")
+        if not isinstance(object_id, str) or not object_id.strip():
+            return None
+
+        app_id = raw.get("appId")
+        app_id = app_id.strip()[:_MAX_STR_LEN] if isinstance(app_id, str) and app_id.strip() else None
+
+        display_name = raw.get("displayName")
+        display_name = display_name.strip()[:_MAX_STR_LEN] if isinstance(display_name, str) and display_name.strip() else None
+
+        publisher_domain = raw.get("publisherDomain")
+        publisher_domain = publisher_domain.strip()[:_MAX_STR_LEN] if isinstance(publisher_domain, str) and publisher_domain.strip() else None
+
+        web = raw.get("web") if isinstance(raw.get("web"), dict) else {}
+        spa = raw.get("spa") if isinstance(raw.get("spa"), dict) else {}
+        public_client = raw.get("publicClient") if isinstance(raw.get("publicClient"), dict) else {}
+        redirect_posture = summarize_application_redirects(
+            web.get("redirectUris"), spa.get("redirectUris"), public_client.get("redirectUris"),
+        )
+
+        password_creds = raw.get("passwordCredentials") if isinstance(raw.get("passwordCredentials"), list) else []
+        key_creds = raw.get("keyCredentials") if isinstance(raw.get("keyCredentials"), list) else []
+        all_creds = list(password_creds) + list(key_creds)
+
+        app_roles = raw.get("appRoles") if isinstance(raw.get("appRoles"), list) else []
+        app_role_enabled_count = sum(1 for r in app_roles if isinstance(r, dict) and r.get("isEnabled") is True)
+
+        return {
+            "record_type": ENTRA_APPLICATION,
+            "record_id": f"{tenant_id}/application/{object_id}",
+            "provider_resource_id": f"applications/{object_id}",
+            "tenant_id": tenant_id,
+            "object_id": object_id,
+            "app_id": app_id,
+            "display_name": display_name,
+            "sign_in_audience_category": categorize_sign_in_audience(raw.get("signInAudience")),
+            "publisher_domain": publisher_domain,
+            **redirect_posture,
+            **summarize_required_resource_access(raw.get("requiredResourceAccess")),
+            "password_credential_count": len(password_creds),
+            "key_credential_count": len(key_creds),
+            "nearest_credential_expiry_category": categorize_nearest_credential_expiry(all_creds),
+            "app_role_count": len(app_roles),
+            "app_role_enabled_count": app_role_enabled_count,
+        }
+
+    @staticmethod
+    def _normalize_service_principal(tenant_id: str, raw: dict, own_tenant_guid: str) -> Optional[dict]:
+        """Normalize one Entra service principal (Enterprise Application)
+        record.
+
+        SECURITY: same credential/permission-count-only discipline as
+        ``_normalize_application``. The raw ``tags`` array and ``info``
+        object (which may contain support/marketing URLs and free-text
+        notes) are never read.
+        """
+        sp_id = raw.get("id")
+        if not isinstance(sp_id, str) or not sp_id.strip():
+            return None
+
+        app_id = raw.get("appId")
+        app_id = app_id.strip()[:_MAX_STR_LEN] if isinstance(app_id, str) and app_id.strip() else None
+
+        display_name = raw.get("displayName")
+        display_name = display_name.strip()[:_MAX_STR_LEN] if isinstance(display_name, str) and display_name.strip() else None
+
+        account_enabled = raw.get("accountEnabled") if isinstance(raw.get("accountEnabled"), bool) else None
+        assignment_required = raw.get("appRoleAssignmentRequired") if isinstance(raw.get("appRoleAssignmentRequired"), bool) else None
+
+        app_owner_org_id = raw.get("appOwnerOrganizationId")
+        app_owner_org_category = categorize_app_owner_organization(app_owner_org_id, own_tenant_guid)
+        is_microsoft_first_party = (
+            isinstance(app_owner_org_id, str)
+            and app_owner_org_id.strip().lower() == MICROSOFT_FIRST_PARTY_TENANT_ID.lower()
+        )
+
+        password_creds = raw.get("passwordCredentials") if isinstance(raw.get("passwordCredentials"), list) else []
+        key_creds = raw.get("keyCredentials") if isinstance(raw.get("keyCredentials"), list) else []
+        all_creds = list(password_creds) + list(key_creds)
+
+        app_roles = raw.get("appRoles") if isinstance(raw.get("appRoles"), list) else []
+        oauth2_scopes = raw.get("oauth2PermissionScopes") if isinstance(raw.get("oauth2PermissionScopes"), list) else []
+
+        return {
+            "record_type": ENTRA_SERVICE_PRINCIPAL,
+            "record_id": f"{tenant_id}/service_principal/{sp_id}",
+            "provider_resource_id": f"servicePrincipals/{sp_id}",
+            "tenant_id": tenant_id,
+            "service_principal_id": sp_id,
+            "app_id": app_id,
+            "display_name": display_name,
+            "service_principal_type_category": categorize_service_principal_type(raw.get("servicePrincipalType")),
+            "account_enabled": account_enabled,
+            "assignment_required": assignment_required,
+            "app_owner_organization_category": app_owner_org_category,
+            "is_microsoft_first_party": is_microsoft_first_party,
+            "is_microsoft_graph_resource": app_id == MICROSOFT_GRAPH_APP_ID,
+            "verified_publisher_category": categorize_verified_publisher(raw.get("verifiedPublisher")),
+            "app_role_count": len(app_roles),
+            "oauth2_permission_scope_count": len(oauth2_scopes),
+            "password_credential_count": len(password_creds),
+            "key_credential_count": len(key_creds),
+            "nearest_credential_expiry_category": categorize_nearest_credential_expiry(all_creds),
+        }
+
+    @staticmethod
+    def _resolve_app_role(roles_by_id: Optional[dict], app_role_id: object) -> tuple[Optional[str], str]:
+        """Resolve an ``appRoleId`` GUID to its ``value`` string using the
+        RESOURCE service principal's own app-roles local index (built once
+        per SP from its raw ``appRoles`` array during collection — never a
+        per-assignment Graph call, and never persisted onto the normalized
+        ``entra_service_principal`` record itself). Returns
+        ``(value_or_None, risk_category)``. Unknown IDs stay unknown — never
+        guessed as benign."""
+        if not isinstance(app_role_id, str):
+            return None, categorize_permission_risk(None)
+        roles_by_id = roles_by_id or {}
+        role = roles_by_id.get(app_role_id)
+        if role is None:
+            # The well-known "default" all-zero app role ID means
+            # "no specific app role" (ordinary sign-in access), not unknown.
+            if app_role_id == "00000000-0000-0000-0000-000000000000":
+                return "(default)", categorize_permission_risk(None)
+            return None, categorize_permission_risk(None)
+        value = role.get("value")
+        return value, categorize_permission_risk(value)
+
+    @staticmethod
+    def _normalize_app_user_assignment(
+        tenant_id: str, sp_record: dict, user_record: Optional[dict], raw: dict,
+        *, roles_by_id: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """Normalize one user<->service-principal app-role assignment edge.
+
+        SECURITY: only ``id``, ``principalId``, ``appRoleId``, and
+        ``principalType`` are ever read from the raw assignment object.
+        """
+        assignment_id = raw.get("id")
+        principal_id = raw.get("principalId")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            return None
+
+        sp_id = sp_record["service_principal_id"]
+        record_id = (
+            f"{tenant_id}/app_role_assignment/{assignment_id}"
+            if isinstance(assignment_id, str) and assignment_id.strip()
+            else f"{tenant_id}/app_assignment/{sp_id}/user/{principal_id}"
+        )
+
+        app_role_value, app_role_risk = EntraConnector._resolve_app_role(roles_by_id, raw.get("appRoleId"))
+        user_upn = user_record.get("user_principal_name") if user_record else None
+        account_enabled_category = user_record.get("account_enabled_category") if user_record else "unknown"
+        user_type_category = user_record.get("user_type_category") if user_record else "unknown"
+
+        return {
+            "record_type": ENTRA_APPLICATION_USER_ASSIGNMENT,
+            "record_id": record_id,
+            "provider_resource_id": f"servicePrincipals/{sp_id}/appRoleAssignedTo/{principal_id}",
+            "tenant_id": tenant_id,
+            "service_principal_id": sp_id,
+            "app_id": sp_record.get("app_id"),
+            "application_name": sp_record.get("display_name"),
+            "principal_id": principal_id,
+            "user_id": principal_id,
+            "user_principal_name": user_upn,
+            "account_enabled_category": account_enabled_category,
+            "user_type_category": user_type_category,
+            "app_role_category": app_role_value,
+            "app_role_risk_category": app_role_risk,
+            "assignment_type": "user",
+        }
+
+    @staticmethod
+    def _normalize_app_group_assignment(
+        tenant_id: str, sp_record: dict, group_record: Optional[dict], raw: dict,
+        *, roles_by_id: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """Normalize one group<->service-principal app-role assignment edge.
+
+        Never conflates a group assignment with each member's own effective
+        access — this is the GROUP's own assignment edge only; per-user fan-
+        out is not modeled here (would require joining message-2 membership
+        data and is deferred, since app-role-granted-via-group-membership
+        evaluation is a message-5-scope privilege question).
+        """
+        assignment_id = raw.get("id")
+        principal_id = raw.get("principalId")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            return None
+
+        sp_id = sp_record["service_principal_id"]
+        record_id = (
+            f"{tenant_id}/app_role_assignment/{assignment_id}"
+            if isinstance(assignment_id, str) and assignment_id.strip()
+            else f"{tenant_id}/app_assignment/{sp_id}/group/{principal_id}"
+        )
+
+        app_role_value, app_role_risk = EntraConnector._resolve_app_role(roles_by_id, raw.get("appRoleId"))
+        group_name = group_record.get("display_name") if group_record else None
+        group_type_category = group_record.get("group_type_category") if group_record else "unknown"
+        dynamic_group = bool(group_record.get("dynamic_membership")) if group_record else False
+        role_assignable_group = group_record.get("role_assignable") if group_record else None
+
+        return {
+            "record_type": ENTRA_APPLICATION_GROUP_ASSIGNMENT,
+            "record_id": record_id,
+            "provider_resource_id": f"servicePrincipals/{sp_id}/appRoleAssignedTo/{principal_id}",
+            "tenant_id": tenant_id,
+            "service_principal_id": sp_id,
+            "app_id": sp_record.get("app_id"),
+            "application_name": sp_record.get("display_name"),
+            "group_id": principal_id,
+            "group_name": group_name,
+            "group_type_category": group_type_category,
+            "dynamic_group": dynamic_group,
+            "role_assignable_group": role_assignable_group,
+            "app_role_category": app_role_value,
+            "app_role_risk_category": app_role_risk,
+            "assignment_type": "group",
+        }
+
+    @staticmethod
+    def _normalize_sp_app_role_assignment(
+        tenant_id: str, resource_sp_record: dict, principal_sp_record: Optional[dict], raw: dict,
+        *, roles_by_id: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """Normalize one service-principal<->service-principal application-
+        permission assignment edge (e.g. an automation SP granted an
+        application permission against Microsoft Graph or another API)."""
+        assignment_id = raw.get("id")
+        principal_id = raw.get("principalId")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            return None
+
+        resource_sp_id = resource_sp_record["service_principal_id"]
+        record_id = (
+            f"{tenant_id}/app_role_assignment/{assignment_id}"
+            if isinstance(assignment_id, str) and assignment_id.strip()
+            else f"{tenant_id}/app_assignment/{resource_sp_id}/sp/{principal_id}"
+        )
+
+        app_role_value, app_role_risk = EntraConnector._resolve_app_role(roles_by_id, raw.get("appRoleId"))
+
+        return {
+            "record_type": ENTRA_SERVICE_PRINCIPAL_APP_ROLE_ASSIGNMENT,
+            "record_id": record_id,
+            "provider_resource_id": f"servicePrincipals/{resource_sp_id}/appRoleAssignedTo/{principal_id}",
+            "tenant_id": tenant_id,
+            "resource_service_principal_id": resource_sp_id,
+            "resource_app_id": resource_sp_record.get("app_id"),
+            "resource_name": resource_sp_record.get("display_name"),
+            "resource_is_microsoft_graph": resource_sp_record.get("is_microsoft_graph_resource", False),
+            "principal_service_principal_id": principal_id,
+            "principal_app_id": principal_sp_record.get("app_id") if principal_sp_record else None,
+            "principal_name": principal_sp_record.get("display_name") if principal_sp_record else None,
+            "app_role_category": app_role_value,
+            "app_role_risk_category": app_role_risk,
+            "assignment_type": "service_principal",
+        }
+
+    @staticmethod
+    def _normalize_oauth2_permission_grant(
+        tenant_id: str, raw: dict, sp_by_id: dict,
+    ) -> Optional[dict]:
+        """Normalize one delegated OAuth2 consent grant.
+
+        SECURITY: only ``id``, ``clientId``, ``resourceId``, ``consentType``,
+        ``principalId``, and ``scope`` are ever read — never any token
+        value. ``scope`` (a raw space-delimited string) is parsed into a
+        bounded, deduplicated, sorted list — never stored as one opaque
+        string.
+        """
+        grant_id = raw.get("id")
+        if not isinstance(grant_id, str) or not grant_id.strip():
+            return None
+
+        client_sp_id = raw.get("clientId")
+        resource_sp_id = raw.get("resourceId")
+        client_sp_record = sp_by_id.get(client_sp_id) if isinstance(client_sp_id, str) else None
+        resource_sp_record = sp_by_id.get(resource_sp_id) if isinstance(resource_sp_id, str) else None
+
+        scopes = normalize_scopes(raw.get("scope"))
+        high_risk_scope_present = any(categorize_permission_risk(s) == "high_risk" for s in scopes)
+
+        consent_type_category = categorize_consent_type(raw.get("consentType"))
+        principal_id = raw.get("principalId") if consent_type_category == "Principal" else None
+
+        return {
+            "record_type": ENTRA_OAUTH2_PERMISSION_GRANT,
+            "record_id": f"{tenant_id}/oauth2_permission_grant/{grant_id}",
+            "provider_resource_id": f"oauth2PermissionGrants/{grant_id}",
+            "tenant_id": tenant_id,
+            "grant_id": grant_id,
+            "client_service_principal_id": client_sp_id if isinstance(client_sp_id, str) else None,
+            "client_name": client_sp_record.get("display_name") if client_sp_record else None,
+            "resource_service_principal_id": resource_sp_id if isinstance(resource_sp_id, str) else None,
+            "resource_name": resource_sp_record.get("display_name") if resource_sp_record else None,
+            "resource_is_microsoft_graph": (resource_sp_record or {}).get("is_microsoft_graph_resource", False),
+            "consent_type_category": consent_type_category,
+            "principal_id": principal_id,
+            "scope_count": len(scopes),
+            "scopes": scopes,
+            "high_risk_scope_present": high_risk_scope_present,
+        }
+
     # ── Family collection helper (mirrors the Okta reliability pattern) ────
 
     @classmethod
@@ -1176,6 +1531,191 @@ class EntraConnector(BaseConnector):
 
         return records, completeness, counts_by_group, status_by_group
 
+    # ── Application / service-principal collection (Entra message 3) ──────
+
+    _APPLICATION_SELECT = (
+        "id,appId,displayName,signInAudience,publisherDomain,web,spa,publicClient,"
+        "requiredResourceAccess,passwordCredentials,keyCredentials,appRoles"
+    )
+    _SERVICE_PRINCIPAL_SELECT = (
+        "id,appId,displayName,servicePrincipalType,accountEnabled,appRoleAssignmentRequired,"
+        "appOwnerOrganizationId,verifiedPublisher,passwordCredentials,keyCredentials,"
+        "appRoles,oauth2PermissionScopes"
+    )
+
+    @classmethod
+    def _fetch_applications_raw(
+        cls, client: httpx.Client, *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        return cls._collect_family(
+            client, "/applications",
+            params={"$top": str(_PAGE_SIZE), "$select": cls._APPLICATION_SELECT},
+            cap=_MAX_APPLICATIONS, _sleep_fn=_sleep_fn,
+        )
+
+    @classmethod
+    def _fetch_service_principals_raw(
+        cls, client: httpx.Client, *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        return cls._collect_family(
+            client, "/servicePrincipals",
+            params={"$top": str(_PAGE_SIZE), "$select": cls._SERVICE_PRINCIPAL_SELECT},
+            cap=_MAX_SERVICE_PRINCIPALS, _sleep_fn=_sleep_fn,
+        )
+
+    @classmethod
+    def _fetch_app_role_assignments(
+        cls,
+        client: httpx.Client,
+        tenant_id: str,
+        raw_sps: list[dict],
+        sp_records_by_id: dict,
+        roles_by_id_by_sp: dict,
+        user_index: dict,
+        group_index: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], list[dict], list[dict], str, dict]:
+        """Collect app-role assignments INTO every service principal (i.e.
+        who/what has been granted access to each resource SP), branching
+        locally on ``principalType`` into three separate record types.
+
+        Call-complexity design: Microsoft Graph has no tenant-wide
+        "list every app-role assignment" endpoint — assignments are only
+        enumerable per-resource-service-principal
+        (``GET /servicePrincipals/{id}/appRoleAssignedTo``). This walks
+        SPs once (capped at ``_MAX_SPS_FOR_ASSIGNMENT_ENUMERATION``) —
+        exactly the same call-complexity choice and rationale as message
+        2's per-group membership walk and Okta's per-app assignment walk.
+
+        Returns ``(user_assignments, group_assignments, sp_assignments,
+        completeness, status_by_sp_id)``. ``status_by_sp_id`` records each
+        walked SP's own completeness for future per-parent false-removal
+        suppression (message 7), mirroring message 2's ``status_by_group``.
+        """
+        if not raw_sps:
+            return [], [], [], FAMILY_COMPLETE, {}
+
+        sps_to_walk = raw_sps[:_MAX_SPS_FOR_ASSIGNMENT_ENUMERATION]
+        truncated_sp_list = len(raw_sps) > len(sps_to_walk)
+
+        user_assignments: list[dict] = []
+        group_assignments: list[dict] = []
+        sp_assignments: list[dict] = []
+        status_by_sp: dict = {}
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+        total_records = 0
+
+        for raw_sp in sps_to_walk:
+            if not isinstance(raw_sp, dict):
+                continue
+            sp_id = raw_sp.get("id")
+            if not isinstance(sp_id, str) or not sp_id.strip():
+                continue
+            sp_record = sp_records_by_id.get(sp_id)
+            if sp_record is None:
+                continue
+
+            assignees, sp_completeness = cls._collect_family(
+                client, f"/servicePrincipals/{sp_id}/appRoleAssignedTo",
+                params={"$top": str(_PAGE_SIZE)},
+                cap=_MAX_ASSIGNMENTS_PER_SP, _sleep_fn=_sleep_fn,
+            )
+            status_by_sp[sp_id] = sp_completeness
+            if sp_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if sp_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if sp_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            seen_principal_ids: set = set()
+            roles_by_id = roles_by_id_by_sp.get(sp_id, {})
+            for raw_assignment in assignees:
+                if not isinstance(raw_assignment, dict):
+                    continue
+                principal_id = raw_assignment.get("principalId")
+                if not isinstance(principal_id, str) or not principal_id.strip():
+                    continue
+                if principal_id in seen_principal_ids:
+                    continue  # dedup within a single SP's page set
+                seen_principal_ids.add(principal_id)
+                if total_records >= _MAX_TOTAL_APP_USER_ASSIGNMENTS + _MAX_TOTAL_APP_GROUP_ASSIGNMENTS + _MAX_TOTAL_SP_APP_ROLE_ASSIGNMENTS:
+                    cap_hit = True
+                    break
+
+                principal_type = raw_assignment.get("principalType")
+                if principal_type == GRAPH_PRINCIPAL_TYPE_USER:
+                    user_record = user_index.get(principal_id)
+                    rec = cls._normalize_app_user_assignment(
+                        tenant_id, sp_record, user_record, raw_assignment, roles_by_id=roles_by_id,
+                    )
+                    if rec is not None:
+                        user_assignments.append(rec)
+                        total_records += 1
+                elif principal_type == GRAPH_PRINCIPAL_TYPE_GROUP:
+                    group_record = group_index.get(principal_id)
+                    rec = cls._normalize_app_group_assignment(
+                        tenant_id, sp_record, group_record, raw_assignment, roles_by_id=roles_by_id,
+                    )
+                    if rec is not None:
+                        group_assignments.append(rec)
+                        total_records += 1
+                elif principal_type == GRAPH_PRINCIPAL_TYPE_SERVICE_PRINCIPAL:
+                    principal_sp_record = sp_records_by_id.get(principal_id)
+                    rec = cls._normalize_sp_app_role_assignment(
+                        tenant_id, sp_record, principal_sp_record, raw_assignment, roles_by_id=roles_by_id,
+                    )
+                    if rec is not None:
+                        sp_assignments.append(rec)
+                        total_records += 1
+                # An unrecognized future principalType is silently skipped
+                # here (never mis-normalized as a user) — never raised,
+                # since this is a data-shape surprise, not a call failure.
+
+            if total_records >= _MAX_TOTAL_APP_USER_ASSIGNMENTS + _MAX_TOTAL_APP_GROUP_ASSIGNMENTS + _MAX_TOTAL_SP_APP_ROLE_ASSIGNMENTS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_sp_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        return user_assignments, group_assignments, sp_assignments, completeness, status_by_sp
+
+    @classmethod
+    def _fetch_oauth2_permission_grants(
+        cls, client: httpx.Client, tenant_id: str, sp_by_id: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Collect delegated OAuth2 consent grants tenant-wide via the flat
+        ``/oauth2PermissionGrants`` collection — Graph exposes this as a
+        single list (confirmed before implementation), so no per-app or
+        per-user consent enumeration is needed here."""
+        raw_items, completeness = cls._collect_family(
+            client, "/oauth2PermissionGrants",
+            params={"$top": str(_PAGE_SIZE)},
+            cap=_MAX_OAUTH2_PERMISSION_GRANTS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_oauth2_permission_grant(tenant_id, raw, sp_by_id)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
     # ── Capability probes ──────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET with the smallest
@@ -1253,23 +1793,29 @@ class EntraConnector(BaseConnector):
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
         """Fetch the Entra tenant identity + user/group/membership inventory
-        + API capability inventory: ``entra_organization``, ``entra_user``,
-        ``entra_group``, ``entra_group_membership``, ``entra_api_capability``
-        probes.
+        + application/service-principal/assignment/consent inventory + API
+        capability inventory: ``entra_organization``, ``entra_user``,
+        ``entra_group``, ``entra_group_membership``, ``entra_application``,
+        ``entra_service_principal``, ``entra_application_user_assignment``,
+        ``entra_application_group_assignment``,
+        ``entra_service_principal_app_role_assignment``,
+        ``entra_oauth2_permission_grant``, ``entra_api_capability`` probes.
 
-        Does NOT collect applications/service principals/app registrations
-        (message 3), Conditional Access/authentication methods (message 4),
-        or directory roles/privileged identities/consent grants (message 5)
-        yet — see the module docstring for the permanent sensitive-data
-        boundary and ``entra_schema.py`` for what later messages will add.
+        Does NOT collect Conditional Access/authentication methods
+        (message 4), or directory roles/privileged identities/consent
+        expansion (message 5) yet — see the module docstring for the
+        permanent sensitive-data boundary and ``entra_schema.py`` for what
+        later messages will add.
 
-        Every family (users/groups/memberships) fails independently: if
-        e.g. group memberships are denied while users and groups are
-        readable, the rest is still returned and
+        Every family (users/groups/memberships/applications/service
+        principals/assignments/OAuth grants) fails independently: if e.g.
+        group memberships are denied while users and groups are readable,
+        the rest is still returned and
         ``entra_organization.family_completeness`` reports the gap — a
         family failure never aborts the whole fetch, and a denied/
         unreadable family is never silently reported as "zero" (see
-        ``_collect_family``/``_fetch_memberships``).
+        ``_collect_family``/``_fetch_memberships``/
+        ``_fetch_app_role_assignments``).
 
         SECURITY: client_secret and access_token are used only within this
         method's scope (or the connector instance's token cache), never
@@ -1343,11 +1889,65 @@ class EntraConnector(BaseConnector):
             # walk actually succeeded — a group whose walk was denied/failed
             # keeps membership_count=None (unknown), never 0.
             group_records: list[dict] = []
+            group_index: dict = {}
             for group_id, group_rec in group_records_by_id.items():
                 count = counts_by_group.get(group_id)
                 group_rec["membership_count"] = count
                 group_rec["membership_count_category"] = categorize_membership_count(count)
                 group_records.append(group_rec)
+                group_index[group_id] = group_rec
+
+            # ── Applications ───────────────────────────────────────────────
+            raw_applications, applications_completeness = self._fetch_applications_raw(
+                client, _sleep_fn=_sleep_fn,
+            )
+            application_records: list[dict] = []
+            for raw_app in raw_applications:
+                if not isinstance(raw_app, dict):
+                    continue
+                rec = self._normalize_application(stable_tenant_id, raw_app)
+                if rec is not None:
+                    application_records.append(rec)
+
+            # ── Service principals (raw kept for role-index + assignment
+            #    walk; normalized after) ─────────────────────────────────────
+            raw_sps, service_principals_completeness = self._fetch_service_principals_raw(
+                client, _sleep_fn=_sleep_fn,
+            )
+            sp_records_by_id: dict = {}
+            roles_by_id_by_sp: dict = {}
+            for raw_sp in raw_sps:
+                if not isinstance(raw_sp, dict):
+                    continue
+                sp_id = raw_sp.get("id")
+                if not isinstance(sp_id, str) or not sp_id.strip():
+                    continue
+                rec = self._normalize_service_principal(stable_tenant_id, raw_sp, tenant_id)
+                if rec is not None:
+                    sp_records_by_id[sp_id] = rec
+                # Local app-role index (id -> {value, ...}) built from the
+                # SP's OWN raw appRoles array — never persisted onto the
+                # normalized record, never a per-assignment Graph call.
+                roles = raw_sp.get("appRoles") if isinstance(raw_sp.get("appRoles"), list) else []
+                roles_by_id: dict = {}
+                for role in roles:
+                    if isinstance(role, dict) and isinstance(role.get("id"), str):
+                        roles_by_id[role["id"]] = role
+                roles_by_id_by_sp[sp_id] = roles_by_id
+
+            # ── App-role assignments (user/group/service-principal) ────────
+            (
+                app_user_assignment_records, app_group_assignment_records,
+                sp_app_role_assignment_records, assignments_completeness, _status_by_sp,
+            ) = self._fetch_app_role_assignments(
+                client, stable_tenant_id, raw_sps, sp_records_by_id, roles_by_id_by_sp,
+                user_index, group_index, _sleep_fn=_sleep_fn,
+            )
+
+            # ── OAuth2 delegated permission grants (tenant-wide) ────────────
+            oauth2_grant_records, oauth2_grants_completeness = self._fetch_oauth2_permission_grants(
+                client, stable_tenant_id, sp_records_by_id, _sleep_fn=_sleep_fn,
+            )
 
             org_record = self._normalize_organization(
                 stable_tenant_id, raw_org,
@@ -1355,6 +1955,10 @@ class EntraConnector(BaseConnector):
                     "users": users_completeness,
                     "groups": groups_completeness,
                     "memberships": memberships_completeness,
+                    "applications": applications_completeness,
+                    "service_principals": service_principals_completeness,
+                    "app_role_assignments": assignments_completeness,
+                    "oauth2_permission_grants": oauth2_grants_completeness,
                 },
             )
 
@@ -1362,6 +1966,12 @@ class EntraConnector(BaseConnector):
             records.extend(user_records)
             records.extend(group_records)
             records.extend(membership_records)
+            records.extend(application_records)
+            records.extend(sp_records_by_id.values())
+            records.extend(app_user_assignment_records)
+            records.extend(app_group_assignment_records)
+            records.extend(sp_app_role_assignment_records)
+            records.extend(oauth2_grant_records)
             records.extend(self._probe_capabilities(client, stable_tenant_id))
 
         # Deterministic ordering — API response ordering must never affect
