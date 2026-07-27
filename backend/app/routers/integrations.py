@@ -272,6 +272,14 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
     elif body.provider == "okta":
         # SECURITY: okta_api_token is NEVER logged here or in the service.
         return {"org_url": body.okta_org_url, "api_token": body.okta_api_token}
+    # ── Microsoft Entra ID provider (message 1 — provider foundation) ────────
+    elif body.provider == "entra":
+        # SECURITY: entra_client_secret is NEVER logged here or in the service.
+        return {
+            "tenant_id": body.entra_tenant_id,
+            "client_id": body.entra_client_id,
+            "client_secret": body.entra_client_secret,
+        }
     return {}
 
 

@@ -292,13 +292,24 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── Microsoft Entra ID message 1 — provider foundation ────────────────────
+    elif provider == "entra":
+        return _create_entra_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
             "'twilio', 'sendgrid', 'auth0', 'datadog', 'clerk', 'pagerduty', "
-            "'linear', 'jira', 'kubernetes', 'okta'."
+            "'linear', 'jira', 'kubernetes', 'okta', 'entra'."
         )
 
 
@@ -1693,6 +1704,84 @@ def _create_okta_integration(
         display_name=f"{display_name} ({org_url})" if org_url else display_name,
         resource_metadata={
             "org_url": org_url or None,
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_entra_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Microsoft Entra ID integration + organization resource
+    (Entra message 1 of 8).
+
+    SECURITY: credentials["client_secret"] is NEVER logged, NEVER
+    returned, NEVER stored in plaintext outside the encrypted credentials
+    column, and NEVER copied into resource_metadata. Only the user-
+    supplied display name and the non-secret tenant_id are used for
+    resource identity.
+
+    Live API validation (acquiring an app-only token and confirming the
+    tenant is reachable via GET /organization) is deferred to the first
+    sync, matching the established pattern for the majority of ConfigTrace
+    providers (Auth0, GitLab, Jira, Okta's original message-1 design,
+    etc.) — this avoids leaking tenant-reachability details through a
+    synchronous create-time error message.
+
+    Entra is registered internally (dispatch, schema, capability matrix)
+    but is NOT publicly connectable — it is excluded from the frontend's
+    PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Entra message 8.
+    """
+    from app.connectors.entra_schema import validate_tenant_id
+
+    tenant_id = validate_tenant_id(credentials.get("tenant_id"))
+
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="entra",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ─────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the non-secret tenant_id the
+    # user supplied. client_secret is NEVER copied here — the real stable
+    # tenant identity is computed by the connector from this same validated
+    # tenant_id (Entra's tenant GUID is immutable and known up front, so no
+    # separate identity-resolution API call is required) during fetch(),
+    # not at creation time.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="entra_organization",
+        provider_resource_id=str(integration.id),
+        display_name=f"{display_name} ({tenant_id})" if tenant_id else display_name,
+        resource_metadata={
+            "tenant_id": tenant_id or None,
         },
         is_active=True,
     )

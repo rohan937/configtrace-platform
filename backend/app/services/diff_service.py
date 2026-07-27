@@ -3586,6 +3586,29 @@ _OKTA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# ── Microsoft Entra ID foundation tracked fields (Entra message 1 of 8) ─────
+#
+# Only durable tenant configuration is tracked for entra_organization —
+# never timestamps, request IDs, or API counters. entra_api_capability's
+# "status" IS tracked (capability gained/lost is diagnostically useful —
+# see risk_rules/entra.py for how this is classified as informational/low,
+# never a security incident on its own).
+_ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "entra_organization": (
+        "display_name",
+        "default_verified_domain",
+        "on_premises_sync_enabled_category",
+        # verified_domain_count is intentionally NOT tracked — it can
+        # fluctuate innocuously (a domain added/removed for unrelated
+        # reasons) without being a durable configuration signal worth its
+        # own Change row.
+    ),
+    "entra_api_capability": (
+        "status",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -3681,6 +3704,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _KUBERNETES_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("okta_"):
         return _OKTA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("entra_"):
+        return _ENTRA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Unknown cloudflare_* subtypes return () (empty), matching every

@@ -92,6 +92,8 @@ class IntegrationCreateRequest(BaseModel):
         "kubernetes",
         # Okta message 1 — provider architecture foundation.
         "okta",
+        # Microsoft Entra ID message 1 — provider architecture foundation.
+        "entra",
     ] = Field(
         ...,
         description=(
@@ -626,6 +628,32 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Microsoft Entra ID fields (message 1 — provider foundation) ────────────
+    entra_tenant_id: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='entra'. "
+            "Microsoft Entra tenant GUID, e.g. "
+            "'11111111-1111-1111-1111-111111111111'. Must be a concrete "
+            "tenant GUID — 'common'/'organizations'/'consumers' are rejected."
+        ),
+    )
+    entra_client_id: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='entra'. "
+            "Microsoft Entra app registration (client) GUID."
+        ),
+    )
+    entra_client_secret: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='entra'. "
+            "Microsoft Entra app registration client secret. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -841,6 +869,20 @@ class IntegrationCreateRequest(BaseModel):
             if not self.okta_api_token:
                 raise ValueError(
                     "okta_api_token is required for Okta integrations."
+                )
+        # ── Microsoft Entra ID message 1 — provider foundation ────────────────
+        elif self.provider == "entra":
+            if not self.entra_tenant_id:
+                raise ValueError(
+                    "entra_tenant_id is required for Microsoft Entra ID integrations."
+                )
+            if not self.entra_client_id:
+                raise ValueError(
+                    "entra_client_id is required for Microsoft Entra ID integrations."
+                )
+            if not self.entra_client_secret:
+                raise ValueError(
+                    "entra_client_secret is required for Microsoft Entra ID integrations."
                 )
         return self
 

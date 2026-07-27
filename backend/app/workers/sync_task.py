@@ -362,6 +362,12 @@ def sync_integration(
 
                 connector = OktaConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "entra":
+                # SECURITY: client_secret is NEVER logged.
+                from app.connectors.entra import EntraConnector
+
+                connector = EntraConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

@@ -271,6 +271,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "terraform_cloud",
         "kubernetes",
         "okta",
+        "entra",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

@@ -1566,6 +1566,59 @@ _OKTA = ProviderCapability(
 PROVIDER_CAPABILITIES.append(_OKTA)
 
 
+_ENTRA = ProviderCapability(
+    provider="entra",
+    label="Microsoft Entra ID",
+    category="auth",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=True,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Microsoft Entra ID message 1 of 8 (provider architecture "
+        "foundation). Establishes a secure, read-only connector "
+        "(OAuth 2.0 client_credentials app-only auth against the "
+        "tenant-specific Microsoft identity platform token endpoint, "
+        "GUID tenant/client-ID validation rejecting 'common'/"
+        "'organizations'/'consumers', stable tenant identity from the "
+        "validated tenant GUID, @odata.nextLink pagination with "
+        "cross-origin rejection, bounded 429/5xx retry, in-memory "
+        "connector-scoped token cache) collecting only: tenant "
+        "organization identity/metadata and read-capability probes "
+        "across 8 future record families (users, groups, applications, "
+        "service principals, Conditional Access, authentication methods, "
+        "directory roles, OAuth2 permission grants) — never the "
+        "underlying data itself. Distinct from this repository's "
+        "existing 'azure' (Azure cloud infrastructure) provider; the two "
+        "are never merged. Microsoft commercial/global cloud only — GCC "
+        "High/DoD/China (21Vianet) national clouds are not supported and "
+        "not claimed. Security Findings, Change/reliability hardening, "
+        "and public launch are not yet implemented for this provider. "
+        "The provider remains registered internally only (dispatch, "
+        "schema, capability matrix, sync scheduling) and is NOT publicly "
+        "connectable — excluded from the frontend's PROVIDER_IDS / "
+        "CONNECTABLE_PROVIDER_IDS and from security_coverage_service."
+        "PROVIDERS until Entra message 8. "
+        "planned_next_stage: Entra message 2: users, groups, memberships, "
+        "lifecycle posture."
+    ),
+)
+
+
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
@@ -1579,6 +1632,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
+    _ENTRA,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

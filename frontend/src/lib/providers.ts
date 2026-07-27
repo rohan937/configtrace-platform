@@ -44,7 +44,11 @@ export type ProviderId =
   // ── Kubernetes message 9 — public launch (fully connectable) ──────────────
   | "kubernetes"
   // ── Okta message 8 — public launch (fully connectable) ────────────────────
-  | "okta";
+  | "okta"
+  // ── Microsoft Entra ID message 1 — provider architecture foundation (not
+  //    yet user-connectable; intentionally excluded from PROVIDER_IDS and
+  //    CONNECTABLE_PROVIDER_IDS until Entra message 8) ─────────────────────
+  | "entra";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
 export type ProviderCategory =
@@ -602,6 +606,31 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#fc6d26",
     bgColor: "rgba(252,109,38,0.10)",
     borderColor: "rgba(252,109,38,0.25)",
+  },
+
+  // ── Microsoft Entra ID message 1 — provider architecture foundation ────────
+  // NOT included in PROVIDER_IDS or CONNECTABLE_PROVIDER_IDS yet — there is
+  // no connect-form UI built yet, so this entry exists only so
+  // getProviderMeta("entra") resolves safely if referenced. Do not surface
+  // this provider as connectable or "Live" until Entra message 8.
+  entra: {
+    id: "entra",
+    label: "Microsoft Entra ID",
+    shortLabel: "Entra ID",
+    category: "identity",
+    description:
+      "Connect a Microsoft Entra ID tenant with a read-only app registration (client credentials). ConfigTrace will monitor identity, application access, authentication policy, and privileged-role configuration across Microsoft Entra ID (formerly Azure AD).",
+    monitoredSurfaces: [
+      "Users, groups, and group memberships (planned)",
+      "Enterprise applications, service principals, and app registrations (planned)",
+      "Conditional Access, authentication methods, and MFA posture (planned)",
+      "Directory roles, privileged identities, and consent grants (planned)",
+    ],
+    trustNote:
+      "ConfigTrace stores your Microsoft Entra app registration client secret encrypted and uses it only to read tenant configuration metadata via Microsoft Graph. It does not store the client secret value, passwords, password hashes, recovery codes, authentication method secrets, private keys, certificates containing private key material, or session/refresh/access tokens. This provider is in architecture-foundation stage: only tenant identity and read-permission capability metadata are currently collected. User, group, application, Conditional Access, and directory-role monitoring are planned in upcoming stages and are not yet live. Supports the Microsoft commercial/global cloud only — GCC High, DoD, and China (21Vianet) national clouds are not supported.",
+    color: "#0078D4",
+    bgColor: "rgba(0,120,212,0.10)",
+    borderColor: "rgba(0,120,212,0.25)",
   },
 };
 
