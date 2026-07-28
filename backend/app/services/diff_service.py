@@ -3700,6 +3700,7 @@ _ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "resource_service_principal_id",
         "app_role_category",
         "app_role_risk_category",
+        "app_role_privilege_tier",
     ),
     "entra_oauth2_permission_grant": (
         "client_service_principal_id",
@@ -3708,6 +3709,7 @@ _ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "principal_id",
         "scopes",
         "high_risk_scope_present",
+        "highest_scope_privilege_tier",
     ),
     # ── Entra authentication policy (Entra message 4 of 8) ──────────────────
     #
@@ -3768,6 +3770,72 @@ _ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "target_category",
         "include_target_count",
         "exclude_target_count",
+    ),
+    # ── Entra directory role / privileged identity (Entra message 5 of 8) ───
+    #
+    # Raw allowedResourceActions lists, raw resource paths, and expanded
+    # administrative-unit members are never stored at all (see entra.py's
+    # normalizer docstrings) so there is nothing raw to accidentally track.
+    "entra_directory_role": (
+        "display_name",
+        "role_kind_category",
+        "enabled",
+        "privilege_tier",
+        "is_privileged",
+        "action_count",
+        "dangerous_action_count",
+    ),
+    "entra_directory_role_assignment": (
+        "role_definition_id",
+        "role_template_id",
+        "role_name",
+        "privilege_tier",
+        "principal_id",
+        "principal_type",
+        "directory_scope_category",
+    ),
+    "entra_privileged_identity": (
+        "account_enabled_category",
+        "user_type_category",
+        "guest",
+        "lifecycle_posture",
+        "highest_privilege_tier",
+        "has_global_admin",
+        "has_privileged_role_admin",
+        "has_high_privilege",
+        "direct_role_count",
+        "group_inherited_role_count",
+        "privileged_via_direct",
+        "privileged_via_group",
+        "privilege_derivation_completeness",
+    ),
+    "entra_privileged_group": (
+        "display_name",
+        "role_assignable",
+        "highest_privilege_tier",
+        "role_count",
+        "member_count",
+        "direct_user_member_count",
+        "guest_member_count",
+        "disabled_member_count",
+        "privilege_derivation_completeness",
+    ),
+    "entra_privileged_service_principal": (
+        "display_name",
+        "account_enabled",
+        "directory_role_count",
+        "highest_directory_role_tier",
+        "high_risk_app_permission_count",
+        "critical_app_permission_count",
+        "tenant_wide_delegated_grant_count",
+        "has_role_management_permission",
+        "has_application_management_permission",
+        "has_directory_write_permission",
+        "has_graph_high_privilege",
+        "highest_privilege_tier",
+        "password_credential_count",
+        "key_credential_count",
+        "privilege_derivation_completeness",
     ),
 }
 
@@ -4346,12 +4414,18 @@ def _build_provider_metadata(
         metadata["app_role_risk_category"] = (
             context_record.get("app_role_risk_category") or record.get("app_role_risk_category") or ""
         )
+        metadata["app_role_privilege_tier"] = (
+            context_record.get("app_role_privilege_tier") or record.get("app_role_privilege_tier") or ""
+        )
     if record.get("record_type") == "entra_oauth2_permission_grant":
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
         metadata["client_name"] = context_record.get("client_name") or record.get("client_name") or ""
         metadata["resource_name"] = context_record.get("resource_name") or record.get("resource_name") or ""
         metadata["consent_type_category"] = (
             context_record.get("consent_type_category") or record.get("consent_type_category") or ""
+        )
+        metadata["highest_scope_privilege_tier"] = (
+            context_record.get("highest_scope_privilege_tier") or record.get("highest_scope_privilege_tier") or ""
         )
 
     # Entra Conditional Access / authentication strength / authentication
@@ -4386,6 +4460,48 @@ def _build_provider_metadata(
         metadata["method_config_id"] = context_record.get("method_config_id") or record.get("method_config_id") or ""
         metadata["method_type_category"] = (
             context_record.get("method_type_category") or record.get("method_type_category") or ""
+        )
+
+    # Entra directory role / privileged identity records (message 5) —
+    # never includes raw allowedResourceActions, raw resource paths, or
+    # administrative-unit member expansions.
+    if record.get("record_type") == "entra_directory_role":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["role_definition_id"] = context_record.get("role_definition_id") or record.get("role_definition_id") or ""
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+        metadata["privilege_tier"] = context_record.get("privilege_tier") or record.get("privilege_tier") or ""
+        metadata["role_kind_category"] = context_record.get("role_kind_category") or record.get("role_kind_category") or ""
+    if record.get("record_type") == "entra_directory_role_assignment":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["role_name"] = context_record.get("role_name") or record.get("role_name") or ""
+        metadata["role_template_id"] = context_record.get("role_template_id") or record.get("role_template_id") or ""
+        metadata["privilege_tier"] = context_record.get("privilege_tier") or record.get("privilege_tier") or ""
+        metadata["principal_id"] = context_record.get("principal_id") or record.get("principal_id") or ""
+        metadata["principal_type"] = context_record.get("principal_type") or record.get("principal_type") or ""
+    if record.get("record_type") == "entra_privileged_identity":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["user_id"] = context_record.get("user_id") or record.get("user_id") or ""
+        metadata["user_principal_name"] = (
+            context_record.get("user_principal_name") or record.get("user_principal_name") or ""
+        )
+        metadata["highest_privilege_tier"] = (
+            context_record.get("highest_privilege_tier") or record.get("highest_privilege_tier") or ""
+        )
+    if record.get("record_type") == "entra_privileged_group":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["group_id"] = context_record.get("group_id") or record.get("group_id") or ""
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+        metadata["highest_privilege_tier"] = (
+            context_record.get("highest_privilege_tier") or record.get("highest_privilege_tier") or ""
+        )
+    if record.get("record_type") == "entra_privileged_service_principal":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["service_principal_id"] = (
+            context_record.get("service_principal_id") or record.get("service_principal_id") or ""
+        )
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+        metadata["highest_privilege_tier"] = (
+            context_record.get("highest_privilege_tier") or record.get("highest_privilege_tier") or ""
         )
 
     if record.get("record_type") == "okta_application":

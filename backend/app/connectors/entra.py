@@ -103,6 +103,7 @@ from app.connectors.entra_schema import (
     CAPABILITY_UNAVAILABLE,
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
+    CONSENT_TYPE_ALL_PRINCIPALS,
     ENTRA_API_CAPABILITY,
     ENTRA_APPLICATION,
     ENTRA_APPLICATION_GROUP_ASSIGNMENT,
@@ -110,13 +111,22 @@ from app.connectors.entra_schema import (
     ENTRA_AUTHENTICATION_METHOD,
     ENTRA_AUTHENTICATION_STRENGTH,
     ENTRA_CONDITIONAL_ACCESS_POLICY,
+    ENTRA_DIRECTORY_ROLE,
+    ENTRA_DIRECTORY_ROLE_ASSIGNMENT,
     ENTRA_GROUP,
     ENTRA_GROUP_MEMBERSHIP,
     ENTRA_OAUTH2_PERMISSION_GRANT,
     ENTRA_ORGANIZATION,
+    ENTRA_PRIVILEGED_GROUP,
+    ENTRA_PRIVILEGED_IDENTITY,
+    ENTRA_PRIVILEGED_SERVICE_PRINCIPAL,
     ENTRA_SERVICE_PRINCIPAL,
     ENTRA_SERVICE_PRINCIPAL_APP_ROLE_ASSIGNMENT,
     ENTRA_USER,
+    ENTRA_PRIVILEGE_TIER_CRITICAL,
+    ENTRA_PRIVILEGE_TIER_HIGH,
+    ENTRA_PRIVILEGE_TIER_READ_ONLY,
+    ENTRA_PRIVILEGE_TIER_UNKNOWN,
     FAMILY_COMPLETE,
     FAMILY_DENIED,
     FAMILY_PARTIAL,
@@ -132,6 +142,9 @@ from app.connectors.entra_schema import (
     GRAPH_PRINCIPAL_TYPE_USER,
     MICROSOFT_FIRST_PARTY_TENANT_ID,
     MICROSOFT_GRAPH_APP_ID,
+    ROLE_PRINCIPAL_TYPE_UNKNOWN,
+    ROLE_TEMPLATE_GLOBAL_ADMINISTRATOR,
+    ROLE_TEMPLATE_PRIVILEGED_ROLE_ADMINISTRATOR,
     app_enforced_restrictions_enabled,
     categorize_account_enabled,
     categorize_app_owner_organization,
@@ -144,6 +157,7 @@ from app.connectors.entra_schema import (
     categorize_client_app_types,
     categorize_consent_type,
     categorize_device_platforms,
+    categorize_directory_scope,
     categorize_external_user_state,
     categorize_grant_operator,
     categorize_group_type,
@@ -156,6 +170,7 @@ from app.connectors.entra_schema import (
     categorize_permission_risk,
     categorize_persistent_browser_mode,
     categorize_policy_coverage,
+    categorize_role_kind,
     categorize_service_principal_type,
     categorize_sign_in_audience,
     categorize_sign_in_frequency,
@@ -163,7 +178,11 @@ from app.connectors.entra_schema import (
     categorize_user_type,
     categorize_verified_publisher,
     count_allowed_combinations,
+    count_dangerous_role_actions,
     count_method_targets,
+    count_role_actions,
+    graph_permission_privilege_tier,
+    highest_entra_privilege_tier,
     is_legacy_auth_targeted,
     lifecycle_posture_for_user,
     mfa_requirement_from_grant_controls,
@@ -174,6 +193,9 @@ from app.connectors.entra_schema import (
     passwordless_posture_from_allowed_combinations,
     phishing_resistance_for_method_type,
     phishing_resistance_from_allowed_combinations,
+    privilege_tier_for_role_actions,
+    privilege_tier_for_role_template,
+    role_display_name_for_template,
     summarize_application_redirects,
     summarize_required_resource_access,
     validate_client_id,
@@ -246,6 +268,21 @@ _MAX_OAUTH2_PERMISSION_GRANTS = 200_000
 _MAX_CONDITIONAL_ACCESS_POLICIES = 2_000
 _MAX_AUTHENTICATION_STRENGTHS = 2_000
 _MAX_AUTHENTICATION_METHOD_CONFIGURATIONS = 200
+
+# ── Directory-role / privileged-identity collection bounds (Entra message
+#    5) ─────────────────────────────────────────────────────────────────────
+#
+# Role definitions and role assignments are each collected via ONE
+# tenant-wide flat Graph list (``/roleManagement/directory/roleDefinitions``
+# and ``/roleManagement/directory/roleAssignments``) — the modern
+# role-management API exposes a genuine tenant-wide assignment list, unlike
+# Okta (which has no such endpoint and is forced into a per-principal walk).
+# This is the entire point of preferring these APIs: principal resolution
+# happens locally against the already-built user/group/service-principal
+# indexes, with ZERO additional per-principal Graph calls.
+_MAX_DIRECTORY_ROLE_DEFINITIONS = 500
+_MAX_DIRECTORY_ROLE_ASSIGNMENTS = 50_000
+_MAX_ROLE_ACTIONS_PER_DEFINITION = 500
 
 # 429/5xx retry bounds — bounded exponential backoff with jitter, mirroring
 # the Okta/Kubernetes reliability pattern.
@@ -1299,6 +1336,10 @@ class EntraConnector(BaseConnector):
         )
 
         app_role_value, app_role_risk = EntraConnector._resolve_app_role(roles_by_id, raw.get("appRoleId"))
+        resource_is_microsoft_graph = resource_sp_record.get("is_microsoft_graph_resource", False)
+        app_role_privilege_tier = graph_permission_privilege_tier(
+            app_role_value, is_microsoft_graph_resource=resource_is_microsoft_graph,
+        )
 
         return {
             "record_type": ENTRA_SERVICE_PRINCIPAL_APP_ROLE_ASSIGNMENT,
@@ -1308,12 +1349,13 @@ class EntraConnector(BaseConnector):
             "resource_service_principal_id": resource_sp_id,
             "resource_app_id": resource_sp_record.get("app_id"),
             "resource_name": resource_sp_record.get("display_name"),
-            "resource_is_microsoft_graph": resource_sp_record.get("is_microsoft_graph_resource", False),
+            "resource_is_microsoft_graph": resource_is_microsoft_graph,
             "principal_service_principal_id": principal_id,
             "principal_app_id": principal_sp_record.get("app_id") if principal_sp_record else None,
             "principal_name": principal_sp_record.get("display_name") if principal_sp_record else None,
             "app_role_category": app_role_value,
             "app_role_risk_category": app_role_risk,
+            "app_role_privilege_tier": app_role_privilege_tier,
             "assignment_type": "service_principal",
         }
 
@@ -1344,6 +1386,18 @@ class EntraConnector(BaseConnector):
         consent_type_category = categorize_consent_type(raw.get("consentType"))
         principal_id = raw.get("principalId") if consent_type_category == "Principal" else None
 
+        # Message 5: deepened privilege tiering, composable with directory-
+        # role/app-permission tiers in a privileged service principal's
+        # rollup. Third-party (non-Graph) resources always tier "unknown"
+        # here (see `graph_permission_privilege_tier`'s docstring) — never
+        # assumed safe just because ConfigTrace doesn't recognize the API.
+        resource_is_microsoft_graph = (resource_sp_record or {}).get("is_microsoft_graph_resource", False)
+        scope_tiers = [
+            graph_permission_privilege_tier(s, is_microsoft_graph_resource=resource_is_microsoft_graph)
+            for s in scopes
+        ] or [ENTRA_PRIVILEGE_TIER_UNKNOWN]
+        highest_scope_privilege_tier = highest_entra_privilege_tier(scope_tiers)
+
         return {
             "record_type": ENTRA_OAUTH2_PERMISSION_GRANT,
             "record_id": f"{tenant_id}/oauth2_permission_grant/{grant_id}",
@@ -1354,12 +1408,13 @@ class EntraConnector(BaseConnector):
             "client_name": client_sp_record.get("display_name") if client_sp_record else None,
             "resource_service_principal_id": resource_sp_id if isinstance(resource_sp_id, str) else None,
             "resource_name": resource_sp_record.get("display_name") if resource_sp_record else None,
-            "resource_is_microsoft_graph": (resource_sp_record or {}).get("is_microsoft_graph_resource", False),
+            "resource_is_microsoft_graph": resource_is_microsoft_graph,
             "consent_type_category": consent_type_category,
             "principal_id": principal_id,
             "scope_count": len(scopes),
             "scopes": scopes,
             "high_risk_scope_present": high_risk_scope_present,
+            "highest_scope_privilege_tier": highest_scope_privilege_tier,
         }
 
     # ── Family collection helper (mirrors the Okta reliability pattern) ────
@@ -1985,6 +2040,450 @@ class EntraConnector(BaseConnector):
                 records.append(rec)
         return records, completeness
 
+    # ── Directory role / directory role assignment normalization
+    #    (Entra message 5) ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_directory_role(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one directory role DEFINITION
+        (``unifiedRoleDefinition``).
+
+        SECURITY: only a bounded action COUNT and a derived privilege tier
+        are persisted from ``rolePermissions[].allowedResourceActions`` —
+        never the raw action list itself.
+        """
+        role_id = raw.get("id")
+        if not isinstance(role_id, str) or not role_id.strip():
+            return None
+
+        template_id = raw.get("templateId")
+        template_id = template_id if isinstance(template_id, str) and template_id.strip() else role_id
+
+        display_name = raw.get("displayName")
+        display_name = display_name.strip()[:_MAX_STR_LEN] if isinstance(display_name, str) and display_name.strip() else None
+
+        role_kind_category = categorize_role_kind(raw.get("isBuiltIn"), template_id)
+
+        is_enabled = raw.get("isEnabled")
+        is_enabled = is_enabled if isinstance(is_enabled, bool) else None
+
+        role_permissions = raw.get("rolePermissions") if isinstance(raw.get("rolePermissions"), list) else []
+        actions: list = []
+        for perm in role_permissions:
+            if not isinstance(perm, dict):
+                continue
+            allowed = perm.get("allowedResourceActions")
+            if isinstance(allowed, list):
+                actions.extend(allowed)
+        actions = actions[:_MAX_ROLE_ACTIONS_PER_DEFINITION]
+
+        if role_kind_category == "built_in":
+            privilege_tier = privilege_tier_for_role_template(template_id)
+        elif role_kind_category == "custom":
+            privilege_tier = privilege_tier_for_role_actions(actions)
+        else:
+            privilege_tier = ENTRA_PRIVILEGE_TIER_UNKNOWN
+
+        # A recognized tier (even read_only) means this is a real
+        # administrative-capability role; unknown stays unknown (never
+        # coerced toward "not privileged").
+        if privilege_tier == ENTRA_PRIVILEGE_TIER_UNKNOWN:
+            is_privileged: Optional[bool] = None
+        else:
+            is_privileged = privilege_tier != "read_only"
+
+        return {
+            "record_type": ENTRA_DIRECTORY_ROLE,
+            "record_id": f"{tenant_id}/directory_role/{role_id}",
+            "provider_resource_id": f"roleManagement/directory/roleDefinitions/{role_id}",
+            "tenant_id": tenant_id,
+            "role_definition_id": role_id,
+            "template_id": template_id,
+            "display_name": display_name or role_display_name_for_template(template_id),
+            "role_kind_category": role_kind_category,
+            "enabled": is_enabled,
+            "privilege_tier": privilege_tier,
+            "is_privileged": is_privileged,
+            "action_count": count_role_actions(actions),
+            "dangerous_action_count": count_dangerous_role_actions(actions),
+        }
+
+    @staticmethod
+    def _normalize_directory_role_assignment(
+        tenant_id: str, raw: dict, role_by_id: dict,
+        user_index: dict, group_index: dict, sp_by_id: dict,
+    ) -> Optional[dict]:
+        """Normalize one active directory-role ASSIGNMENT
+        (``unifiedRoleAssignment``).
+
+        Principal type/identity is resolved LOCALLY against the
+        already-built user/group/service-principal indexes — never a
+        per-assignment Graph call (e.g. via ``$expand=principal``), and
+        never assumed to be a user by default.
+        """
+        assignment_id = raw.get("id")
+        role_definition_id = raw.get("roleDefinitionId")
+        principal_id = raw.get("principalId")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            return None
+
+        role_record = role_by_id.get(role_definition_id) if isinstance(role_definition_id, str) else None
+        role_name = role_record.get("display_name") if role_record else None
+        role_template_id = role_record.get("template_id") if role_record else None
+        privilege_tier = role_record.get("privilege_tier") if role_record else ENTRA_PRIVILEGE_TIER_UNKNOWN
+
+        if principal_id in user_index:
+            principal_type = GRAPH_PRINCIPAL_TYPE_USER
+        elif principal_id in group_index:
+            principal_type = GRAPH_PRINCIPAL_TYPE_GROUP
+        elif principal_id in sp_by_id:
+            principal_type = GRAPH_PRINCIPAL_TYPE_SERVICE_PRINCIPAL
+        else:
+            principal_type = ROLE_PRINCIPAL_TYPE_UNKNOWN
+
+        directory_scope_category = categorize_directory_scope(
+            raw.get("directoryScopeId"), raw.get("appScopeId"),
+        )
+
+        record_id = (
+            f"{tenant_id}/directory_role_assignment/{assignment_id}"
+            if isinstance(assignment_id, str) and assignment_id.strip()
+            else f"{tenant_id}/directory_role_assignment/{role_definition_id}/{principal_id}"
+        )
+
+        return {
+            "record_type": ENTRA_DIRECTORY_ROLE_ASSIGNMENT,
+            "record_id": record_id,
+            "provider_resource_id": f"roleManagement/directory/roleAssignments/{assignment_id}",
+            "tenant_id": tenant_id,
+            "assignment_id": assignment_id if isinstance(assignment_id, str) else None,
+            "role_definition_id": role_definition_id if isinstance(role_definition_id, str) else None,
+            "role_template_id": role_template_id,
+            "role_name": role_name,
+            "privilege_tier": privilege_tier,
+            "principal_id": principal_id,
+            "principal_type": principal_type,
+            "directory_scope_category": directory_scope_category,
+        }
+
+    # ── Directory role / role assignment collection (Entra message 5) ──────
+
+    @classmethod
+    def _fetch_directory_role_definitions(
+        cls, client: httpx.Client, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], dict, str]:
+        """Collect ALL directory role definitions via ONE tenant-wide flat
+        Graph list (``/roleManagement/directory/roleDefinitions``) — never
+        a per-principal or per-role call. Returns
+        ``(records, role_by_id, completeness)``."""
+        raw_items, completeness = cls._collect_family(
+            client, "/roleManagement/directory/roleDefinitions",
+            params={"$top": str(_PAGE_SIZE)},
+            cap=_MAX_DIRECTORY_ROLE_DEFINITIONS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        role_by_id: dict = {}
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_directory_role(tenant_id, raw)
+            if rec is not None:
+                records.append(rec)
+                role_by_id[rec["role_definition_id"]] = rec
+        return records, role_by_id, completeness
+
+    @classmethod
+    def _fetch_directory_role_assignments(
+        cls, client: httpx.Client, tenant_id: str, role_by_id: dict,
+        user_index: dict, group_index: dict, sp_by_id: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Collect ALL directory role assignments via ONE tenant-wide flat
+        Graph list (``/roleManagement/directory/roleAssignments``) — the
+        modern role-management API's genuine tenant-wide assignment list,
+        never a per-user/per-group walk (contrast with Okta, which has no
+        such endpoint)."""
+        raw_items, completeness = cls._collect_family(
+            client, "/roleManagement/directory/roleAssignments",
+            params={"$top": str(_PAGE_SIZE)},
+            cap=_MAX_DIRECTORY_ROLE_ASSIGNMENTS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_directory_role_assignment(
+                tenant_id, raw, role_by_id, user_index, group_index, sp_by_id,
+            )
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
+    # ── Derived privileged identity/group/service-principal (Entra message
+    #    5) — pure LOCAL joins over already-collected records. No
+    #    additional Graph calls of any kind. ──────────────────────────────
+
+    @staticmethod
+    def _derive_privileged_identities(
+        tenant_id: str,
+        user_index: dict,
+        role_assignment_records: list[dict],
+        membership_records: list[dict],
+        *, memberships_completeness: str,
+    ) -> list[dict]:
+        """Derive one ``entra_privileged_identity`` per user with >=1
+        effective directory-role privilege — direct, or inherited via a
+        role-assignable group's own role assignment. Direct group
+        membership only — nested groups are never flattened (message 2's
+        documented limitation).
+        """
+        direct_by_user: dict = {}
+        group_assignments_by_group: dict = {}
+        for a in role_assignment_records:
+            if a["principal_type"] == GRAPH_PRINCIPAL_TYPE_USER:
+                direct_by_user.setdefault(a["principal_id"], []).append(a)
+            elif a["principal_type"] == GRAPH_PRINCIPAL_TYPE_GROUP:
+                group_assignments_by_group.setdefault(a["principal_id"], []).append(a)
+
+        groups_by_user: dict = {}
+        for m in membership_records:
+            gid = m.get("group_id")
+            if gid in group_assignments_by_group:
+                groups_by_user.setdefault(m["user_id"], set()).add(gid)
+
+        privileged_user_ids = sorted(set(direct_by_user) | set(groups_by_user))
+        records: list[dict] = []
+
+        for user_id in privileged_user_ids:
+            direct = direct_by_user.get(user_id, [])
+            inherited_group_ids = groups_by_user.get(user_id, set())
+            inherited: list = []
+            for gid in inherited_group_ids:
+                inherited.extend(group_assignments_by_group.get(gid, []))
+
+            if not direct and not inherited:
+                continue
+
+            all_assignments = direct + inherited
+            tiers = [a["privilege_tier"] for a in all_assignments]
+            highest_tier = highest_entra_privilege_tier(tiers)
+            has_global_admin = any(a.get("role_template_id") == ROLE_TEMPLATE_GLOBAL_ADMINISTRATOR for a in all_assignments)
+            has_privileged_role_admin = any(
+                a.get("role_template_id") == ROLE_TEMPLATE_PRIVILEGED_ROLE_ADMINISTRATOR for a in all_assignments
+            )
+
+            if inherited:
+                privileged_via_group: Optional[bool] = True
+            elif memberships_completeness == FAMILY_COMPLETE:
+                privileged_via_group = False
+            else:
+                # Memberships are denied/partial/unavailable — never claim
+                # "no group-inherited privilege" when we couldn't fully
+                # check for it.
+                privileged_via_group = None
+
+            user_record = user_index.get(user_id)
+            derivation_ok = memberships_completeness == FAMILY_COMPLETE
+            records.append({
+                "record_type": ENTRA_PRIVILEGED_IDENTITY,
+                "record_id": f"{tenant_id}/privileged_identity/{user_id}",
+                "provider_resource_id": f"users/{user_id}",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "user_principal_name": user_record.get("user_principal_name") if user_record else None,
+                "account_enabled_category": user_record.get("account_enabled_category") if user_record else "unknown",
+                "user_type_category": user_record.get("user_type_category") if user_record else "unknown",
+                "guest": user_record.get("guest") if user_record else None,
+                "lifecycle_posture": user_record.get("lifecycle_posture") if user_record else "unknown",
+                "highest_privilege_tier": highest_tier,
+                "has_global_admin": has_global_admin,
+                "has_privileged_role_admin": has_privileged_role_admin,
+                "has_high_privilege": highest_tier in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH),
+                "direct_role_count": len(direct),
+                "group_inherited_role_count": len(inherited),
+                "privileged_via_direct": len(direct) > 0,
+                "privileged_via_group": privileged_via_group,
+                "privilege_derivation_completeness": FAMILY_COMPLETE if derivation_ok else FAMILY_PARTIAL,
+            })
+
+        return records
+
+    @staticmethod
+    def _derive_privileged_groups(
+        tenant_id: str,
+        group_index: dict,
+        user_index: dict,
+        role_assignment_records: list[dict],
+        membership_records: list[dict],
+        *, memberships_completeness: str,
+    ) -> list[dict]:
+        """Derive one ``entra_privileged_group`` per role-assignable group
+        that itself holds >=1 directory-role assignment. A role-assignable
+        group with NO role assignment is not privileged and gets no record
+        here (see ``categorize_role_kind``/message-2's ``role_assignable``
+        eligibility flag, which is a separate, non-privileged posture)."""
+        roles_by_group: dict = {}
+        for a in role_assignment_records:
+            if a["principal_type"] == GRAPH_PRINCIPAL_TYPE_GROUP:
+                roles_by_group.setdefault(a["principal_id"], []).append(a)
+
+        members_by_group: dict = {}
+        for m in membership_records:
+            members_by_group.setdefault(m["group_id"], []).append(m["user_id"])
+
+        records: list[dict] = []
+        for group_id, assignments in roles_by_group.items():
+            group_record = group_index.get(group_id)
+            tiers = [a["privilege_tier"] for a in assignments]
+
+            direct_user_member_count = 0
+            guest_member_count = 0
+            disabled_member_count = 0
+            for user_id in members_by_group.get(group_id, []):
+                user_record = user_index.get(user_id)
+                if user_record is None:
+                    continue
+                direct_user_member_count += 1
+                if user_record.get("guest"):
+                    guest_member_count += 1
+                if user_record.get("account_enabled_category") == "disabled":
+                    disabled_member_count += 1
+
+            records.append({
+                "record_type": ENTRA_PRIVILEGED_GROUP,
+                "record_id": f"{tenant_id}/privileged_group/{group_id}",
+                "provider_resource_id": f"groups/{group_id}",
+                "tenant_id": tenant_id,
+                "group_id": group_id,
+                "display_name": group_record.get("display_name") if group_record else None,
+                "role_assignable": group_record.get("role_assignable") if group_record else None,
+                "highest_privilege_tier": highest_entra_privilege_tier(tiers),
+                "role_count": len(assignments),
+                "member_count": group_record.get("membership_count") if group_record else None,
+                "direct_user_member_count": direct_user_member_count,
+                "guest_member_count": guest_member_count,
+                "disabled_member_count": disabled_member_count,
+                "privilege_derivation_completeness": (
+                    FAMILY_COMPLETE if memberships_completeness == FAMILY_COMPLETE else FAMILY_PARTIAL
+                ),
+            })
+
+        return records
+
+    @staticmethod
+    def _derive_privileged_service_principals(
+        tenant_id: str,
+        sp_records_by_id: dict,
+        role_assignment_records: list[dict],
+        sp_app_role_assignment_records: list[dict],
+        oauth2_grant_records: list[dict],
+        *, directory_role_assignments_completeness: str,
+        app_role_assignments_completeness: str,
+        oauth2_grants_completeness: str,
+    ) -> list[dict]:
+        """Derive one ``entra_privileged_service_principal`` per service
+        principal privileged via a directory role, a high/critical-tier
+        Microsoft Graph application permission, tenant-wide high-risk
+        delegated consent, OR an unresolved/unknown-tier granted
+        permission (surfaced for review — never silently dropped as safe).
+        An SP with only ordinary/known-safe evidence is never emitted
+        (avoids Finding-prep noise for routine app permissions).
+        """
+        directory_roles_by_sp: dict = {}
+        for a in role_assignment_records:
+            if a["principal_type"] == GRAPH_PRINCIPAL_TYPE_SERVICE_PRINCIPAL:
+                directory_roles_by_sp.setdefault(a["principal_id"], []).append(a)
+
+        app_roles_by_sp: dict = {}
+        for a in sp_app_role_assignment_records:
+            app_roles_by_sp.setdefault(a["principal_service_principal_id"], []).append(a)
+
+        grants_by_sp: dict = {}
+        for g in oauth2_grant_records:
+            cid = g.get("client_service_principal_id")
+            if isinstance(cid, str):
+                grants_by_sp.setdefault(cid, []).append(g)
+
+        candidate_sp_ids = sorted(set(directory_roles_by_sp) | set(app_roles_by_sp) | set(grants_by_sp))
+        family_ok = all(
+            c == FAMILY_COMPLETE for c in (
+                directory_role_assignments_completeness,
+                app_role_assignments_completeness,
+                oauth2_grants_completeness,
+            )
+        )
+
+        records: list[dict] = []
+        for sp_id in candidate_sp_ids:
+            sp_record = sp_records_by_id.get(sp_id)
+            if sp_record is None:
+                continue
+
+            role_assignments = directory_roles_by_sp.get(sp_id, [])
+            app_role_assignments = app_roles_by_sp.get(sp_id, [])
+            grants = grants_by_sp.get(sp_id, [])
+
+            directory_role_tiers = [a["privilege_tier"] for a in role_assignments]
+            app_role_tiers = [a.get("app_role_privilege_tier", ENTRA_PRIVILEGE_TIER_UNKNOWN) for a in app_role_assignments]
+            tenant_wide_grants = [g for g in grants if g.get("consent_type_category") == CONSENT_TYPE_ALL_PRINCIPALS]
+            grant_tiers = [g.get("highest_scope_privilege_tier", ENTRA_PRIVILEGE_TIER_UNKNOWN) for g in tenant_wide_grants]
+
+            has_privilege_signal = (
+                bool(role_assignments)
+                or bool(tenant_wide_grants)
+                or any(
+                    t != ENTRA_PRIVILEGE_TIER_READ_ONLY and t != "low"
+                    for t in app_role_tiers
+                )
+            )
+            if not has_privilege_signal:
+                continue
+
+            highest_tier = highest_entra_privilege_tier(directory_role_tiers + app_role_tiers + grant_tiers)
+            critical_app_permission_count = sum(1 for t in app_role_tiers if t == ENTRA_PRIVILEGE_TIER_CRITICAL)
+            high_risk_app_permission_count = sum(1 for t in app_role_tiers if t == ENTRA_PRIVILEGE_TIER_HIGH)
+            tenant_wide_delegated_grant_count = sum(
+                1 for t in grant_tiers if t in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH)
+            )
+
+            granted_values = {a.get("app_role_category") for a in app_role_assignments}
+            has_role_management_permission = "RoleManagement.ReadWrite.Directory" in granted_values
+            has_application_management_permission = bool(
+                granted_values & {"Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All"}
+            )
+            has_directory_write_permission = "Directory.ReadWrite.All" in granted_values
+            has_graph_high_privilege = any(
+                t in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH) for t in app_role_tiers
+            )
+
+            records.append({
+                "record_type": ENTRA_PRIVILEGED_SERVICE_PRINCIPAL,
+                "record_id": f"{tenant_id}/privileged_service_principal/{sp_id}",
+                "provider_resource_id": f"servicePrincipals/{sp_id}",
+                "tenant_id": tenant_id,
+                "service_principal_id": sp_id,
+                "app_id": sp_record.get("app_id"),
+                "display_name": sp_record.get("display_name"),
+                "service_principal_type_category": sp_record.get("service_principal_type_category"),
+                "account_enabled": sp_record.get("account_enabled"),
+                "directory_role_count": len(role_assignments),
+                "highest_directory_role_tier": highest_entra_privilege_tier(directory_role_tiers),
+                "high_risk_app_permission_count": high_risk_app_permission_count,
+                "critical_app_permission_count": critical_app_permission_count,
+                "tenant_wide_delegated_grant_count": tenant_wide_delegated_grant_count,
+                "has_role_management_permission": has_role_management_permission,
+                "has_application_management_permission": has_application_management_permission,
+                "has_directory_write_permission": has_directory_write_permission,
+                "has_graph_high_privilege": has_graph_high_privilege,
+                "highest_privilege_tier": highest_tier,
+                "password_credential_count": sp_record.get("password_credential_count"),
+                "key_credential_count": sp_record.get("key_credential_count"),
+                "privilege_derivation_completeness": FAMILY_COMPLETE if family_ok else FAMILY_PARTIAL,
+            })
+
+        return records
+
     # ── Capability probes ──────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET with the smallest
@@ -2229,6 +2728,33 @@ class EntraConnector(BaseConnector):
                 client, stable_tenant_id, _sleep_fn=_sleep_fn,
             )
 
+            # ── Directory roles / role assignments (tenant-wide, no N+1) ────
+            role_definition_records, role_by_id, role_definitions_completeness = (
+                self._fetch_directory_role_definitions(client, stable_tenant_id, _sleep_fn=_sleep_fn)
+            )
+            role_assignment_records, role_assignments_completeness = self._fetch_directory_role_assignments(
+                client, stable_tenant_id, role_by_id, user_index, group_index, sp_records_by_id,
+                _sleep_fn=_sleep_fn,
+            )
+
+            # ── Derived privileged identity/group/service-principal (pure
+            #    local joins — no additional Graph calls) ───────────────────
+            privileged_identity_records = self._derive_privileged_identities(
+                stable_tenant_id, user_index, role_assignment_records, membership_records,
+                memberships_completeness=memberships_completeness,
+            )
+            privileged_group_records = self._derive_privileged_groups(
+                stable_tenant_id, group_index, user_index, role_assignment_records, membership_records,
+                memberships_completeness=memberships_completeness,
+            )
+            privileged_service_principal_records = self._derive_privileged_service_principals(
+                stable_tenant_id, sp_records_by_id, role_assignment_records,
+                sp_app_role_assignment_records, oauth2_grant_records,
+                directory_role_assignments_completeness=role_assignments_completeness,
+                app_role_assignments_completeness=assignments_completeness,
+                oauth2_grants_completeness=oauth2_grants_completeness,
+            )
+
             org_record = self._normalize_organization(
                 stable_tenant_id, raw_org,
                 family_completeness={
@@ -2242,6 +2768,8 @@ class EntraConnector(BaseConnector):
                     "conditional_access_policies": ca_policies_completeness,
                     "authentication_strengths": auth_strengths_completeness,
                     "authentication_methods": auth_methods_completeness,
+                    "directory_role_definitions": role_definitions_completeness,
+                    "directory_role_assignments": role_assignments_completeness,
                 },
             )
 
@@ -2258,6 +2786,11 @@ class EntraConnector(BaseConnector):
             records.extend(ca_policy_records)
             records.extend(auth_strength_records)
             records.extend(auth_method_records)
+            records.extend(role_definition_records)
+            records.extend(role_assignment_records)
+            records.extend(privileged_identity_records)
+            records.extend(privileged_group_records)
+            records.extend(privileged_service_principal_records)
             records.extend(self._probe_capabilities(client, stable_tenant_id))
 
         # Deterministic ordering — API response ordering must never affect

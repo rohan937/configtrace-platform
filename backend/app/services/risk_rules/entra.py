@@ -69,15 +69,25 @@ from app.connectors.entra_schema import (
     ENTRA_AUTHENTICATION_METHOD,
     ENTRA_AUTHENTICATION_STRENGTH,
     ENTRA_CONDITIONAL_ACCESS_POLICY,
+    ENTRA_DIRECTORY_ROLE,
+    ENTRA_DIRECTORY_ROLE_ASSIGNMENT,
     ENTRA_GROUP,
     ENTRA_GROUP_MEMBERSHIP,
     ENTRA_OAUTH2_PERMISSION_GRANT,
     ENTRA_ORGANIZATION,
+    ENTRA_PRIVILEGED_GROUP,
+    ENTRA_PRIVILEGED_IDENTITY,
+    ENTRA_PRIVILEGED_SERVICE_PRINCIPAL,
     ENTRA_SERVICE_PRINCIPAL,
     ENTRA_SERVICE_PRINCIPAL_APP_ROLE_ASSIGNMENT,
     ENTRA_USER,
+    ENTRA_PRIVILEGE_TIER_CRITICAL,
+    ENTRA_PRIVILEGE_TIER_HIGH,
+    ENTRA_PRIVILEGE_TIER_RANK,
+    ENTRA_PRIVILEGE_TIER_UNKNOWN,
     EXTERNAL_USER_STATE_ACCEPTED,
     EXTERNAL_USER_STATE_PENDING,
+    FAMILY_COMPLETE,
     MFA_REQUIREMENT_BLOCKED,
     MFA_REQUIREMENT_NOT_REQUIRED,
     MFA_REQUIREMENT_ONE_OF_MULTIPLE,
@@ -89,9 +99,28 @@ from app.connectors.entra_schema import (
     NOT_PHISHING_RESISTANT,
     PERMISSION_RISK_HIGH,
     PHISHING_RESISTANT,
+    ROLE_TEMPLATE_GLOBAL_ADMINISTRATOR,
+    ROLE_TEMPLATE_PRIVILEGED_ROLE_ADMINISTRATOR,
     SIGN_IN_AUDIENCE_SINGLE_TENANT,
     SIGN_IN_FREQUENCY_RANK,
 )
+
+_TIER_GRANT_SEVERITY: dict = {
+    ENTRA_PRIVILEGE_TIER_CRITICAL: "critical",
+    ENTRA_PRIVILEGE_TIER_HIGH: "high",
+    "medium": "medium",
+    "low": "low",
+    "read_only": "low",
+    ENTRA_PRIVILEGE_TIER_UNKNOWN: "medium",
+}
+
+
+def _severity_for_tier_grant(tier: object) -> str:
+    return _TIER_GRANT_SEVERITY.get(tier, "medium")
+
+
+def _tier_rank(tier: object) -> int:
+    return ENTRA_PRIVILEGE_TIER_RANK.get(tier, 0) if isinstance(tier, str) else 0
 
 _STRONG_METHOD_TYPES = frozenset(
     {METHOD_TYPE_FIDO2, METHOD_TYPE_CERTIFICATE_BASED_AUTH, METHOD_TYPE_WINDOWS_HELLO_FOR_BUSINESS}
@@ -506,6 +535,17 @@ def _classify_sp_app_role_assignment_change(change: object) -> tuple[str, str]:
         )
     if ct == "removed":
         return "low", "A Microsoft Entra ID service-principal application permission was removed."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "app_role_privilege_tier":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        nv_rank, pv_rank = ENTRA_PRIVILEGE_TIER_RANK.get(nv), ENTRA_PRIVILEGE_TIER_RANK.get(pv)
+        if nv_rank is None or pv_rank is None:
+            return "medium", "A Microsoft Entra ID service-principal application permission's privilege tier became unrecognized."
+        if nv_rank > pv_rank:
+            severity = "high" if nv in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH) else "medium"
+            return severity, f"A Microsoft Entra ID service-principal application permission's privilege tier increased ({pv} -> {nv})."
+        return "low", f"A Microsoft Entra ID service-principal application permission's privilege tier decreased ({pv} -> {nv})."
     return "low", "A Microsoft Entra ID service-principal application permission record changed."
 
 
@@ -542,6 +582,17 @@ def _classify_oauth2_permission_grant_change(change: object) -> tuple[str, str]:
         return "low", "A Microsoft Entra ID OAuth2 delegated permission grant (single-user consent) was added."
     if ct == "removed":
         return "low", "A Microsoft Entra ID OAuth2 delegated permission grant was removed."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "highest_scope_privilege_tier":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        nv_rank, pv_rank = ENTRA_PRIVILEGE_TIER_RANK.get(nv), ENTRA_PRIVILEGE_TIER_RANK.get(pv)
+        if nv_rank is None or pv_rank is None:
+            return "medium", "A Microsoft Entra ID OAuth2 delegated permission grant's scope privilege tier became unrecognized."
+        if nv_rank > pv_rank:
+            severity = "high" if is_tenant_wide and nv in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH) else "medium"
+            return severity, f"A Microsoft Entra ID OAuth2 delegated permission grant's scope privilege tier increased ({pv} -> {nv})."
+        return "low", f"A Microsoft Entra ID OAuth2 delegated permission grant's scope privilege tier decreased ({pv} -> {nv})."
     return "low", "A Microsoft Entra ID OAuth2 delegated permission grant record changed."
 
 
@@ -802,6 +853,303 @@ def _classify_authentication_method_change(change: object) -> tuple[str, str]:
     return "low", "A Microsoft Entra ID authentication method configuration field changed."
 
 
+def _classify_directory_role_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    new_value = _get(change, "new_value")
+    prev_value = _get(change, "prev_value")
+    context = new_value if isinstance(new_value, dict) else (prev_value if isinstance(prev_value, dict) else pm)
+    tier = context.get("privilege_tier") if isinstance(context, dict) else None
+
+    if ct == "added":
+        if tier in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH):
+            return "medium", f"A new Microsoft Entra ID directory role was observed with a {tier} privilege tier."
+        return "low", "A new Microsoft Entra ID directory role definition was observed."
+    if ct == "removed":
+        return (
+            "low",
+            "A Microsoft Entra ID directory role definition is no longer visible to ConfigTrace. "
+            "This does not by itself confirm the role was deleted.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "privilege_tier":
+        nv_rank, pv_rank = _tier_rank(nv), _tier_rank(pv)
+        if nv not in ENTRA_PRIVILEGE_TIER_RANK or pv not in ENTRA_PRIVILEGE_TIER_RANK:
+            return "medium", "A Microsoft Entra ID directory role's privilege tier became unrecognized."
+        if nv_rank > pv_rank:
+            return _severity_for_tier_grant(nv), f"A Microsoft Entra ID directory role's privilege tier increased ({pv} -> {nv})."
+        if nv_rank < pv_rank:
+            return "low", f"A Microsoft Entra ID directory role's privilege tier decreased ({pv} -> {nv})."
+        return "low", "A Microsoft Entra ID directory role's privilege tier changed."
+    if fp == "enabled":
+        if nv is False:
+            return "low", "A Microsoft Entra ID directory role was disabled."
+        if nv is True:
+            return "medium", "A Microsoft Entra ID directory role was enabled."
+        return "medium", "A Microsoft Entra ID directory role's enabled state became unrecognized/unknown."
+    if fp == "is_privileged":
+        if nv is True:
+            return "medium", "A Microsoft Entra ID directory role's privileged classification was newly determined."
+        return "low", "A Microsoft Entra ID directory role's privileged classification changed."
+    if fp in ("action_count", "dangerous_action_count"):
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "medium", f"A Microsoft Entra ID custom directory role's {fp.replace('_', ' ')} increased ({pv_i} -> {nv_i})."
+        return "low", f"A Microsoft Entra ID directory role's {fp.replace('_', ' ')} changed."
+    if fp in ("display_name", "role_kind_category"):
+        return "low", "A Microsoft Entra ID directory role's identifying metadata changed."
+    return "low", "A Microsoft Entra ID directory role configuration field changed."
+
+
+def _classify_directory_role_assignment_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    new_value = _get(change, "new_value")
+    prev_value = _get(change, "prev_value")
+    context = new_value if isinstance(new_value, dict) else (prev_value if isinstance(prev_value, dict) else pm)
+    tier = context.get("privilege_tier") if isinstance(context, dict) else None
+    role_template_id = context.get("role_template_id") if isinstance(context, dict) else None
+    role_name = context.get("role_name") if isinstance(context, dict) else None
+
+    if ct == "added":
+        if role_template_id == ROLE_TEMPLATE_GLOBAL_ADMINISTRATOR:
+            return "critical", "A principal was assigned the Global Administrator role."
+        if role_template_id == ROLE_TEMPLATE_PRIVILEGED_ROLE_ADMINISTRATOR:
+            return "critical", "A principal was assigned the Privileged Role Administrator role."
+        severity = _severity_for_tier_grant(tier)
+        role_label = role_name or "a directory"
+        return severity, f"A principal was assigned the {role_label!r} directory role (privilege tier: {tier})."
+    if ct == "removed":
+        return (
+            "low",
+            f"A principal's {role_name!r} directory role assignment is no longer visible to ConfigTrace.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "privilege_tier":
+        if nv not in ENTRA_PRIVILEGE_TIER_RANK or pv not in ENTRA_PRIVILEGE_TIER_RANK:
+            return "medium", "A directory-role assignment's privilege tier became unrecognized."
+        nv_rank, pv_rank = _tier_rank(nv), _tier_rank(pv)
+        if nv_rank > pv_rank:
+            return _severity_for_tier_grant(nv), f"A directory-role assignment's privilege tier increased ({pv} -> {nv})."
+        if nv_rank < pv_rank:
+            return "low", f"A directory-role assignment's privilege tier decreased ({pv} -> {nv})."
+        return "low", "A directory-role assignment's privilege tier changed."
+    if fp == "directory_scope_category":
+        if nv == "tenant_wide" and pv != "tenant_wide":
+            severity = "high" if tier in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH) else "medium"
+            return severity, "A directory-role assignment's scope was broadened to tenant-wide."
+        if pv == "tenant_wide" and nv != "tenant_wide":
+            return "low", "A directory-role assignment's scope was narrowed from tenant-wide."
+        return "medium", "A directory-role assignment's scope category became unrecognized/unknown."
+    if fp == "principal_type":
+        return "medium", "A directory-role assignment's principal type became unrecognized/unknown."
+    if fp in ("role_name", "role_template_id", "role_definition_id"):
+        return "low", "A directory-role assignment's referenced role identity changed."
+    return "low", "A Microsoft Entra ID directory-role assignment configuration field changed."
+
+
+def _classify_privileged_identity_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    tier = pm.get("highest_privilege_tier") or ENTRA_PRIVILEGE_TIER_UNKNOWN
+
+    if ct == "added":
+        return (
+            _severity_for_tier_grant(tier),
+            f"A user became a privileged Microsoft Entra ID identity (highest privilege tier: {tier}).",
+        )
+    if ct == "removed":
+        return "low", "A user is no longer a privileged Microsoft Entra ID identity (holds no directory role ConfigTrace can see)."
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "has_global_admin":
+        if nv is True:
+            return "critical", "A user was granted the Global Administrator role."
+        return "low", "A user's Global Administrator privilege was removed."
+    if fp == "has_privileged_role_admin":
+        if nv is True:
+            return "critical", "A user was granted the Privileged Role Administrator role."
+        return "low", "A user's Privileged Role Administrator privilege was removed."
+    if fp == "has_high_privilege":
+        if nv is True:
+            return "high", "A user gained high-tier Microsoft Entra ID directory-role privilege."
+        return "low", "A user's high-tier Microsoft Entra ID directory-role privilege was removed."
+    if fp == "highest_privilege_tier":
+        if nv not in ENTRA_PRIVILEGE_TIER_RANK or pv not in ENTRA_PRIVILEGE_TIER_RANK:
+            return "medium", "A privileged Microsoft Entra ID identity's highest privilege tier became unrecognized."
+        nv_rank, pv_rank = _tier_rank(nv), _tier_rank(pv)
+        if nv_rank > pv_rank:
+            return _severity_for_tier_grant(nv), f"A privileged Microsoft Entra ID identity's highest privilege tier increased ({pv} -> {nv})."
+        if nv_rank < pv_rank:
+            return "low", f"A privileged Microsoft Entra ID identity's highest privilege tier decreased ({pv} -> {nv})."
+        return "low", "A privileged Microsoft Entra ID identity's highest privilege tier changed."
+    if fp == "privileged_via_group":
+        if nv is True:
+            return _severity_for_tier_grant(tier), "A user gained directory-role privilege via a role-assignable group membership."
+        if nv is False:
+            return "low", "A user no longer holds directory-role privilege via group membership."
+        return "medium", "A privileged Microsoft Entra ID identity's group-inherited privilege visibility became unknown (group memberships incomplete)."
+    if fp == "privileged_via_direct":
+        if nv is True:
+            return _severity_for_tier_grant(tier), "A user gained a direct directory-role assignment."
+        return "low", "A user's direct directory-role assignment was removed."
+    if fp in ("direct_role_count", "group_inherited_role_count"):
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "medium", f"A privileged Microsoft Entra ID identity's {fp.replace('_', ' ')} increased ({pv_i} -> {nv_i})."
+        return "low", f"A privileged Microsoft Entra ID identity's {fp.replace('_', ' ')} changed."
+    if fp == "account_enabled_category":
+        restrictive = {"disabled", "unknown"}
+        if nv == "enabled" and pv in restrictive:
+            return (
+                _severity_for_tier_grant(tier),
+                f"A privileged Microsoft Entra ID identity (highest tier: {tier}) was re-enabled, restoring its directory-role privilege.",
+            )
+        if nv == "disabled":
+            return "low", "A privileged Microsoft Entra ID identity's account was disabled. Its role assignment remains but is not currently usable."
+        return "medium", "A privileged Microsoft Entra ID identity's account-enabled state became unrecognized/unknown."
+    if fp == "privilege_derivation_completeness":
+        return "low", "A privileged Microsoft Entra ID identity's derivation completeness changed."
+    return "low", "A privileged Microsoft Entra ID identity's derived posture changed."
+
+
+def _classify_privileged_group_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    tier = pm.get("highest_privilege_tier") or ENTRA_PRIVILEGE_TIER_UNKNOWN
+
+    if ct == "added":
+        return (
+            _severity_for_tier_grant(tier),
+            f"A group became a Microsoft Entra ID privileged group (highest privilege tier: {tier}). "
+            "Every current and future member of this group inherits that privilege.",
+        )
+    if ct == "removed":
+        return "low", "A group is no longer a Microsoft Entra ID privileged group (holds no directory-role assignment ConfigTrace can see)."
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "highest_privilege_tier":
+        if nv not in ENTRA_PRIVILEGE_TIER_RANK or pv not in ENTRA_PRIVILEGE_TIER_RANK:
+            return "medium", "A Microsoft Entra ID privileged group's highest privilege tier became unrecognized."
+        nv_rank, pv_rank = _tier_rank(nv), _tier_rank(pv)
+        if nv_rank > pv_rank:
+            return _severity_for_tier_grant(nv), f"A Microsoft Entra ID privileged group's highest privilege tier increased ({pv} -> {nv})."
+        if nv_rank < pv_rank:
+            return "low", f"A Microsoft Entra ID privileged group's highest privilege tier decreased ({pv} -> {nv})."
+        return "low", "A Microsoft Entra ID privileged group's highest privilege tier changed."
+    if fp == "role_count":
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return _severity_for_tier_grant(tier), f"A Microsoft Entra ID privileged group's directory-role count increased ({pv_i} -> {nv_i})."
+        return "low", "A Microsoft Entra ID privileged group's directory-role count decreased."
+    if fp == "member_count":
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "medium", f"A Microsoft Entra ID privileged group's membership grew ({pv_i} -> {nv_i}). More users now inherit its directory-role privilege."
+        return "low", "A Microsoft Entra ID privileged group's membership shrank."
+    if fp in ("guest_member_count", "disabled_member_count"):
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "medium", f"A Microsoft Entra ID privileged group's {fp.replace('_', ' ')} increased ({pv_i} -> {nv_i})."
+        return "low", f"A Microsoft Entra ID privileged group's {fp.replace('_', ' ')} decreased."
+    if fp == "role_assignable":
+        return "low", "A Microsoft Entra ID privileged group's role-assignable eligibility flag changed."
+    return "low", "A Microsoft Entra ID privileged group's derived posture changed."
+
+
+def _classify_privileged_service_principal_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    tier = pm.get("highest_privilege_tier") or ENTRA_PRIVILEGE_TIER_UNKNOWN
+
+    if ct == "added":
+        return (
+            _severity_for_tier_grant(tier),
+            f"A Microsoft Entra ID service principal became privileged (highest privilege tier: {tier}), via a "
+            "directory role, a high/critical-tier Microsoft Graph application permission, or tenant-wide "
+            "high-risk delegated consent.",
+        )
+    if ct == "removed":
+        return "low", "A Microsoft Entra ID service principal is no longer classified as privileged."
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "highest_privilege_tier":
+        if nv not in ENTRA_PRIVILEGE_TIER_RANK or pv not in ENTRA_PRIVILEGE_TIER_RANK:
+            return "medium", "A privileged Microsoft Entra ID service principal's highest privilege tier became unrecognized."
+        nv_rank, pv_rank = _tier_rank(nv), _tier_rank(pv)
+        if nv_rank > pv_rank:
+            return _severity_for_tier_grant(nv), f"A privileged Microsoft Entra ID service principal's highest privilege tier increased ({pv} -> {nv})."
+        if nv_rank < pv_rank:
+            return "low", f"A privileged Microsoft Entra ID service principal's highest privilege tier decreased ({pv} -> {nv})."
+        return "low", "A privileged Microsoft Entra ID service principal's highest privilege tier changed."
+    if fp in ("has_role_management_permission", "has_directory_write_permission", "has_application_management_permission"):
+        if nv is True:
+            return "critical", f"A Microsoft Entra ID service principal was granted a critical-tier Graph permission ({fp.replace('has_', '').replace('_', ' ')})."
+        return "low", f"A Microsoft Entra ID service principal's {fp.replace('has_', '').replace('_', ' ')} was removed."
+    if fp == "has_graph_high_privilege":
+        if nv is True:
+            return "high", "A Microsoft Entra ID service principal gained a high/critical-tier Microsoft Graph application permission."
+        return "low", "A Microsoft Entra ID service principal's high-tier Microsoft Graph application permission was removed."
+    if fp == "critical_app_permission_count":
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "critical", f"A privileged Microsoft Entra ID service principal's critical-tier application permission count increased ({pv_i} -> {nv_i})."
+        return "low", "A privileged Microsoft Entra ID service principal's critical-tier application permission count decreased."
+    if fp in ("high_risk_app_permission_count", "tenant_wide_delegated_grant_count"):
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "high", f"A privileged Microsoft Entra ID service principal's {fp.replace('_', ' ')} increased ({pv_i} -> {nv_i})."
+        return "low", f"A privileged Microsoft Entra ID service principal's {fp.replace('_', ' ')} decreased."
+    if fp == "directory_role_count":
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return _severity_for_tier_grant(tier), f"A privileged Microsoft Entra ID service principal's directory-role count increased ({pv_i} -> {nv_i})."
+        return "low", "A privileged Microsoft Entra ID service principal's directory-role count decreased."
+    if fp == "account_enabled":
+        if nv is True and pv is not True:
+            return (
+                _severity_for_tier_grant(tier),
+                f"A privileged Microsoft Entra ID service principal (highest tier: {tier}) was re-enabled, restoring its privilege.",
+            )
+        if nv is False:
+            return "low", "A privileged Microsoft Entra ID service principal was disabled."
+        return "medium", "A privileged Microsoft Entra ID service principal's enabled state became unrecognized/unknown."
+    if fp in ("password_credential_count", "key_credential_count"):
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "medium", "A new credential was added to a privileged Microsoft Entra ID service principal."
+        return "low", "A privileged Microsoft Entra ID service principal's credential count decreased."
+    if fp == "privilege_derivation_completeness":
+        return "low", "A privileged Microsoft Entra ID service principal's derivation completeness changed."
+    return "low", "A privileged Microsoft Entra ID service principal's derived posture changed."
+
+
 def classify_entra_change(change: object) -> tuple[str, str]:
     """Route an Entra Change to its record-type classifier.
 
@@ -842,5 +1190,15 @@ def classify_entra_change(change: object) -> tuple[str, str]:
         return _classify_authentication_strength_change(change)
     if record_type == ENTRA_AUTHENTICATION_METHOD:
         return _classify_authentication_method_change(change)
+    if record_type == ENTRA_DIRECTORY_ROLE:
+        return _classify_directory_role_change(change)
+    if record_type == ENTRA_DIRECTORY_ROLE_ASSIGNMENT:
+        return _classify_directory_role_assignment_change(change)
+    if record_type == ENTRA_PRIVILEGED_IDENTITY:
+        return _classify_privileged_identity_change(change)
+    if record_type == ENTRA_PRIVILEGED_GROUP:
+        return _classify_privileged_group_change(change)
+    if record_type == ENTRA_PRIVILEGED_SERVICE_PRINCIPAL:
+        return _classify_privileged_service_principal_change(change)
 
     return "low", f"A Microsoft Entra ID configuration record changed ({record_type or 'unknown record type'})."

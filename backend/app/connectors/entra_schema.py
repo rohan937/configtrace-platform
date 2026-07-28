@@ -69,10 +69,44 @@ Microsoft Entra ID provider. Record types so far:
                             State (enabled/disabled) and safe method-
                             specific posture only — never secrets, key
                             material, phone numbers, or certificate bodies.
+  entra_directory_role     — one record per Entra directory role
+                            DEFINITION (msg 5) — built-in (recognized via a
+                            stable role template ID, never display name) or
+                            custom (tier derived from its actual allowed
+                            resource actions, bounded to a category count —
+                            never the raw action list). Defines what a role
+                            CAN do; who actually holds it is the separate
+                            ``entra_directory_role_assignment`` record.
+  entra_directory_role_assignment — one record per active directory-role
+                            ASSIGNMENT (msg 5) — a principal (user, group,
+                            or service principal) holding a role definition,
+                            plus a coarse directory-scope category
+                            (tenant-wide / administrative-unit / other-
+                            scoped / unknown). Never stores raw resource
+                            paths or expanded administrative-unit members.
+  entra_privileged_identity — one DERIVED record per user with >=1
+                            effective directory-role privilege, direct or
+                            inherited via a role-assignable group's own
+                            role assignment (msg 5). Pure local join over
+                            already-collected message-2/5 records — no
+                            additional Graph calls. Never emitted for an
+                            ordinary (non-privileged) user.
+  entra_privileged_group   — one DERIVED record per role-assignable group
+                            that itself holds >=1 directory-role assignment
+                            (msg 5). A role-assignable group with NO actual
+                            role assignment is not privileged and gets no
+                            record here. Never duplicates full member
+                            profiles — only aggregate counts.
+  entra_privileged_service_principal — one DERIVED record per service
+                            principal that is privileged via a directory
+                            role, a high/critical-tier Microsoft Graph
+                            application permission, or tenant-wide high-risk
+                            delegated consent (msg 5). Covers workload-
+                            identity privilege, which message 3 did not yet
+                            classify by tier.
 
-This module now defines the message-1/2/3/4 taxonomy. Message 5 (directory
-roles/privileged identities/consent expansion) and message 6 (Security
-Findings) are still pending.
+This module now defines the message-1/2/3/4/5 taxonomy. Message 6
+(Security Findings) is still pending.
 
 Microsoft Entra ID is a distinct identity provider from this repository's
 existing ``azure`` provider (Azure infrastructure: subscriptions, resource
@@ -112,6 +146,17 @@ certificate bodies, phone numbers, or per-user authentication-method
 enrollment data (deferred — tenant-level policy/configuration posture
 only; see the connector's module docstring for the per-user N+1/privacy
 rationale).
+
+Message 5 additionally never collects: the raw ``allowedResourceActions``
+list of a directory role definition (only a bounded category count and
+derived privilege tier), raw resource paths / administrative-unit member
+expansions for a role assignment's directory scope, application-
+registration/service-principal owners (still deferred — no new N+1 owner
+enumeration was added this message), or any per-user authentication-method
+enrollment data. Effective privilege is derived ONLY from already-collected
+role assignments, group memberships (direct only — nested groups are never
+flattened), and application-permission/consent records — never from a new
+per-principal Graph call.
 """
 
 from __future__ import annotations
@@ -137,6 +182,11 @@ ENTRA_OAUTH2_PERMISSION_GRANT = "entra_oauth2_permission_grant"
 ENTRA_CONDITIONAL_ACCESS_POLICY = "entra_conditional_access_policy"
 ENTRA_AUTHENTICATION_STRENGTH = "entra_authentication_strength"
 ENTRA_AUTHENTICATION_METHOD = "entra_authentication_method"
+ENTRA_DIRECTORY_ROLE = "entra_directory_role"
+ENTRA_DIRECTORY_ROLE_ASSIGNMENT = "entra_directory_role_assignment"
+ENTRA_PRIVILEGED_IDENTITY = "entra_privileged_identity"
+ENTRA_PRIVILEGED_GROUP = "entra_privileged_group"
+ENTRA_PRIVILEGED_SERVICE_PRINCIPAL = "entra_privileged_service_principal"
 
 ENTRA_RECORD_TYPES = frozenset({
     ENTRA_ORGANIZATION,
@@ -153,6 +203,11 @@ ENTRA_RECORD_TYPES = frozenset({
     ENTRA_CONDITIONAL_ACCESS_POLICY,
     ENTRA_AUTHENTICATION_STRENGTH,
     ENTRA_AUTHENTICATION_METHOD,
+    ENTRA_DIRECTORY_ROLE,
+    ENTRA_DIRECTORY_ROLE_ASSIGNMENT,
+    ENTRA_PRIVILEGED_IDENTITY,
+    ENTRA_PRIVILEGED_GROUP,
+    ENTRA_PRIVILEGED_SERVICE_PRINCIPAL,
 })
 
 
@@ -1774,3 +1829,446 @@ def app_enforced_restrictions_enabled(session_controls: object) -> Optional[bool
         return None
     is_enabled = restriction.get("isEnabled")
     return is_enabled if isinstance(is_enabled, bool) else None
+
+
+# ---------------------------------------------------------------------------
+# Message 5: directory role / privileged identity / privilege tier taxonomy.
+#
+# A single, tenant-agnostic privilege-tier vocabulary is shared by BUILT-IN
+# role definitions, CUSTOM role definitions (derived from their allowed
+# resource actions), Microsoft Graph application permissions, and delegated
+# consent scopes, so a privileged identity/group/service-principal's
+# "highest privilege tier" can be computed uniformly across all three
+# privilege SOURCES (directory role, Graph permission, consent). Mirrors
+# the Okta message-5 PRIVILEGE_TIER_* pattern exactly, including the
+# unknown-is-never-the-floor design: `highest_privilege_tier()` treats a
+# known tier (even "read_only") as MORE informative than "unknown", so one
+# recognized critical role plus one unrecognized future role type is
+# reported as critical, never downgraded to unknown.
+# ---------------------------------------------------------------------------
+
+ENTRA_PRIVILEGE_TIER_CRITICAL = "critical"
+ENTRA_PRIVILEGE_TIER_HIGH = "high"
+ENTRA_PRIVILEGE_TIER_MEDIUM = "medium"
+ENTRA_PRIVILEGE_TIER_LOW = "low"
+ENTRA_PRIVILEGE_TIER_READ_ONLY = "read_only"
+ENTRA_PRIVILEGE_TIER_UNKNOWN = "unknown"
+
+ENTRA_PRIVILEGE_TIERS = frozenset({
+    ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH, ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ENTRA_PRIVILEGE_TIER_LOW, ENTRA_PRIVILEGE_TIER_READ_ONLY, ENTRA_PRIVILEGE_TIER_UNKNOWN,
+})
+
+# Used only for directional "highest tier"/"tier increased or decreased"
+# comparisons — never persisted. Unknown sits at the FLOOR (rank 1), not
+# below nothing — a known tier always outranks "unknown".
+ENTRA_PRIVILEGE_TIER_RANK: dict = {
+    ENTRA_PRIVILEGE_TIER_UNKNOWN: 1,
+    ENTRA_PRIVILEGE_TIER_READ_ONLY: 2,
+    ENTRA_PRIVILEGE_TIER_LOW: 3,
+    ENTRA_PRIVILEGE_TIER_MEDIUM: 4,
+    ENTRA_PRIVILEGE_TIER_HIGH: 5,
+    ENTRA_PRIVILEGE_TIER_CRITICAL: 6,
+}
+
+
+def highest_entra_privilege_tier(tiers: list) -> str:
+    """Return the highest-ranked tier in `tiers`, or unknown if empty. A
+    known tier always outranks an unrecognized one (see the rank table's
+    docstring above)."""
+    if not tiers:
+        return ENTRA_PRIVILEGE_TIER_UNKNOWN
+    return max(tiers, key=lambda t: ENTRA_PRIVILEGE_TIER_RANK.get(t, 0))
+
+
+# ── Built-in directory role taxonomy (stable role TEMPLATE IDs) ─────────────
+#
+# Microsoft's well-known, tenant-agnostic built-in role template GUIDs —
+# documented, stable identifiers that never change across tenants and are
+# never derived from a role's (renameable, localized) displayName. An
+# unrecognized template ID (a role type this taxonomy doesn't yet know
+# about) stays "unknown" tier, never guessed as low/safe.
+ROLE_TEMPLATE_GLOBAL_ADMINISTRATOR = "62e90394-69f5-4237-9190-012177145e10"
+ROLE_TEMPLATE_PRIVILEGED_ROLE_ADMINISTRATOR = "e8611ab8-c189-46e8-94e1-60213ab1f814"
+ROLE_TEMPLATE_PRIVILEGED_AUTHENTICATION_ADMINISTRATOR = "7be44c8a-adaf-4e2a-84d6-ab2649e08a13"
+ROLE_TEMPLATE_APPLICATION_ADMINISTRATOR = "9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3"
+ROLE_TEMPLATE_CLOUD_APPLICATION_ADMINISTRATOR = "158c047a-c907-4556-b7ef-446551a6b5f7"
+ROLE_TEMPLATE_AUTHENTICATION_ADMINISTRATOR = "c4e39bd9-1100-46d3-8c65-fb160da0071f"
+ROLE_TEMPLATE_CONDITIONAL_ACCESS_ADMINISTRATOR = "b1be1c3e-b65d-4f19-8427-f6fa0d97feb9"
+ROLE_TEMPLATE_USER_ADMINISTRATOR = "fe930be7-5e62-47db-91af-98c3a49a38b1"
+ROLE_TEMPLATE_GROUPS_ADMINISTRATOR = "fdd7a751-b60b-444a-984c-02652fe8fa1c"
+ROLE_TEMPLATE_SECURITY_ADMINISTRATOR = "194ae4cb-b126-40b2-bd5b-6091b380977d"
+ROLE_TEMPLATE_EXCHANGE_ADMINISTRATOR = "29232cdf-9323-42fd-ade2-1d097af3e4de"
+ROLE_TEMPLATE_SHAREPOINT_ADMINISTRATOR = "f28a1f50-f6e7-4571-818b-6a12f2af6b6c"
+ROLE_TEMPLATE_INTUNE_ADMINISTRATOR = "3a2c62db-5318-420d-8d74-23affee5d9d5"
+ROLE_TEMPLATE_GLOBAL_READER = "f2ef992c-3afb-46b9-b7cf-a126ee74c451"
+ROLE_TEMPLATE_DIRECTORY_READERS = "88d8e3e3-8f55-4a1e-953a-9b9898b8876b"
+
+# Display names paired with each template ID for reporting/UI use only —
+# NEVER used to derive the tier itself (a tenant admin can rename a
+# built-in role's localized display string; the template ID cannot change).
+_BUILT_IN_ROLE_NAMES: dict = {
+    ROLE_TEMPLATE_GLOBAL_ADMINISTRATOR: "Global Administrator",
+    ROLE_TEMPLATE_PRIVILEGED_ROLE_ADMINISTRATOR: "Privileged Role Administrator",
+    ROLE_TEMPLATE_PRIVILEGED_AUTHENTICATION_ADMINISTRATOR: "Privileged Authentication Administrator",
+    ROLE_TEMPLATE_APPLICATION_ADMINISTRATOR: "Application Administrator",
+    ROLE_TEMPLATE_CLOUD_APPLICATION_ADMINISTRATOR: "Cloud Application Administrator",
+    ROLE_TEMPLATE_AUTHENTICATION_ADMINISTRATOR: "Authentication Administrator",
+    ROLE_TEMPLATE_CONDITIONAL_ACCESS_ADMINISTRATOR: "Conditional Access Administrator",
+    ROLE_TEMPLATE_USER_ADMINISTRATOR: "User Administrator",
+    ROLE_TEMPLATE_GROUPS_ADMINISTRATOR: "Groups Administrator",
+    ROLE_TEMPLATE_SECURITY_ADMINISTRATOR: "Security Administrator",
+    ROLE_TEMPLATE_EXCHANGE_ADMINISTRATOR: "Exchange Administrator",
+    ROLE_TEMPLATE_SHAREPOINT_ADMINISTRATOR: "SharePoint Administrator",
+    ROLE_TEMPLATE_INTUNE_ADMINISTRATOR: "Intune Administrator",
+    ROLE_TEMPLATE_GLOBAL_READER: "Global Reader",
+    ROLE_TEMPLATE_DIRECTORY_READERS: "Directory Readers",
+}
+
+# Tier decisions (documented rationale):
+# - Global Administrator / Privileged Role Administrator: CRITICAL — full
+#   tenant control, or the ability to grant/manage ANY directory role
+#   (including Global Administrator itself).
+# - Privileged Authentication Administrator: CRITICAL — can reset
+#   authentication methods/credentials for privileged administrators
+#   (including Global Administrators), which is a functional path to
+#   account takeover of any admin. Deliberately NOT under-ranked just
+#   because its name reads narrower than Global Administrator.
+# - Application Administrator / Cloud Application Administrator /
+#   Conditional Access Administrator: HIGH — Application/Cloud Application
+#   Administrator can manage all app registrations/service principals
+#   including their credentials (a path to impersonating any app);
+#   Conditional Access Administrator can materially weaken tenant
+#   authentication policy (message 4's whole record family).
+# - Authentication Administrator: HIGH — can reset authentication methods
+#   for NON-privileged users (narrower than Privileged Authentication
+#   Administrator, but still a real credential-reset capability over a
+#   large population).
+# - User Administrator / Groups Administrator / Security Administrator /
+#   Exchange Administrator / SharePoint Administrator / Intune
+#   Administrator: MEDIUM — scoped administrative capability over one
+#   resource category, not tenant-wide directory/authentication control.
+# - Global Reader / Directory Readers: READ_ONLY — explicitly read-only by
+#   Microsoft's own documented role design.
+_BUILT_IN_ROLE_TIER: dict = {
+    ROLE_TEMPLATE_GLOBAL_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_CRITICAL,
+    ROLE_TEMPLATE_PRIVILEGED_ROLE_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_CRITICAL,
+    ROLE_TEMPLATE_PRIVILEGED_AUTHENTICATION_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_CRITICAL,
+    ROLE_TEMPLATE_APPLICATION_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_TEMPLATE_CLOUD_APPLICATION_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_TEMPLATE_AUTHENTICATION_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_TEMPLATE_CONDITIONAL_ACCESS_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_TEMPLATE_USER_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_TEMPLATE_GROUPS_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_TEMPLATE_SECURITY_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_TEMPLATE_EXCHANGE_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_TEMPLATE_SHAREPOINT_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_TEMPLATE_INTUNE_ADMINISTRATOR: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_TEMPLATE_GLOBAL_READER: ENTRA_PRIVILEGE_TIER_READ_ONLY,
+    ROLE_TEMPLATE_DIRECTORY_READERS: ENTRA_PRIVILEGE_TIER_READ_ONLY,
+}
+
+
+def role_display_name_for_template(template_id: object) -> Optional[str]:
+    """Canonical display name for a recognized built-in role template ID,
+    for reporting/UI use only — never used to derive the tier."""
+    if isinstance(template_id, str):
+        return _BUILT_IN_ROLE_NAMES.get(template_id)
+    return None
+
+
+ROLE_KIND_BUILT_IN = "built_in"
+ROLE_KIND_CUSTOM = "custom"
+ROLE_KIND_UNKNOWN = "unknown"
+
+
+def categorize_role_kind(is_built_in: object, template_id: object = None) -> str:
+    """Categorize a directory role definition as built-in or custom.
+    Prefers Graph's own `isBuiltIn` boolean; falls back to recognizing a
+    well-known template ID only if `isBuiltIn` itself is missing/malformed.
+    """
+    if is_built_in is True:
+        return ROLE_KIND_BUILT_IN
+    if is_built_in is False:
+        return ROLE_KIND_CUSTOM
+    if isinstance(template_id, str) and template_id in _BUILT_IN_ROLE_TIER:
+        return ROLE_KIND_BUILT_IN
+    return ROLE_KIND_UNKNOWN
+
+
+def privilege_tier_for_role_template(template_id: object) -> str:
+    """Tier for a BUILT-IN role, from its stable template ID only. An
+    unrecognized template ID (including any CUSTOM role, whose tier is
+    instead derived from its actual allowed resource actions via
+    `privilege_tier_for_role_actions()`) returns unknown."""
+    if isinstance(template_id, str) and template_id in _BUILT_IN_ROLE_TIER:
+        return _BUILT_IN_ROLE_TIER[template_id]
+    return ENTRA_PRIVILEGE_TIER_UNKNOWN
+
+
+# ── Custom role action taxonomy ──────────────────────────────────────────
+#
+# Deterministic, pattern-based categorization of Microsoft Graph
+# `unifiedRoleDefinition.rolePermissions[].allowedResourceActions` strings
+# (the real Graph RBAC resource-action namespace, e.g.
+# "microsoft.directory/roleAssignments/allProperties/allTasks"). Matched by
+# real, documented resource-namespace segments — never an invented action
+# string. An action this taxonomy doesn't recognize contributes to
+# "unknown", never silently dropped or assumed safe.
+
+ROLE_ACTION_CATEGORY_ROLE_ASSIGNMENT_MANAGEMENT = "role_assignment_management"
+ROLE_ACTION_CATEGORY_CONSENT_PERMISSION_MANAGEMENT = "consent_permission_management"
+ROLE_ACTION_CATEGORY_APPLICATION_CREDENTIAL_MANAGEMENT = "application_credential_management"
+ROLE_ACTION_CATEGORY_CONDITIONAL_ACCESS_MANAGEMENT = "conditional_access_management"
+ROLE_ACTION_CATEGORY_AUTHENTICATION_METHOD_MANAGEMENT = "authentication_method_management"
+ROLE_ACTION_CATEGORY_DIRECTORY_WRITE = "directory_write"
+ROLE_ACTION_CATEGORY_APPLICATION_MANAGEMENT = "application_management"
+ROLE_ACTION_CATEGORY_GROUP_MANAGEMENT = "group_management"
+ROLE_ACTION_CATEGORY_USER_MANAGEMENT = "user_management"
+ROLE_ACTION_CATEGORY_READ_ONLY = "read_only"
+ROLE_ACTION_CATEGORY_UNKNOWN = "unknown"
+
+_ROLE_ACTION_CATEGORY_TIER: dict = {
+    ROLE_ACTION_CATEGORY_ROLE_ASSIGNMENT_MANAGEMENT: ENTRA_PRIVILEGE_TIER_CRITICAL,
+    ROLE_ACTION_CATEGORY_CONSENT_PERMISSION_MANAGEMENT: ENTRA_PRIVILEGE_TIER_CRITICAL,
+    ROLE_ACTION_CATEGORY_APPLICATION_CREDENTIAL_MANAGEMENT: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_ACTION_CATEGORY_CONDITIONAL_ACCESS_MANAGEMENT: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_ACTION_CATEGORY_AUTHENTICATION_METHOD_MANAGEMENT: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_ACTION_CATEGORY_DIRECTORY_WRITE: ENTRA_PRIVILEGE_TIER_HIGH,
+    ROLE_ACTION_CATEGORY_APPLICATION_MANAGEMENT: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_ACTION_CATEGORY_GROUP_MANAGEMENT: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_ACTION_CATEGORY_USER_MANAGEMENT: ENTRA_PRIVILEGE_TIER_MEDIUM,
+    ROLE_ACTION_CATEGORY_READ_ONLY: ENTRA_PRIVILEGE_TIER_READ_ONLY,
+}
+
+# Specific write-action namespace rules, checked FIRST — unambiguous
+# dangerous capabilities regardless of a trailing "/read"-looking segment.
+_ROLE_ACTION_SPECIFIC_RULES: tuple = (
+    ("/roleAssignments/", ROLE_ACTION_CATEGORY_ROLE_ASSIGNMENT_MANAGEMENT),
+    ("/roleDefinitions/", ROLE_ACTION_CATEGORY_ROLE_ASSIGNMENT_MANAGEMENT),
+    ("/permissionGrantPolicies/", ROLE_ACTION_CATEGORY_CONSENT_PERMISSION_MANAGEMENT),
+    ("/oauth2PermissionGrants/", ROLE_ACTION_CATEGORY_CONSENT_PERMISSION_MANAGEMENT),
+    ("/applications/credentials/", ROLE_ACTION_CATEGORY_APPLICATION_CREDENTIAL_MANAGEMENT),
+    ("/servicePrincipals/credentials/", ROLE_ACTION_CATEGORY_APPLICATION_CREDENTIAL_MANAGEMENT),
+    ("/conditionalAccessPolicies/", ROLE_ACTION_CATEGORY_CONDITIONAL_ACCESS_MANAGEMENT),
+    ("/authenticationMethods/", ROLE_ACTION_CATEGORY_AUTHENTICATION_METHOD_MANAGEMENT),
+    ("/allEntities/allProperties/allTasks", ROLE_ACTION_CATEGORY_DIRECTORY_WRITE),
+)
+
+# Broad per-resource-type rules, checked AFTER the read-only check below —
+# so e.g. "microsoft.directory/users/standard/read" is read_only, not
+# user_management, while "microsoft.directory/users/basic/update" still
+# correctly falls through to user_management.
+_ROLE_ACTION_BROAD_RULES: tuple = (
+    ("/applications/", ROLE_ACTION_CATEGORY_APPLICATION_MANAGEMENT),
+    ("/servicePrincipals/", ROLE_ACTION_CATEGORY_APPLICATION_MANAGEMENT),
+    ("/groups/", ROLE_ACTION_CATEGORY_GROUP_MANAGEMENT),
+    ("/users/", ROLE_ACTION_CATEGORY_USER_MANAGEMENT),
+)
+
+
+def categorize_role_action(action: object) -> str:
+    """Categorize one raw `allowedResourceActions` entry via substring
+    matching against real, documented Graph directory resource-action
+    namespace segments. Specific dangerous-capability namespaces (role
+    assignment, consent/permission-grant, credential, Conditional Access,
+    authentication-method management) are matched first regardless of
+    apparent read/write wording. A read-only action (ending in
+    "/standard/read"/"/read", or containing "/read/") is categorized
+    read_only before falling through to the broader per-resource-type
+    rules. Unrecognized input is "unknown" — never guessed as safe.
+    """
+    if not isinstance(action, str) or not action.strip():
+        return ROLE_ACTION_CATEGORY_UNKNOWN
+    for substring, category in _ROLE_ACTION_SPECIFIC_RULES:
+        if substring in action:
+            return category
+    if action.endswith("/standard/read") or action.endswith("/read") or "/read/" in action:
+        return ROLE_ACTION_CATEGORY_READ_ONLY
+    for substring, category in _ROLE_ACTION_BROAD_RULES:
+        if substring in action:
+            return category
+    return ROLE_ACTION_CATEGORY_UNKNOWN
+
+
+def privilege_tier_for_role_actions(raw_actions: object) -> str:
+    """Derive a custom role's overall privilege tier as the HIGHEST tier
+    implied by any one of its allowed resource actions. Returns unknown
+    when `raw_actions` is missing/empty/malformed, or when every action
+    present maps to an unrecognized category — an unknown/empty action set
+    is never assumed safe, and a custom role is never assumed risky just
+    for being custom."""
+    if not isinstance(raw_actions, list) or not raw_actions:
+        return ENTRA_PRIVILEGE_TIER_UNKNOWN
+    categories = {categorize_role_action(a) for a in raw_actions}
+    tiers = [_ROLE_ACTION_CATEGORY_TIER.get(c, ENTRA_PRIVILEGE_TIER_UNKNOWN) for c in categories]
+    if not tiers or all(t == ENTRA_PRIVILEGE_TIER_UNKNOWN for t in tiers):
+        return ENTRA_PRIVILEGE_TIER_UNKNOWN
+    return highest_entra_privilege_tier(tiers)
+
+
+def count_dangerous_role_actions(raw_actions: object) -> int:
+    """Bounded count of allowed resource actions that map to a
+    HIGH-or-CRITICAL category — never the raw action list itself."""
+    if not isinstance(raw_actions, list):
+        return 0
+    dangerous = 0
+    for a in raw_actions:
+        category = categorize_role_action(a)
+        tier = _ROLE_ACTION_CATEGORY_TIER.get(category, ENTRA_PRIVILEGE_TIER_UNKNOWN)
+        if tier in (ENTRA_PRIVILEGE_TIER_CRITICAL, ENTRA_PRIVILEGE_TIER_HIGH):
+            dangerous += 1
+    return dangerous
+
+
+def count_role_actions(raw_actions: object) -> int:
+    """Bounded count of a role definition's total allowed resource
+    actions — never the raw list itself."""
+    if not isinstance(raw_actions, list):
+        return 0
+    return len(raw_actions)
+
+
+# ── Directory-role assignment scope taxonomy ─────────────────────────────
+#
+# Graph's `unifiedRoleAssignment.directoryScopeId` is "/" for tenant-wide,
+# "/administrativeUnits/{id}" for an AU-scoped assignment, or "/{objectId}"
+# for a single-object scope (e.g. an application-scoped assignment via
+# `appScopeId` instead). Only the coarse category + a bounded identifier
+# are kept — never expanded AU membership, never treated as tenant-wide
+# just because a scope value is missing.
+
+DIRECTORY_SCOPE_TENANT_WIDE = "tenant_wide"
+DIRECTORY_SCOPE_ADMINISTRATIVE_UNIT = "administrative_unit"
+DIRECTORY_SCOPE_APPLICATION = "application"
+DIRECTORY_SCOPE_OTHER_SCOPED = "other_scoped"
+DIRECTORY_SCOPE_UNKNOWN = "unknown"
+
+
+def categorize_directory_scope(directory_scope_id: object, app_scope_id: object = None) -> str:
+    """Categorize a role assignment's scope. `directoryScopeId` of "/"
+    (or missing with no appScopeId present) means tenant-wide — but a
+    missing/malformed `directoryScopeId` is NEVER assumed tenant-wide when
+    an `appScopeId` IS present (that means application-scoped instead).
+    """
+    if isinstance(app_scope_id, str) and app_scope_id.strip():
+        if app_scope_id == "/":
+            return DIRECTORY_SCOPE_TENANT_WIDE
+        return DIRECTORY_SCOPE_APPLICATION
+    if not isinstance(directory_scope_id, str) or not directory_scope_id.strip():
+        return DIRECTORY_SCOPE_UNKNOWN
+    if directory_scope_id == "/":
+        return DIRECTORY_SCOPE_TENANT_WIDE
+    if directory_scope_id.startswith("/administrativeUnits/"):
+        return DIRECTORY_SCOPE_ADMINISTRATIVE_UNIT
+    return DIRECTORY_SCOPE_OTHER_SCOPED
+
+
+# ── Principal type for a role assignment ─────────────────────────────────
+# Reuses the existing GRAPH_PRINCIPAL_TYPE_USER/GROUP/SERVICE_PRINCIPAL
+# constants (already defined above from message 3) — a directory-role
+# assignment's `principalType` (or resolved `@odata.type` on the expanded
+# principal) uses the identical three-way taxonomy, since Graph can assign
+# a directory role to a user, a role-assignable group, or (per current
+# Graph semantics) a service principal.
+
+ROLE_PRINCIPAL_TYPE_UNKNOWN = "unknown"
+
+
+def categorize_role_principal_type(principal_odata_type: object) -> str:
+    """Categorize a role assignment's principal `@odata.type` (Graph
+    returns this on the expanded `principal` navigation property) into the
+    shared User/Group/ServicePrincipal/unknown taxonomy. Never assumes a
+    role principal is a user by default."""
+    if not isinstance(principal_odata_type, str):
+        return ROLE_PRINCIPAL_TYPE_UNKNOWN
+    lowered = principal_odata_type.lower()
+    if lowered.endswith("user"):
+        return GRAPH_PRINCIPAL_TYPE_USER
+    if lowered.endswith("group"):
+        return GRAPH_PRINCIPAL_TYPE_GROUP
+    if lowered.endswith("serviceprincipal"):
+        return GRAPH_PRINCIPAL_TYPE_SERVICE_PRINCIPAL
+    return ROLE_PRINCIPAL_TYPE_UNKNOWN
+
+
+# ── Deepened Microsoft Graph application-permission / delegated-scope
+#    privilege tier (message 5) ──────────────────────────────────────────
+#
+# Message 3's `categorize_permission_risk()` remains unchanged (a coarse
+# high_risk/ordinary/unknown split still used by its existing diff-tracked
+# field). This adds a finer CRITICAL/HIGH/MEDIUM/LOW/READ_ONLY/unknown tier
+# for the same permission VALUE strings, composable with directory-role and
+# consent tiers in a privileged service principal's "highest privilege
+# tier" rollup. Critically, an unrecognized permission value NEVER falls
+# back to "ordinary"/low here — unlike `categorize_permission_risk()`, this
+# function's unrecognized case is `unknown`, per this message's explicit
+# requirement that an unrecognized (including non-Graph third-party)
+# permission must never be assumed safe.
+
+_CRITICAL_GRAPH_PERMISSIONS = frozenset({
+    "RoleManagement.ReadWrite.Directory",
+    "AppRoleAssignment.ReadWrite.All",
+    "Policy.ReadWrite.PermissionGrant",
+    "Application.ReadWrite.All",
+})
+
+_HIGH_GRAPH_PERMISSIONS = frozenset({
+    "Directory.ReadWrite.All",
+    "Directory.AccessAsUser.All",
+    "User.ReadWrite.All",
+    "User.ManageIdentities.All",
+    "Group.ReadWrite.All",
+    "GroupMember.ReadWrite.All",
+    "Policy.ReadWrite.ConditionalAccess",
+    "RoleManagement.ReadWrite.CloudPC",
+    "UserAuthenticationMethod.ReadWrite.All",
+})
+
+_MEDIUM_GRAPH_PERMISSIONS = frozenset({
+    "Mail.ReadWrite",
+    "Mail.Send",
+    "MailboxSettings.ReadWrite",
+    "Files.ReadWrite.All",
+    "Sites.FullControl.All",
+    "Sites.ReadWrite.All",
+})
+
+# Explicitly known-safe/ordinary values — an allowlist, not a default. Only
+# these exact values (never an unrecognized one) resolve below "unknown".
+_READ_ONLY_GRAPH_PERMISSIONS = frozenset({
+    "User.Read",
+    "User.ReadBasic.All",
+    "Directory.Read.All",
+    "Group.Read.All",
+    "Application.Read.All",
+})
+_LOW_GRAPH_PERMISSIONS = frozenset({
+    "openid", "profile", "email", "offline_access",
+})
+
+
+def graph_permission_privilege_tier(
+    permission_value: object, *, is_microsoft_graph_resource: object = True,
+) -> str:
+    """Tier a resolved Graph application-permission/delegated-scope VALUE
+    string. Permissions against a NON-Microsoft-Graph resource (a
+    third-party/custom API) always return unknown here — this taxonomy is
+    Microsoft-Graph-specific and never assumes a third-party permission is
+    safe just because ConfigTrace doesn't recognize its API.
+    """
+    if not isinstance(permission_value, str) or not permission_value.strip():
+        return ENTRA_PRIVILEGE_TIER_UNKNOWN
+    if is_microsoft_graph_resource is not True:
+        return ENTRA_PRIVILEGE_TIER_UNKNOWN
+    if permission_value in _CRITICAL_GRAPH_PERMISSIONS:
+        return ENTRA_PRIVILEGE_TIER_CRITICAL
+    if permission_value in _HIGH_GRAPH_PERMISSIONS:
+        return ENTRA_PRIVILEGE_TIER_HIGH
+    if permission_value in _MEDIUM_GRAPH_PERMISSIONS:
+        return ENTRA_PRIVILEGE_TIER_MEDIUM
+    if permission_value in _READ_ONLY_GRAPH_PERMISSIONS:
+        return ENTRA_PRIVILEGE_TIER_READ_ONLY
+    if permission_value in _LOW_GRAPH_PERMISSIONS:
+        return ENTRA_PRIVILEGE_TIER_LOW
+    return ENTRA_PRIVILEGE_TIER_UNKNOWN
