@@ -566,9 +566,16 @@ def _classify_oauth2_permission_grant_change(change: object) -> tuple[str, str]:
     context = new_value if isinstance(new_value, dict) else (prev_value if isinstance(prev_value, dict) else pm)
     consent_type = context.get("consent_type_category") if isinstance(context, dict) else None
     high_risk_scope_present = context.get("high_risk_scope_present") if isinstance(context, dict) else False
+    scope_tier = context.get("highest_scope_privilege_tier") if isinstance(context, dict) else None
     is_tenant_wide = consent_type == CONSENT_TYPE_ALL_PRINCIPALS
 
     if ct == "added":
+        if is_tenant_wide and scope_tier == ENTRA_PRIVILEGE_TIER_CRITICAL:
+            return (
+                "critical",
+                "Tenant-wide (admin) consent was granted for a Microsoft Entra ID OAuth2 "
+                "delegated permission grant that includes a critical-risk scope.",
+            )
         if high_risk_scope_present and is_tenant_wide:
             return (
                 "high",
@@ -686,7 +693,6 @@ def _classify_conditional_access_policy_change(change: object) -> tuple[str, str
         return "low", "A Microsoft Entra ID Conditional Access policy's MFA requirement category changed."
 
     if fp == "legacy_auth_targeted":
-        enforced_block_removed = pv is True and nv is not True and block_access and state_category != CA_STATE_ENABLED
         if pv is True and nv is not True:
             return (
                 "high" if block_access else "medium",
@@ -694,6 +700,13 @@ def _classify_conditional_access_policy_change(change: object) -> tuple[str, str
                 "legacy authentication protocols.",
             )
         if nv is True and pv is not True:
+            if state_category == CA_STATE_ENABLED and block_access is not True:
+                return (
+                    "high",
+                    "A Microsoft Entra ID Conditional Access policy now explicitly targets "
+                    "legacy authentication protocols but does not block access for them — "
+                    "this matches the same risky posture as the static Finding for this policy.",
+                )
             return "low", "A Microsoft Entra ID Conditional Access policy now explicitly targets legacy authentication protocols."
         return "low", "A Microsoft Entra ID Conditional Access policy's legacy-authentication targeting changed."
 
@@ -1077,7 +1090,13 @@ def _classify_privileged_group_change(change: object) -> tuple[str, str]:
         pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
         nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
         if pv_i is not None and nv_i is not None and nv_i > pv_i:
-            return "medium", f"A Microsoft Entra ID privileged group's {fp.replace('_', ' ')} increased ({pv_i} -> {nv_i})."
+            if fp == "guest_member_count" and tier == ENTRA_PRIVILEGE_TIER_CRITICAL:
+                severity = "critical"
+            elif fp == "guest_member_count" and tier == ENTRA_PRIVILEGE_TIER_HIGH:
+                severity = "high"
+            else:
+                severity = "medium"
+            return severity, f"A Microsoft Entra ID privileged group's {fp.replace('_', ' ')} increased ({pv_i} -> {nv_i})."
         return "low", f"A Microsoft Entra ID privileged group's {fp.replace('_', ' ')} decreased."
     if fp == "role_assignable":
         return "low", "A Microsoft Entra ID privileged group's role-assignable eligibility flag changed."

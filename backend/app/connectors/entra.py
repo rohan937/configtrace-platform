@@ -645,10 +645,20 @@ class _TokenCache:
     lifetime of the ``EntraConnector`` instance holding it — a fresh
     instance (as created per sync/validate call — see ``sync_task.py``)
     starts with an empty cache.
+
+    Message 7 hardening: bound to the exact (tenant_id, client_id) it was
+    issued for via ``credential_key``. Today's calling convention always
+    constructs a fresh ``EntraConnector`` per sync/validate call, so this
+    can never actually be exercised in production — but ``_get_token()``
+    defensively re-acquires rather than reuses if it is ever called with
+    DIFFERENT credentials on the same cached instance (e.g. a future
+    connection-pooling optimization, or a test reusing one instance across
+    two tenants), so a stale token can never leak across tenants/clients.
     """
 
     access_token: Optional[str] = None
     expires_at: Optional[float] = None  # monotonic seconds
+    credential_key: Optional[tuple] = None  # (tenant_id, client_id) the token was issued for
 
 
 class EntraConnector(BaseConnector):
@@ -831,19 +841,23 @@ class EntraConnector(BaseConnector):
         time_fn = _time_fn or _time.monotonic
         now = time_fn()
         cache = self._token_cache
+        tenant_id, client_id, client_secret = self._credentials(credentials)
+        credential_key = (tenant_id, client_id)
+
         if (
             cache.access_token is not None
             and cache.expires_at is not None
+            and cache.credential_key == credential_key
             and now < (cache.expires_at - _TOKEN_SAFETY_WINDOW_SECONDS)
         ):
             return cache.access_token
 
-        tenant_id, client_id, client_secret = self._credentials(credentials)
         token, expires_in = self._acquire_token(
             tenant_id, client_id, client_secret, _sleep_fn=_sleep_fn,
         )
         cache.access_token = token
         cache.expires_at = now + expires_in
+        cache.credential_key = credential_key
         return token
 
     # ── HTTP client ────────────────────────────────────────────────────────
@@ -2513,10 +2527,13 @@ class EntraConnector(BaseConnector):
     )
 
     @staticmethod
-    def _probe_one(client: httpx.Client, path: str, params: dict) -> str:
+    def _probe_one(
+        client: httpx.Client, path: str, params: dict,
+        _sleep_fn: Callable[[float], None] = None,
+    ) -> str:
         """Return a CAPABILITY_* status string for one probe. Never raises —
         every failure mode maps to a status category instead."""
-        outcome = call_graph(client, "GET", path, params=params or None)
+        outcome = call_graph(client, "GET", path, params=params or None, _sleep_fn=_sleep_fn)
         if outcome.ok:
             return CAPABILITY_AVAILABLE
         if outcome.category == CATEGORY_PERMISSION_DENIED:
@@ -2536,10 +2553,13 @@ class EntraConnector(BaseConnector):
         return CAPABILITY_UNKNOWN
 
     @classmethod
-    def _probe_capabilities(cls, client: httpx.Client, tenant_id: str) -> list[dict]:
+    def _probe_capabilities(
+        cls, client: httpx.Client, tenant_id: str,
+        _sleep_fn: Callable[[float], None] = None,
+    ) -> list[dict]:
         records = []
         for family, path, params in cls._CAPABILITY_PROBES:
-            status = cls._probe_one(client, path, params)
+            status = cls._probe_one(client, path, params, _sleep_fn=_sleep_fn)
             records.append(cls._normalize_capability(tenant_id, family, status))
         return records
 
@@ -2656,7 +2676,7 @@ class EntraConnector(BaseConnector):
                     group_records_by_id[group_id] = rec
 
             # ── Memberships ──────────────────────────────────────────────
-            membership_records, memberships_completeness, counts_by_group, _status_by_group = (
+            membership_records, memberships_completeness, counts_by_group, status_by_group = (
                 self._fetch_memberships(
                     client, stable_tenant_id, raw_groups, group_records_by_id, user_index,
                     _sleep_fn=_sleep_fn,
@@ -2665,13 +2685,23 @@ class EntraConnector(BaseConnector):
 
             # Backfill membership_count only for groups whose own membership
             # walk actually succeeded — a group whose walk was denied/failed
-            # keeps membership_count=None (unknown), never 0.
+            # keeps membership_count=None (unknown), never 0. Also persist
+            # each group's OWN membership-collection status (message 7) —
+            # this is what lets a single denied/partial group suppress
+            # false-removal for ONLY that group's memberships, without
+            # affecting any other group's memberships that collected fine.
             group_records: list[dict] = []
             group_index: dict = {}
             for group_id, group_rec in group_records_by_id.items():
                 count = counts_by_group.get(group_id)
                 group_rec["membership_count"] = count
                 group_rec["membership_count_category"] = categorize_membership_count(count)
+                # A group with NO entry in status_by_group was never walked
+                # this cycle at all (truncated out by
+                # _MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION) — default to
+                # unavailable, never complete, since "never walked" carries
+                # no evidence its memberships are current.
+                group_rec["membership_collection_status"] = status_by_group.get(group_id, FAMILY_UNAVAILABLE)
                 group_records.append(group_rec)
                 group_index[group_id] = group_rec
 
@@ -2716,11 +2746,20 @@ class EntraConnector(BaseConnector):
             # ── App-role assignments (user/group/service-principal) ────────
             (
                 app_user_assignment_records, app_group_assignment_records,
-                sp_app_role_assignment_records, assignments_completeness, _status_by_sp,
+                sp_app_role_assignment_records, assignments_completeness, status_by_sp,
             ) = self._fetch_app_role_assignments(
                 client, stable_tenant_id, raw_sps, sp_records_by_id, roles_by_id_by_sp,
                 user_index, group_index, _sleep_fn=_sleep_fn,
             )
+            # Persist each resource SP's OWN assignment-walk completeness
+            # (message 7) — lets a single denied/partial SP suppress
+            # false-removal for only that SP's assignments, never affecting
+            # any other SP's assignments that collected fine. An SP with no
+            # entry at all was never walked this cycle (truncated out by
+            # _MAX_SPS_FOR_ASSIGNMENT_ENUMERATION) — defaults to
+            # unavailable, never complete.
+            for sp_id, sp_rec in sp_records_by_id.items():
+                sp_rec["assignment_collection_status"] = status_by_sp.get(sp_id, FAMILY_UNAVAILABLE)
 
             # ── OAuth2 delegated permission grants (tenant-wide) ────────────
             oauth2_grant_records, oauth2_grants_completeness = self._fetch_oauth2_permission_grants(
@@ -2801,7 +2840,7 @@ class EntraConnector(BaseConnector):
             records.extend(privileged_identity_records)
             records.extend(privileged_group_records)
             records.extend(privileged_service_principal_records)
-            records.extend(self._probe_capabilities(client, stable_tenant_id))
+            records.extend(self._probe_capabilities(client, stable_tenant_id, _sleep_fn=_sleep_fn))
 
         # Deterministic ordering — API response ordering must never affect
         # the normalized snapshot or its fingerprint.

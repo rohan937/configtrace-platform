@@ -4784,6 +4784,133 @@ def _okta_removal_suppressed(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Entra false-removal prevention (Entra message 7 of 8)
+#
+# Microsoft Entra ID's Graph API surface is 12 independent families (users,
+# groups, memberships per-group, applications, service principals,
+# assignments per-resource-SP, OAuth2 grants, Conditional Access policies,
+# authentication strengths, authentication methods, directory role
+# definitions, directory role assignments) plus 3 derived rollups
+# (privileged identity/group/service principal) — any ONE family can fail
+# (permission scoped down, throttled to exhaustion, an unsupported tenant
+# edition) while every other family collects normally. Naively diffing two
+# consecutive snapshots would then report every previously-known record in
+# the failed family as "removed" — a false drift signal, not a real
+# deletion.
+#
+# The Entra connector (app/connectors/entra.py) reports:
+#   - tenant-wide completeness via `entra_organization.family_completeness`
+#     (the single always-present org record, keyed by tenant_id — never a
+#     synthetic resource of its own);
+#   - PER-PARENT completeness for the two genuinely nested families, so a
+#     single failed group/service-principal doesn't suppress removals for
+#     every OTHER group/service-principal that collected fine:
+#       entra_group.membership_collection_status
+#       entra_service_principal.assignment_collection_status
+#
+# This function consults those signals to decide whether an absent-from-the
+# -new-snapshot Entra record should be suppressed rather than reported removed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ENTRA_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE: dict[str, str] = {
+    "entra_user": "users",
+    "entra_group": "groups",
+    "entra_application": "applications",
+    "entra_service_principal": "service_principals",
+    "entra_oauth2_permission_grant": "oauth2_permission_grants",
+    "entra_conditional_access_policy": "conditional_access_policies",
+    "entra_authentication_strength": "authentication_strengths",
+    "entra_authentication_method": "authentication_methods",
+    "entra_directory_role": "directory_role_definitions",
+    "entra_directory_role_assignment": "directory_role_assignments",
+}
+
+
+def _entra_removal_suppressed(
+    prev_record: dict, new_index: dict[str, dict]
+) -> Optional[str]:
+    """Return a short reason string if *prev_record*'s absence from the new
+    snapshot must NOT be reported as a "removed" Change, or ``None`` if the
+    normal removal path should proceed.
+
+    Only ever inspects Entra records — every other provider's removal
+    behavior is completely unaffected (returns ``None`` immediately for
+    any non-``entra_*`` record).
+    """
+    record_type = prev_record.get("record_type")
+    if not isinstance(record_type, str) or not record_type.startswith("entra_"):
+        return None
+    # The org record's own disappearance is a real signal (integration lost
+    # all access / tenant reconfigured) — never suppressed.
+    if record_type == "entra_organization":
+        return None
+
+    tenant_id = prev_record.get("tenant_id")
+    org_record = new_index.get(tenant_id) if tenant_id else None
+    family_completeness = (
+        org_record.get("family_completeness") if isinstance(org_record, dict) else None
+    )
+    if not isinstance(family_completeness, dict):
+        # No org record (or a malformed one) in the new snapshot to
+        # consult at all — fall back to the normal (unsuppressed) removal
+        # path rather than guessing about completeness.
+        family_completeness = {}
+
+    def _incomplete(key: str) -> bool:
+        status = family_completeness.get(key)
+        return isinstance(status, str) and status != "complete"
+
+    # ── Per-parent completeness (nested families) ───────────────────────────
+    if record_type == "entra_group_membership":
+        parent = new_index.get(f"{tenant_id}/group/{prev_record.get('group_id')}")
+        if isinstance(parent, dict):
+            status = parent.get("membership_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:groups_or_memberships" if (_incomplete("groups") or _incomplete("memberships")) else None
+
+    if record_type in ("entra_application_user_assignment", "entra_application_group_assignment"):
+        parent = new_index.get(f"{tenant_id}/service_principal/{prev_record.get('service_principal_id')}")
+        if isinstance(parent, dict):
+            status = parent.get("assignment_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:service_principals_or_assignments" if (_incomplete("service_principals") or _incomplete("app_role_assignments")) else None
+
+    if record_type == "entra_service_principal_app_role_assignment":
+        parent = new_index.get(f"{tenant_id}/service_principal/{prev_record.get('resource_service_principal_id')}")
+        if isinstance(parent, dict):
+            status = parent.get("assignment_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:service_principals_or_assignments" if (_incomplete("service_principals") or _incomplete("app_role_assignments")) else None
+
+    # ── Derived records (privileged identity/group/service-principal,
+    #    message 5) — each derivation depends on multiple upstream
+    #    families; ANY of them being incomplete can make the derivation
+    #    incomplete, so the current record's own absence must not be
+    #    reported as a real privilege-loss "removed" Change. ────────────────
+    if record_type == "entra_privileged_identity":
+        return "family_incomplete:directory_role_assignments_or_memberships" if (
+            _incomplete("directory_role_assignments") or _incomplete("memberships")
+        ) else None
+    if record_type == "entra_privileged_group":
+        return "family_incomplete:directory_role_assignments_or_memberships" if (
+            _incomplete("directory_role_assignments") or _incomplete("memberships")
+        ) else None
+    if record_type == "entra_privileged_service_principal":
+        return "family_incomplete:privilege_sources" if (
+            _incomplete("directory_role_assignments")
+            or _incomplete("app_role_assignments")
+            or _incomplete("oauth2_permission_grants")
+        ) else None
+
+    # ── Flat, tenant-wide families ───────────────────────────────────────────
+    key = _ENTRA_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE.get(record_type)
+    if key and _incomplete(key):
+        return f"family_incomplete:{key}"
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Diff computation — pure, no DB
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -4852,6 +4979,7 @@ def compute_diff(
             suppress_reason = (
                 _kubernetes_removal_suppressed(prev_record, new_index)
                 or _okta_removal_suppressed(prev_record, new_index)
+                or _entra_removal_suppressed(prev_record, new_index)
             )
             if suppress_reason is not None:
                 logger.info(

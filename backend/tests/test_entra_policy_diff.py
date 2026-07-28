@@ -324,9 +324,21 @@ class TestLegacyAuthBlock:
         level, _ = classify_entra_change(change)
         assert level == "high"
 
-    def test_legacy_auth_targeting_added_is_low(self):
-        prev = [_ca_record(legacy_auth_targeted=False)]
-        new = [_ca_record(legacy_auth_targeted=True)]
+    def test_legacy_auth_targeting_added_without_block_is_high(self):
+        # message 7 fix: an enabled policy newly targeting legacy auth
+        # without blocking it lands in the exact risky state the static
+        # Finding (entra_ca_legacy_auth_not_blocked) already flags as
+        # High — the Change severity must match, not under-rank it.
+        prev = [_ca_record(legacy_auth_targeted=False, block_access=False)]
+        new = [_ca_record(legacy_auth_targeted=True, block_access=False)]
+        changes = compute_diff(_snap(prev), _snap(new))
+        change = _find_field_change(changes, "legacy_auth_targeted")
+        level, _ = classify_entra_change(change)
+        assert level == "high"
+
+    def test_legacy_auth_targeting_added_with_block_already_true_is_low(self):
+        prev = [_ca_record(legacy_auth_targeted=False, block_access=True)]
+        new = [_ca_record(legacy_auth_targeted=True, block_access=True)]
         changes = compute_diff(_snap(prev), _snap(new))
         change = _find_field_change(changes, "legacy_auth_targeted")
         level, _ = classify_entra_change(change)
