@@ -513,8 +513,16 @@ def _classify_sp_app_role_assignment_change(change: object) -> tuple[str, str]:
     prev_value = _get(change, "prev_value")
     context = new_value if isinstance(new_value, dict) else (prev_value if isinstance(prev_value, dict) else pm)
     risk_category = context.get("app_role_risk_category") if isinstance(context, dict) else None
+    privilege_tier = context.get("app_role_privilege_tier") if isinstance(context, dict) else None
 
     if ct == "added":
+        if privilege_tier == ENTRA_PRIVILEGE_TIER_CRITICAL:
+            return (
+                "critical",
+                "A Microsoft Entra ID service principal was granted a critical-tier Microsoft "
+                "Graph application permission (e.g. directory role management, app-role-"
+                "assignment management, or arbitrary permission grant capability).",
+            )
         if risk_category == PERMISSION_RISK_HIGH:
             return (
                 "high",

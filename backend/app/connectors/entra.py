@@ -1406,6 +1406,16 @@ class EntraConnector(BaseConnector):
             "grant_id": grant_id,
             "client_service_principal_id": client_sp_id if isinstance(client_sp_id, str) else None,
             "client_name": client_sp_record.get("display_name") if client_sp_record else None,
+            # Message 6: reuses the client SP's ALREADY-resolved verified-
+            # publisher posture (no new Graph call) so a Security Finding
+            # can safely combine "external/unverified publisher" with
+            # "tenant-wide high-risk consent" on this ONE grant record —
+            # never inferred from display name (see
+            # `categorize_verified_publisher`'s own docstring, which
+            # anticipated this exact message-6 composite).
+            "client_verified_publisher_category": (
+                client_sp_record.get("verified_publisher_category") if client_sp_record else "unknown"
+            ),
             "resource_service_principal_id": resource_sp_id if isinstance(resource_sp_id, str) else None,
             "resource_name": resource_sp_record.get("display_name") if resource_sp_record else None,
             "resource_is_microsoft_graph": resource_is_microsoft_graph,

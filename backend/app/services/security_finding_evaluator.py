@@ -60,6 +60,7 @@ from app.services.security_rules import sendgrid as sendgrid_rules
 from app.services.security_rules import auth0 as auth0_rules
 from app.services.security_rules import kubernetes as kubernetes_rules
 from app.services.security_rules import okta as okta_rules
+from app.services.security_rules import entra as entra_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,8 @@ _PROVIDER_RULES = {
     "kubernetes": [kubernetes_rules.evaluate],
     # Okta message 6 of 8: Okta security findings
     "okta": [okta_rules.evaluate],
+    # Entra message 6 of 8: Microsoft Entra ID security findings
+    "entra": [entra_rules.evaluate],
 }
 
 

@@ -1578,7 +1578,7 @@ _ENTRA = ProviderCapability(
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1589,32 +1589,41 @@ _ENTRA = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Microsoft Entra ID message 1 of 8 (provider architecture "
-        "foundation). Establishes a secure, read-only connector "
-        "(OAuth 2.0 client_credentials app-only auth against the "
-        "tenant-specific Microsoft identity platform token endpoint, "
-        "GUID tenant/client-ID validation rejecting 'common'/"
-        "'organizations'/'consumers', stable tenant identity from the "
-        "validated tenant GUID, @odata.nextLink pagination with "
-        "cross-origin rejection, bounded 429/5xx retry, in-memory "
-        "connector-scoped token cache) collecting only: tenant "
-        "organization identity/metadata and read-capability probes "
-        "across 8 future record families (users, groups, applications, "
-        "service principals, Conditional Access, authentication methods, "
-        "directory roles, OAuth2 permission grants) — never the "
-        "underlying data itself. Distinct from this repository's "
-        "existing 'azure' (Azure cloud infrastructure) provider; the two "
-        "are never merged. Microsoft commercial/global cloud only — GCC "
-        "High/DoD/China (21Vianet) national clouds are not supported and "
-        "not claimed. Security Findings, Change/reliability hardening, "
-        "and public launch are not yet implemented for this provider. "
-        "The provider remains registered internally only (dispatch, "
-        "schema, capability matrix, sync scheduling) and is NOT publicly "
-        "connectable — excluded from the frontend's PROVIDER_IDS / "
-        "CONNECTABLE_PROVIDER_IDS and from security_coverage_service."
-        "PROVIDERS until Entra message 8. "
-        "planned_next_stage: Entra message 2: users, groups, memberships, "
-        "lifecycle posture."
+        "Microsoft Entra ID messages 1-6 of 8. Message 1 established the "
+        "read-only connector foundation (OAuth 2.0 client_credentials "
+        "app-only auth, GUID tenant/client-ID validation, stable tenant "
+        "identity, @odata.nextLink pagination, bounded 429/5xx retry, "
+        "in-memory token cache). Messages 2-5 built out full drift "
+        "coverage: identity lifecycle (users/groups/direct memberships), "
+        "application security (app registrations/service principals/"
+        "enterprise-app assignments/OAuth delegated grants/permission-risk "
+        "categorization), authentication policy (Conditional Access/MFA "
+        "semantics/authentication strengths/authentication methods/legacy-"
+        "auth posture), and privileged identity (directory roles/role "
+        "assignments/derived privileged users, groups, and service "
+        "principals/consent risk/Graph permission privilege tiers — "
+        "collected via the modern tenant-wide roleManagement API with NO "
+        "per-principal N+1 calls). Message 6 added Security Findings: 45 "
+        "static posture rules spanning privileged identities/directory "
+        "roles, privileged service principals/Graph permissions, consent/"
+        "OAuth grants, Conditional Access/MFA, authentication methods, "
+        "applications/credentials, identity lifecycle, and groups/app-"
+        "assignment posture — see "
+        "backend/tests/reports/entra_security_findings_matrix.md for the "
+        "full rule inventory. Distinct from this repository's existing "
+        "'azure' (Azure cloud infrastructure) provider; the two are never "
+        "merged. Microsoft commercial/global cloud only — GCC High/DoD/"
+        "China (21Vianet) national clouds are not supported and not "
+        "claimed. Change/reliability hardening (message 7) and public "
+        "launch (message 8) are not yet implemented. The provider remains "
+        "registered internally only (dispatch, schema, capability matrix, "
+        "sync scheduling, security-rule registry/confidence/pack/"
+        "evaluator) and is NOT publicly connectable — excluded from the "
+        "frontend's PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS and from "
+        "security_coverage_service.PROVIDERS until Entra message 8. "
+        "planned_next_stage: Entra message 7: exhaustive Change-"
+        "classification QA and partial-sync/pagination reliability "
+        "hardening."
     ),
 )
 
