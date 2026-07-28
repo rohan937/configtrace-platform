@@ -58,11 +58,17 @@ from typing import Any
 
 from app.connectors.entra_schema import (
     CAPABILITY_AVAILABLE,
+    CA_STATE_DISABLED,
+    CA_STATE_ENABLED,
+    CA_STATE_REPORT_ONLY,
     CONSENT_TYPE_ALL_PRINCIPALS,
     ENTRA_API_CAPABILITY,
     ENTRA_APPLICATION,
     ENTRA_APPLICATION_GROUP_ASSIGNMENT,
     ENTRA_APPLICATION_USER_ASSIGNMENT,
+    ENTRA_AUTHENTICATION_METHOD,
+    ENTRA_AUTHENTICATION_STRENGTH,
+    ENTRA_CONDITIONAL_ACCESS_POLICY,
     ENTRA_GROUP,
     ENTRA_GROUP_MEMBERSHIP,
     ENTRA_OAUTH2_PERMISSION_GRANT,
@@ -72,8 +78,23 @@ from app.connectors.entra_schema import (
     ENTRA_USER,
     EXTERNAL_USER_STATE_ACCEPTED,
     EXTERNAL_USER_STATE_PENDING,
+    MFA_REQUIREMENT_BLOCKED,
+    MFA_REQUIREMENT_NOT_REQUIRED,
+    MFA_REQUIREMENT_ONE_OF_MULTIPLE,
+    MFA_REQUIREMENT_RANK,
+    MFA_REQUIREMENT_REQUIRED,
+    METHOD_TYPE_CERTIFICATE_BASED_AUTH,
+    METHOD_TYPE_FIDO2,
+    METHOD_TYPE_WINDOWS_HELLO_FOR_BUSINESS,
+    NOT_PHISHING_RESISTANT,
     PERMISSION_RISK_HIGH,
+    PHISHING_RESISTANT,
     SIGN_IN_AUDIENCE_SINGLE_TENANT,
+    SIGN_IN_FREQUENCY_RANK,
+)
+
+_STRONG_METHOD_TYPES = frozenset(
+    {METHOD_TYPE_FIDO2, METHOD_TYPE_CERTIFICATE_BASED_AUTH, METHOD_TYPE_WINDOWS_HELLO_FOR_BUSINESS}
 )
 
 
@@ -524,6 +545,263 @@ def _classify_oauth2_permission_grant_change(change: object) -> tuple[str, str]:
     return "low", "A Microsoft Entra ID OAuth2 delegated permission grant record changed."
 
 
+def _classify_conditional_access_policy_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    new_value = _get(change, "new_value")
+    prev_value = _get(change, "prev_value")
+    context = new_value if isinstance(new_value, dict) else (prev_value if isinstance(prev_value, dict) else pm)
+    state_category = context.get("state_category") if isinstance(context, dict) else None
+    coverage_category = context.get("coverage_category") if isinstance(context, dict) else None
+    mfa_requirement_category = context.get("mfa_requirement_category") if isinstance(context, dict) else None
+    block_access = context.get("block_access") if isinstance(context, dict) else None
+
+    if ct == "added":
+        if state_category == CA_STATE_ENABLED:
+            if coverage_category == "all_users_all_apps" and mfa_requirement_category == MFA_REQUIREMENT_NOT_REQUIRED and not block_access:
+                return (
+                    "high",
+                    "A new enabled Microsoft Entra ID Conditional Access policy was added that "
+                    "broadly targets all users/apps without requiring MFA or blocking access.",
+                )
+            if mfa_requirement_category == MFA_REQUIREMENT_REQUIRED or block_access:
+                return "low", "A new enabled Microsoft Entra ID Conditional Access policy with MFA/block controls was added."
+            return "medium", "A new enabled Microsoft Entra ID Conditional Access policy was added."
+        if state_category == CA_STATE_REPORT_ONLY:
+            return "low", "A new report-only Microsoft Entra ID Conditional Access policy was added."
+        return "low", "A new Microsoft Entra ID Conditional Access policy was added."
+    if ct == "removed":
+        if state_category == CA_STATE_ENABLED and (mfa_requirement_category == MFA_REQUIREMENT_REQUIRED or block_access):
+            return (
+                "high",
+                "An enforced Microsoft Entra ID Conditional Access policy with MFA/block "
+                "controls was removed.",
+            )
+        if state_category == CA_STATE_ENABLED:
+            return "medium", "An enforced Microsoft Entra ID Conditional Access policy was removed."
+        return "low", "A Microsoft Entra ID Conditional Access policy (disabled/report-only) was removed."
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "state_category":
+        if pv == CA_STATE_ENABLED and nv == CA_STATE_REPORT_ONLY:
+            return (
+                "medium",
+                "A Microsoft Entra ID Conditional Access policy moved from enabled to "
+                "report-only — it no longer enforces its controls.",
+            )
+        if pv == CA_STATE_ENABLED and nv == CA_STATE_DISABLED:
+            return "medium", "A Microsoft Entra ID Conditional Access policy was disabled."
+        if pv == CA_STATE_REPORT_ONLY and nv == CA_STATE_ENABLED:
+            return "low", "A Microsoft Entra ID Conditional Access policy moved from report-only to enforced."
+        if pv == CA_STATE_DISABLED and nv == CA_STATE_ENABLED:
+            return "low", "A Microsoft Entra ID Conditional Access policy was enabled."
+        return "medium", "A Microsoft Entra ID Conditional Access policy's enforcement state became unrecognized/unknown."
+
+    if fp == "block_access":
+        if pv is True and nv is not True:
+            if state_category == CA_STATE_ENABLED:
+                return "high", "An enforced Microsoft Entra ID Conditional Access policy's block-access control was removed."
+            return "medium", "A Microsoft Entra ID Conditional Access policy's block-access control was removed."
+        if nv is True and pv is not True:
+            return "low", "A Microsoft Entra ID Conditional Access policy's block-access control was added."
+        return "low", "A Microsoft Entra ID Conditional Access policy's block-access control changed."
+
+    if fp == "mfa_requirement_category":
+        pv_rank = MFA_REQUIREMENT_RANK.get(pv)
+        nv_rank = MFA_REQUIREMENT_RANK.get(nv)
+        if pv_rank is None or nv_rank is None:
+            return "medium", "A Microsoft Entra ID Conditional Access policy's MFA requirement became unrecognized/unknown."
+        if nv_rank < pv_rank:
+            if state_category == CA_STATE_ENABLED and pv == MFA_REQUIREMENT_REQUIRED and nv == MFA_REQUIREMENT_NOT_REQUIRED:
+                return (
+                    "high",
+                    "An enforced Microsoft Entra ID Conditional Access policy's MFA "
+                    "requirement was removed entirely.",
+                )
+            return "medium", "A Microsoft Entra ID Conditional Access policy's MFA requirement was weakened."
+        if nv_rank > pv_rank:
+            return "low", "A Microsoft Entra ID Conditional Access policy's MFA requirement was strengthened."
+        return "low", "A Microsoft Entra ID Conditional Access policy's MFA requirement category changed."
+
+    if fp == "legacy_auth_targeted":
+        enforced_block_removed = pv is True and nv is not True and block_access and state_category != CA_STATE_ENABLED
+        if pv is True and nv is not True:
+            return (
+                "high" if block_access else "medium",
+                "A Microsoft Entra ID Conditional Access policy no longer explicitly targets "
+                "legacy authentication protocols.",
+            )
+        if nv is True and pv is not True:
+            return "low", "A Microsoft Entra ID Conditional Access policy now explicitly targets legacy authentication protocols."
+        return "low", "A Microsoft Entra ID Conditional Access policy's legacy-authentication targeting changed."
+
+    if fp in ("compliant_device_required", "hybrid_joined_device_required", "approved_application_required", "compliant_application_required"):
+        if pv is True and nv is not True:
+            return "medium", "A Microsoft Entra ID Conditional Access policy's device/application grant requirement was removed."
+        if nv is True and pv is not True:
+            return "low", "A Microsoft Entra ID Conditional Access policy's device/application grant requirement was added."
+        return "low", "A Microsoft Entra ID Conditional Access policy's device/application grant requirement changed."
+
+    if fp == "authentication_strength_referenced":
+        if pv is True and nv is not True:
+            return "medium", "A Microsoft Entra ID Conditional Access policy no longer references an authentication strength."
+        if nv is True and pv is not True:
+            return "low", "A Microsoft Entra ID Conditional Access policy now references an authentication strength."
+        return "low", "A Microsoft Entra ID Conditional Access policy's authentication strength reference changed."
+
+    if fp in ("exclude_user_count", "exclude_group_count", "exclude_role_count"):
+        pv_i = pv if isinstance(pv, int) and not isinstance(pv, bool) else None
+        nv_i = nv if isinstance(nv, int) and not isinstance(nv, bool) else None
+        if pv_i is not None and nv_i is not None and nv_i > pv_i:
+            return "medium", "A Microsoft Entra ID Conditional Access policy's exclusions were broadened."
+        return "low", "A Microsoft Entra ID Conditional Access policy's exclusions were narrowed or changed."
+
+    if fp == "guests_excluded":
+        if pv is True and nv is not True:
+            return "medium", "A Microsoft Entra ID Conditional Access policy no longer excludes guests/external users."
+        return "low", "A Microsoft Entra ID Conditional Access policy's guest exclusion changed."
+
+    if fp == "sign_in_frequency_category":
+        pv_rank = SIGN_IN_FREQUENCY_RANK.get(pv)
+        nv_rank = SIGN_IN_FREQUENCY_RANK.get(nv)
+        if pv_rank is None or nv_rank is None:
+            return "low", "A Microsoft Entra ID Conditional Access policy's sign-in frequency became unrecognized/unknown."
+        if nv_rank > pv_rank:
+            return "medium", "A Microsoft Entra ID Conditional Access policy's sign-in frequency was loosened (longer interval)."
+        if nv_rank < pv_rank:
+            return "low", "A Microsoft Entra ID Conditional Access policy's sign-in frequency was tightened."
+        return "low", "A Microsoft Entra ID Conditional Access policy's sign-in frequency changed."
+
+    if fp == "persistent_browser_category":
+        if nv == "always" and pv != "always":
+            return "medium", "A Microsoft Entra ID Conditional Access policy now persists browser sessions."
+        return "low", "A Microsoft Entra ID Conditional Access policy's persistent-browser session control changed."
+
+    if fp == "continuous_access_evaluation_category":
+        if pv == "strict_enforcement" and nv != "strict_enforcement":
+            return "medium", "A Microsoft Entra ID Conditional Access policy's continuous access evaluation was loosened."
+        return "low", "A Microsoft Entra ID Conditional Access policy's continuous access evaluation setting changed."
+
+    if fp == "coverage_category":
+        if nv == "all_users_all_apps" and pv != "all_users_all_apps":
+            return "medium", "A Microsoft Entra ID Conditional Access policy's coverage broadened to all users and all apps."
+        return "low", "A Microsoft Entra ID Conditional Access policy's coverage breadth changed."
+
+    return "low", "A Microsoft Entra ID Conditional Access policy configuration field changed."
+
+
+def _classify_authentication_strength_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    new_value = _get(change, "new_value")
+    prev_value = _get(change, "prev_value")
+    context = new_value if isinstance(new_value, dict) else (prev_value if isinstance(prev_value, dict) else pm)
+    phishing_resistance_category = context.get("phishing_resistance_category") if isinstance(context, dict) else None
+    kind_category = context.get("kind_category") if isinstance(context, dict) else None
+
+    if ct == "added":
+        if kind_category == "custom":
+            return "low", "A custom Microsoft Entra ID authentication strength policy was added."
+        return "low", "A Microsoft Entra ID authentication strength policy was added."
+    if ct == "removed":
+        if phishing_resistance_category == PHISHING_RESISTANT:
+            return (
+                "medium",
+                "A phishing-resistant Microsoft Entra ID authentication strength policy was "
+                "removed. Whether it was actively referenced by a Conditional Access policy "
+                "is not confirmed here.",
+            )
+        return "low", "A Microsoft Entra ID authentication strength policy was removed."
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "phishing_resistance_category":
+        if pv == PHISHING_RESISTANT and nv == NOT_PHISHING_RESISTANT:
+            return (
+                "high",
+                "A Microsoft Entra ID authentication strength policy's phishing-resistance "
+                "posture was weakened to ordinary MFA.",
+            )
+        if pv == NOT_PHISHING_RESISTANT and nv == PHISHING_RESISTANT:
+            return "low", "A Microsoft Entra ID authentication strength policy's phishing-resistance posture was strengthened."
+        return "medium", "A Microsoft Entra ID authentication strength policy's phishing-resistance posture became unrecognized/unknown."
+
+    if fp == "passwordless_category":
+        if pv == "passwordless" and nv == "not_passwordless":
+            return "medium", "A Microsoft Entra ID authentication strength policy's passwordless posture was weakened."
+        if pv == "not_passwordless" and nv == "passwordless":
+            return "low", "A Microsoft Entra ID authentication strength policy's passwordless posture was strengthened."
+        return "low", "A Microsoft Entra ID authentication strength policy's passwordless posture changed."
+
+    if fp == "mfa_capability_category":
+        if pv == "mfa_capable" and nv == "unknown":
+            return "medium", "A Microsoft Entra ID authentication strength policy's MFA capability became unrecognized/unknown."
+        return "low", "A Microsoft Entra ID authentication strength policy's MFA capability changed."
+
+    if fp == "allowed_combination_count":
+        return "low", "A Microsoft Entra ID authentication strength policy's allowed combination count changed."
+
+    if fp in ("display_name", "kind_category"):
+        return "low", "A Microsoft Entra ID authentication strength policy's identifying metadata changed."
+
+    return "low", "A Microsoft Entra ID authentication strength policy configuration field changed."
+
+
+def _classify_authentication_method_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    new_value = _get(change, "new_value")
+    prev_value = _get(change, "prev_value")
+    context = new_value if isinstance(new_value, dict) else (prev_value if isinstance(prev_value, dict) else pm)
+    method_type_category = context.get("method_type_category") if isinstance(context, dict) else None
+    is_strong = method_type_category in _STRONG_METHOD_TYPES
+
+    if ct == "added":
+        return "low", "A Microsoft Entra ID authentication method configuration was added to the tenant policy."
+    if ct == "removed":
+        return "low", "A Microsoft Entra ID authentication method configuration is no longer present in the observed snapshot."
+
+    fp = (_get(change, "field_path") or "")
+    nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+
+    if fp == "state_category":
+        if nv == "unknown" or pv == "unknown":
+            return "medium", "A Microsoft Entra ID authentication method's enabled state became unrecognized/unknown."
+        if pv == "enabled" and nv == "disabled":
+            if is_strong:
+                return (
+                    "medium",
+                    "A phishing-resistant Microsoft Entra ID authentication method was "
+                    "disabled tenant-wide. This is not a confirmed loss of multi-factor "
+                    "authentication overall — other methods may remain enabled.",
+                )
+            return "low", "A Microsoft Entra ID authentication method was disabled tenant-wide."
+        if pv == "disabled" and nv == "enabled":
+            if is_strong:
+                return "low", "A phishing-resistant Microsoft Entra ID authentication method was enabled tenant-wide."
+            return "medium", "A weaker Microsoft Entra ID authentication method was enabled tenant-wide."
+        return "low", "A Microsoft Entra ID authentication method's enabled state changed."
+
+    if fp == "target_category":
+        if nv == "all_users" and pv != "all_users":
+            return "medium", "A Microsoft Entra ID authentication method's targeting broadened to all users."
+        return "low", "A Microsoft Entra ID authentication method's targeting scope changed."
+
+    if fp in ("include_target_count", "exclude_target_count"):
+        return "low", "A Microsoft Entra ID authentication method's target count changed."
+
+    if fp in ("method_type_category", "phishing_resistance_category"):
+        return "low", "A Microsoft Entra ID authentication method's type/category classification changed."
+
+    return "low", "A Microsoft Entra ID authentication method configuration field changed."
+
+
 def classify_entra_change(change: object) -> tuple[str, str]:
     """Route an Entra Change to its record-type classifier.
 
@@ -558,5 +836,11 @@ def classify_entra_change(change: object) -> tuple[str, str]:
         return _classify_sp_app_role_assignment_change(change)
     if record_type == ENTRA_OAUTH2_PERMISSION_GRANT:
         return _classify_oauth2_permission_grant_change(change)
+    if record_type == ENTRA_CONDITIONAL_ACCESS_POLICY:
+        return _classify_conditional_access_policy_change(change)
+    if record_type == ENTRA_AUTHENTICATION_STRENGTH:
+        return _classify_authentication_strength_change(change)
+    if record_type == ENTRA_AUTHENTICATION_METHOD:
+        return _classify_authentication_method_change(change)
 
     return "low", f"A Microsoft Entra ID configuration record changed ({record_type or 'unknown record type'})."

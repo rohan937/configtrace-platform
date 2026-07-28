@@ -3709,6 +3709,66 @@ _ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "scopes",
         "high_risk_scope_present",
     ),
+    # ── Entra authentication policy (Entra message 4 of 8) ──────────────────
+    #
+    # Raw conditions/grantControls/sessionControls objects, target ID
+    # arrays, and named-location IP ranges are never stored at all (see
+    # entra.py's normalizer docstrings) so there is nothing raw to
+    # accidentally track here.
+    "entra_conditional_access_policy": (
+        "display_name",
+        "state_category",
+        "user_target_category",
+        "include_user_count",
+        "include_group_count",
+        "include_role_count",
+        "exclude_user_count",
+        "exclude_group_count",
+        "exclude_role_count",
+        "guests_included",
+        "guests_excluded",
+        "app_target_category",
+        "include_app_count",
+        "exclude_app_count",
+        "coverage_category",
+        "location_target_category",
+        "device_platform_categories",
+        "client_app_type_categories",
+        "legacy_auth_targeted",
+        "user_risk_level_categories",
+        "sign_in_risk_level_categories",
+        "grant_operator_category",
+        "grant_control_categories",
+        "mfa_requirement_category",
+        "block_access",
+        "compliant_device_required",
+        "hybrid_joined_device_required",
+        "approved_application_required",
+        "compliant_application_required",
+        "authentication_strength_id",
+        "authentication_strength_referenced",
+        "sign_in_frequency_enabled",
+        "sign_in_frequency_category",
+        "persistent_browser_category",
+        "continuous_access_evaluation_category",
+        "app_enforced_restrictions_enabled",
+    ),
+    "entra_authentication_strength": (
+        "display_name",
+        "kind_category",
+        "allowed_combination_count",
+        "phishing_resistance_category",
+        "passwordless_category",
+        "mfa_capability_category",
+    ),
+    "entra_authentication_method": (
+        "method_type_category",
+        "state_category",
+        "phishing_resistance_category",
+        "target_category",
+        "include_target_count",
+        "exclude_target_count",
+    ),
 }
 
 
@@ -4292,6 +4352,40 @@ def _build_provider_metadata(
         metadata["resource_name"] = context_record.get("resource_name") or record.get("resource_name") or ""
         metadata["consent_type_category"] = (
             context_record.get("consent_type_category") or record.get("consent_type_category") or ""
+        )
+
+    # Entra Conditional Access / authentication strength / authentication
+    # method records (message 4) — never includes raw conditions,
+    # grantControls, sessionControls, target ID arrays, or named-location
+    # IP ranges.
+    if record.get("record_type") == "entra_conditional_access_policy":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["policy_id"] = context_record.get("policy_id") or record.get("policy_id") or ""
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+        # These context fields let the risk classifier reason about a
+        # SINGLE field-path change (e.g. "block_access" flipping) in light
+        # of the policy's overall enforcement posture, without re-reading
+        # the whole record — mirrors the app-role-assignment risk_category
+        # pattern above.
+        metadata["state_category"] = context_record.get("state_category") or record.get("state_category") or ""
+        metadata["coverage_category"] = context_record.get("coverage_category") or record.get("coverage_category") or ""
+        metadata["mfa_requirement_category"] = (
+            context_record.get("mfa_requirement_category") or record.get("mfa_requirement_category") or ""
+        )
+        metadata["block_access"] = context_record.get("block_access") if context_record.get("block_access") is not None else record.get("block_access")
+    if record.get("record_type") == "entra_authentication_strength":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["strength_id"] = context_record.get("strength_id") or record.get("strength_id") or ""
+        metadata["display_name"] = context_record.get("display_name") or record.get("display_name") or ""
+        metadata["phishing_resistance_category"] = (
+            context_record.get("phishing_resistance_category") or record.get("phishing_resistance_category") or ""
+        )
+        metadata["kind_category"] = context_record.get("kind_category") or record.get("kind_category") or ""
+    if record.get("record_type") == "entra_authentication_method":
+        metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
+        metadata["method_config_id"] = context_record.get("method_config_id") or record.get("method_config_id") or ""
+        metadata["method_type_category"] = (
+            context_record.get("method_type_category") or record.get("method_type_category") or ""
         )
 
     if record.get("record_type") == "okta_application":

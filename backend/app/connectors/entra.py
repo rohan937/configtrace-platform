@@ -107,6 +107,9 @@ from app.connectors.entra_schema import (
     ENTRA_APPLICATION,
     ENTRA_APPLICATION_GROUP_ASSIGNMENT,
     ENTRA_APPLICATION_USER_ASSIGNMENT,
+    ENTRA_AUTHENTICATION_METHOD,
+    ENTRA_AUTHENTICATION_STRENGTH,
+    ENTRA_CONDITIONAL_ACCESS_POLICY,
     ENTRA_GROUP,
     ENTRA_GROUP_MEMBERSHIP,
     ENTRA_OAUTH2_PERMISSION_GRANT,
@@ -118,28 +121,59 @@ from app.connectors.entra_schema import (
     FAMILY_DENIED,
     FAMILY_PARTIAL,
     FAMILY_UNAVAILABLE,
+    GRANT_CONTROL_APPROVED_APPLICATION,
+    GRANT_CONTROL_BLOCK,
+    GRANT_CONTROL_COMPLIANT_APPLICATION,
+    GRANT_CONTROL_COMPLIANT_DEVICE,
+    GRANT_CONTROL_DOMAIN_JOINED_DEVICE,
     GRAPH_MEMBER_TYPE_USER,
     GRAPH_PRINCIPAL_TYPE_GROUP,
     GRAPH_PRINCIPAL_TYPE_SERVICE_PRINCIPAL,
     GRAPH_PRINCIPAL_TYPE_USER,
     MICROSOFT_FIRST_PARTY_TENANT_ID,
     MICROSOFT_GRAPH_APP_ID,
+    app_enforced_restrictions_enabled,
     categorize_account_enabled,
     categorize_app_owner_organization,
+    categorize_auth_strength_kind,
+    categorize_ca_app_targeting,
+    categorize_ca_location_targeting,
+    categorize_ca_state,
+    categorize_ca_targeting,
+    categorize_cae_mode,
+    categorize_client_app_types,
     categorize_consent_type,
+    categorize_device_platforms,
     categorize_external_user_state,
+    categorize_grant_operator,
     categorize_group_type,
     categorize_membership_count,
+    categorize_method_state,
+    categorize_method_targeting,
+    categorize_method_type,
     categorize_nearest_credential_expiry,
     categorize_on_premises_sync,
     categorize_permission_risk,
+    categorize_persistent_browser_mode,
+    categorize_policy_coverage,
     categorize_service_principal_type,
     categorize_sign_in_audience,
+    categorize_sign_in_frequency,
+    categorize_strength_mfa_capability,
     categorize_user_type,
     categorize_verified_publisher,
+    count_allowed_combinations,
+    count_method_targets,
+    is_legacy_auth_targeted,
     lifecycle_posture_for_user,
+    mfa_requirement_from_grant_controls,
+    normalize_grant_controls,
     normalize_group_types,
+    normalize_risk_levels,
     normalize_scopes,
+    passwordless_posture_from_allowed_combinations,
+    phishing_resistance_for_method_type,
+    phishing_resistance_from_allowed_combinations,
     summarize_application_redirects,
     summarize_required_resource_access,
     validate_client_id,
@@ -202,6 +236,16 @@ _MAX_TOTAL_APP_USER_ASSIGNMENTS = 200_000
 _MAX_TOTAL_APP_GROUP_ASSIGNMENTS = 200_000
 _MAX_TOTAL_SP_APP_ROLE_ASSIGNMENTS = 200_000
 _MAX_OAUTH2_PERMISSION_GRANTS = 200_000
+
+# ── Authentication policy collection bounds (Entra message 4) ───────────────
+#
+# Conditional Access policies, authentication strengths, and authentication
+# method configurations are each a single flat tenant-wide collection (no
+# per-parent walk needed) — same call-complexity class as message 3's
+# OAuth2 permission grants.
+_MAX_CONDITIONAL_ACCESS_POLICIES = 2_000
+_MAX_AUTHENTICATION_STRENGTHS = 2_000
+_MAX_AUTHENTICATION_METHOD_CONFIGURATIONS = 200
 
 # 429/5xx retry bounds — bounded exponential backoff with jitter, mirroring
 # the Okta/Kubernetes reliability pattern.
@@ -1716,6 +1760,231 @@ class EntraConnector(BaseConnector):
                 records.append(rec)
         return records, completeness
 
+    # ── Conditional Access / authentication strength / authentication
+    #    method normalization (Entra message 4) ──────────────────────────────
+
+    @staticmethod
+    def _normalize_conditional_access_policy(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one Conditional Access policy.
+
+        SECURITY: never persists raw ``conditions``/``grantControls``/
+        ``sessionControls`` objects, target user/group/role ID arrays, or
+        named-location IP ranges — only bounded counts and coarse
+        categories derived from them. Report-only state is never treated
+        as enforced (see ``categorize_ca_state``).
+        """
+        policy_id = raw.get("id")
+        if not isinstance(policy_id, str) or not policy_id.strip():
+            return None
+
+        display_name = raw.get("displayName")
+        display_name = display_name.strip()[:_MAX_STR_LEN] if isinstance(display_name, str) and display_name.strip() else None
+
+        conditions = raw.get("conditions") if isinstance(raw.get("conditions"), dict) else {}
+        users = conditions.get("users") if isinstance(conditions.get("users"), dict) else {}
+        applications = conditions.get("applications") if isinstance(conditions.get("applications"), dict) else {}
+        locations = conditions.get("locations")
+        platforms = conditions.get("platforms")
+        client_app_types = conditions.get("clientAppTypes")
+
+        grant_controls = raw.get("grantControls") if isinstance(raw.get("grantControls"), dict) else None
+        session_controls = raw.get("sessionControls") if isinstance(raw.get("sessionControls"), dict) else None
+
+        grant_control_categories = normalize_grant_controls(
+            grant_controls.get("builtInControls") if grant_controls else None
+        )
+        auth_strength_ref = grant_controls.get("authenticationStrength") if grant_controls else None
+        auth_strength_id = (
+            auth_strength_ref.get("id")
+            if isinstance(auth_strength_ref, dict) and isinstance(auth_strength_ref.get("id"), str)
+            else None
+        )
+
+        def _count(block: dict, key: str) -> int:
+            value = block.get(key)
+            return len(value) if isinstance(value, list) else 0
+
+        sign_in_frequency = session_controls.get("signInFrequency") if session_controls else None
+        sign_in_frequency = sign_in_frequency if isinstance(sign_in_frequency, dict) else {}
+        sif_enabled = sign_in_frequency.get("isEnabled") is True
+        sif_unit = "everyTime" if sign_in_frequency.get("frequencyInterval") == "everyTime" else sign_in_frequency.get("type")
+        sign_in_frequency_category = categorize_sign_in_frequency(
+            sif_enabled, sign_in_frequency.get("value"), sif_unit,
+        )
+
+        user_target_category = categorize_ca_targeting(users)
+        app_target_category = categorize_ca_app_targeting(applications)
+
+        return {
+            "record_type": ENTRA_CONDITIONAL_ACCESS_POLICY,
+            "record_id": f"{tenant_id}/conditional_access_policy/{policy_id}",
+            "provider_resource_id": f"identity/conditionalAccess/policies/{policy_id}",
+            "tenant_id": tenant_id,
+            "policy_id": policy_id,
+            "display_name": display_name,
+            "state_category": categorize_ca_state(raw.get("state")),
+            "user_target_category": user_target_category,
+            "include_user_count": _count(users, "includeUsers"),
+            "include_group_count": _count(users, "includeGroups"),
+            "include_role_count": _count(users, "includeRoles"),
+            "exclude_user_count": _count(users, "excludeUsers"),
+            "exclude_group_count": _count(users, "excludeGroups"),
+            "exclude_role_count": _count(users, "excludeRoles"),
+            "guests_included": bool(users.get("includeGuestsOrExternalUsers")),
+            "guests_excluded": bool(users.get("excludeGuestsOrExternalUsers")),
+            "app_target_category": app_target_category,
+            "include_app_count": _count(applications, "includeApplications"),
+            "exclude_app_count": _count(applications, "excludeApplications"),
+            "coverage_category": categorize_policy_coverage(user_target_category, app_target_category),
+            "location_target_category": categorize_ca_location_targeting(locations),
+            "device_platform_categories": categorize_device_platforms(platforms),
+            "client_app_type_categories": categorize_client_app_types(client_app_types),
+            "legacy_auth_targeted": is_legacy_auth_targeted(client_app_types),
+            "user_risk_level_categories": normalize_risk_levels(conditions.get("userRiskLevels")),
+            "sign_in_risk_level_categories": normalize_risk_levels(conditions.get("signInRiskLevels")),
+            "grant_operator_category": categorize_grant_operator(grant_controls.get("operator") if grant_controls else None),
+            "grant_control_categories": grant_control_categories,
+            "mfa_requirement_category": mfa_requirement_from_grant_controls(grant_controls),
+            "block_access": GRANT_CONTROL_BLOCK in grant_control_categories,
+            "compliant_device_required": GRANT_CONTROL_COMPLIANT_DEVICE in grant_control_categories,
+            "hybrid_joined_device_required": GRANT_CONTROL_DOMAIN_JOINED_DEVICE in grant_control_categories,
+            "approved_application_required": GRANT_CONTROL_APPROVED_APPLICATION in grant_control_categories,
+            "compliant_application_required": GRANT_CONTROL_COMPLIANT_APPLICATION in grant_control_categories,
+            "authentication_strength_id": auth_strength_id,
+            "authentication_strength_referenced": auth_strength_id is not None,
+            "sign_in_frequency_enabled": sif_enabled,
+            "sign_in_frequency_category": sign_in_frequency_category,
+            "persistent_browser_category": categorize_persistent_browser_mode(session_controls),
+            "continuous_access_evaluation_category": categorize_cae_mode(session_controls),
+            "app_enforced_restrictions_enabled": app_enforced_restrictions_enabled(session_controls),
+        }
+
+    @staticmethod
+    def _normalize_authentication_strength(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one authentication strength policy.
+
+        SECURITY: only the ``allowedCombinations`` list's bounded count and
+        derived categories are persisted — the raw combinations list
+        itself is never stored on the record.
+        """
+        strength_id = raw.get("id")
+        if not isinstance(strength_id, str) or not strength_id.strip():
+            return None
+
+        display_name = raw.get("displayName")
+        display_name = display_name.strip()[:_MAX_STR_LEN] if isinstance(display_name, str) and display_name.strip() else None
+
+        allowed_combinations = raw.get("allowedCombinations")
+
+        return {
+            "record_type": ENTRA_AUTHENTICATION_STRENGTH,
+            "record_id": f"{tenant_id}/authentication_strength/{strength_id}",
+            "provider_resource_id": f"policies/authenticationStrengthPolicies/{strength_id}",
+            "tenant_id": tenant_id,
+            "strength_id": strength_id,
+            "display_name": display_name,
+            "kind_category": categorize_auth_strength_kind(raw.get("policyType"), strength_id),
+            "allowed_combination_count": count_allowed_combinations(allowed_combinations),
+            "phishing_resistance_category": phishing_resistance_from_allowed_combinations(allowed_combinations),
+            "passwordless_category": passwordless_posture_from_allowed_combinations(allowed_combinations),
+            "mfa_capability_category": categorize_strength_mfa_capability(allowed_combinations),
+        }
+
+    @staticmethod
+    def _normalize_authentication_method(tenant_id: str, raw: dict) -> Optional[dict]:
+        """Normalize one tenant-wide authentication method configuration.
+
+        SECURITY: never persists per-user enrollment data, key material,
+        Temporary Access Pass values, or phone numbers — this is
+        tenant-level policy/configuration posture only. Target group IDs
+        are reduced to bounded counts, never raw arrays.
+        """
+        config_id = raw.get("id")
+        if not isinstance(config_id, str) or not config_id.strip():
+            return None
+
+        method_type_category = categorize_method_type(config_id)
+        include_targets = raw.get("includeTargets")
+        exclude_targets = raw.get("excludeTargets")
+
+        return {
+            "record_type": ENTRA_AUTHENTICATION_METHOD,
+            "record_id": f"{tenant_id}/authentication_method/{config_id}",
+            "provider_resource_id": f"policies/authenticationMethodsPolicy/authenticationMethodConfigurations/{config_id}",
+            "tenant_id": tenant_id,
+            "method_config_id": config_id,
+            "method_type_category": method_type_category,
+            "state_category": categorize_method_state(raw.get("state")),
+            "phishing_resistance_category": phishing_resistance_for_method_type(method_type_category),
+            "target_category": categorize_method_targeting(include_targets),
+            "include_target_count": count_method_targets(include_targets),
+            "exclude_target_count": count_method_targets(exclude_targets),
+        }
+
+    # ── Authentication policy collection (Entra message 4) ──────────────────
+
+    @classmethod
+    def _fetch_conditional_access_policies(
+        cls, client: httpx.Client, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, "/identity/conditionalAccess/policies",
+            params={"$top": str(_PAGE_SIZE)},
+            cap=_MAX_CONDITIONAL_ACCESS_POLICIES, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_conditional_access_policy(tenant_id, raw)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
+    @classmethod
+    def _fetch_authentication_strengths(
+        cls, client: httpx.Client, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, "/policies/authenticationStrengthPolicies",
+            params={"$top": str(_PAGE_SIZE)},
+            cap=_MAX_AUTHENTICATION_STRENGTHS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_authentication_strength(tenant_id, raw)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
+    @classmethod
+    def _fetch_authentication_methods(
+        cls, client: httpx.Client, tenant_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Collect tenant-wide authentication method configurations via
+        the nested collection endpoint (a true Graph list with
+        ``@odata.nextLink`` support), rather than parsing the
+        ``authenticationMethodsPolicy`` singleton's embedded array — this
+        reuses the same paginator as every other family."""
+        raw_items, completeness = cls._collect_family(
+            client, "/policies/authenticationMethodsPolicy/authenticationMethodConfigurations",
+            params={"$top": str(_PAGE_SIZE)},
+            cap=_MAX_AUTHENTICATION_METHOD_CONFIGURATIONS, _sleep_fn=_sleep_fn,
+        )
+        records = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_authentication_method(tenant_id, raw)
+            if rec is not None:
+                records.append(rec)
+        return records, completeness
+
     # ── Capability probes ──────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET with the smallest
@@ -1949,6 +2218,17 @@ class EntraConnector(BaseConnector):
                 client, stable_tenant_id, sp_records_by_id, _sleep_fn=_sleep_fn,
             )
 
+            # ── Conditional Access / authentication strengths / methods ────
+            ca_policy_records, ca_policies_completeness = self._fetch_conditional_access_policies(
+                client, stable_tenant_id, _sleep_fn=_sleep_fn,
+            )
+            auth_strength_records, auth_strengths_completeness = self._fetch_authentication_strengths(
+                client, stable_tenant_id, _sleep_fn=_sleep_fn,
+            )
+            auth_method_records, auth_methods_completeness = self._fetch_authentication_methods(
+                client, stable_tenant_id, _sleep_fn=_sleep_fn,
+            )
+
             org_record = self._normalize_organization(
                 stable_tenant_id, raw_org,
                 family_completeness={
@@ -1959,6 +2239,9 @@ class EntraConnector(BaseConnector):
                     "service_principals": service_principals_completeness,
                     "app_role_assignments": assignments_completeness,
                     "oauth2_permission_grants": oauth2_grants_completeness,
+                    "conditional_access_policies": ca_policies_completeness,
+                    "authentication_strengths": auth_strengths_completeness,
+                    "authentication_methods": auth_methods_completeness,
                 },
             )
 
@@ -1972,6 +2255,9 @@ class EntraConnector(BaseConnector):
             records.extend(app_group_assignment_records)
             records.extend(sp_app_role_assignment_records)
             records.extend(oauth2_grant_records)
+            records.extend(ca_policy_records)
+            records.extend(auth_strength_records)
+            records.extend(auth_method_records)
             records.extend(self._probe_capabilities(client, stable_tenant_id))
 
         # Deterministic ordering — API response ordering must never affect

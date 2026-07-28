@@ -48,11 +48,31 @@ Microsoft Entra ID provider. Record types so far:
                             (``Principal``). Scopes are parsed, deduplicated,
                             and categorized — never stored as one opaque
                             string.
+  entra_conditional_access_policy — one record per Conditional Access
+                            policy (msg 4) — enforcement state (enabled/
+                            report-only/disabled), targeting/exclusion
+                            categories and counts, grant-control semantics
+                            (AND/OR, MFA/device/authentication-strength
+                            requirements), legacy-authentication targeting,
+                            risk targeting, and session-control posture.
+                            Raw conditions/grantControls objects and target
+                            user/group/role ID arrays are never stored.
+  entra_authentication_strength — one record per authentication-strength
+                            policy (msg 4), built-in or custom — allowed-
+                            combination COUNT plus deterministic phishing-
+                            resistant/passwordless/MFA categorization.
+                            Never stores the raw allowed-combinations list.
+  entra_authentication_method — one record per authentication-method
+                            configuration (msg 4) — e.g. FIDO2, Microsoft
+                            Authenticator, Temporary Access Pass, SMS,
+                            voice, software OATH, X.509 certificate, email.
+                            State (enabled/disabled) and safe method-
+                            specific posture only — never secrets, key
+                            material, phone numbers, or certificate bodies.
 
-This module now defines the message-1/2/3 taxonomy. Messages 4-5
-(Conditional Access/authentication methods, directory roles/privileged
-identities/consent expansion) and message 6 (Security Findings) are still
-pending.
+This module now defines the message-1/2/3/4 taxonomy. Message 5 (directory
+roles/privileged identities/consent expansion) and message 6 (Security
+Findings) are still pending.
 
 Microsoft Entra ID is a distinct identity provider from this repository's
 existing ``azure`` provider (Azure infrastructure: subscriptions, resource
@@ -83,6 +103,15 @@ counts), raw appRoles/oauth2PermissionScopes arrays (only counts and
 locally-resolved value strings for referenced role/scope IDs), OAuth
 tokens of any kind, and application-registration/service-principal owners
 (deferred — see the connector's module docstring for the N+1 rationale).
+
+Message 4 additionally never collects: raw Conditional Access
+conditions/grantControls/sessionControls objects, target user/group/role
+ID arrays, named-location IP ranges, Temporary Access Pass values,
+FIDO2/passkey key material or AAGUID lists beyond a bounded count,
+certificate bodies, phone numbers, or per-user authentication-method
+enrollment data (deferred — tenant-level policy/configuration posture
+only; see the connector's module docstring for the per-user N+1/privacy
+rationale).
 """
 
 from __future__ import annotations
@@ -105,6 +134,9 @@ ENTRA_APPLICATION_USER_ASSIGNMENT = "entra_application_user_assignment"
 ENTRA_APPLICATION_GROUP_ASSIGNMENT = "entra_application_group_assignment"
 ENTRA_SERVICE_PRINCIPAL_APP_ROLE_ASSIGNMENT = "entra_service_principal_app_role_assignment"
 ENTRA_OAUTH2_PERMISSION_GRANT = "entra_oauth2_permission_grant"
+ENTRA_CONDITIONAL_ACCESS_POLICY = "entra_conditional_access_policy"
+ENTRA_AUTHENTICATION_STRENGTH = "entra_authentication_strength"
+ENTRA_AUTHENTICATION_METHOD = "entra_authentication_method"
 
 ENTRA_RECORD_TYPES = frozenset({
     ENTRA_ORGANIZATION,
@@ -118,6 +150,9 @@ ENTRA_RECORD_TYPES = frozenset({
     ENTRA_APPLICATION_GROUP_ASSIGNMENT,
     ENTRA_SERVICE_PRINCIPAL_APP_ROLE_ASSIGNMENT,
     ENTRA_OAUTH2_PERMISSION_GRANT,
+    ENTRA_CONDITIONAL_ACCESS_POLICY,
+    ENTRA_AUTHENTICATION_STRENGTH,
+    ENTRA_AUTHENTICATION_METHOD,
 })
 
 
@@ -968,3 +1003,774 @@ def categorize_permission_risk(permission_value: object) -> str:
 GRAPH_PRINCIPAL_TYPE_USER = "User"
 GRAPH_PRINCIPAL_TYPE_GROUP = "Group"
 GRAPH_PRINCIPAL_TYPE_SERVICE_PRINCIPAL = "ServicePrincipal"
+
+
+# ---------------------------------------------------------------------------
+# Message 4: Conditional Access / authentication strength / authentication
+# method taxonomy. Every categorizer below preserves an explicit "unknown"
+# for missing/malformed input rather than coercing toward a safe- or
+# unsafe-looking default (see the module docstring's unknown-state
+# discipline). Report-only Conditional Access state must never be treated
+# as enforced, and MFA under an OR grant-control operator must never be
+# flattened into "MFA required".
+# ---------------------------------------------------------------------------
+
+# Conditional Access policy enforcement state.
+CA_STATE_ENABLED = "enabled"
+CA_STATE_REPORT_ONLY = "report_only"
+CA_STATE_DISABLED = "disabled"
+CA_STATE_UNKNOWN = "unknown"
+
+_CA_STATE_MAP = {
+    "enabled": CA_STATE_ENABLED,
+    "disabled": CA_STATE_DISABLED,
+    "enabledForReportingButNotEnforced": CA_STATE_REPORT_ONLY,
+}
+
+
+def categorize_ca_state(raw_state: object) -> str:
+    """Normalize a Conditional Access policy's `state` field. Graph's
+    report-only value is NEVER folded into "enabled" — a report-only policy
+    does not enforce anything, and treating it as enforced would produce a
+    dangerous false sense of protection.
+    """
+    if not isinstance(raw_state, str):
+        return CA_STATE_UNKNOWN
+    return _CA_STATE_MAP.get(raw_state, CA_STATE_UNKNOWN)
+
+
+# Conditional Access user/group/role targeting scope category.
+CA_TARGET_ALL_USERS = "all_users"
+CA_TARGET_SELECTED_USERS = "selected_users"
+CA_TARGET_SELECTED_GROUPS = "selected_groups"
+CA_TARGET_DIRECTORY_ROLES = "directory_roles"
+CA_TARGET_GUESTS_EXTERNAL = "guests_external_users"
+CA_TARGET_WORKLOAD_IDENTITIES = "workload_identities"
+CA_TARGET_MIXED = "mixed"
+CA_TARGET_UNKNOWN = "unknown"
+
+
+def categorize_ca_targeting(conditions_users: object) -> str:
+    """Categorize a Conditional Access policy's `conditions.users` targeting
+    shape into a coarse category. Only counts/presence of the standard Graph
+    sub-fields are inspected — the actual ID arrays are never read into the
+    returned category, and a missing/malformed block stays unknown rather
+    than being assumed to mean "all users".
+    """
+    if not isinstance(conditions_users, dict):
+        return CA_TARGET_UNKNOWN
+
+    include_users = conditions_users.get("includeUsers")
+    include_groups = conditions_users.get("includeGroups")
+    include_roles = conditions_users.get("includeRoles")
+    include_guests = conditions_users.get("includeGuestsOrExternalUsers")
+
+    present = [
+        bool(include_users),
+        bool(include_groups),
+        bool(include_roles),
+        bool(include_guests),
+    ]
+    if sum(present) > 1:
+        return CA_TARGET_MIXED
+
+    if isinstance(include_users, list) and "All" in include_users:
+        return CA_TARGET_ALL_USERS
+    if include_guests:
+        return CA_TARGET_GUESTS_EXTERNAL
+    if include_roles:
+        return CA_TARGET_DIRECTORY_ROLES
+    if include_groups:
+        return CA_TARGET_SELECTED_GROUPS
+    if include_users:
+        return CA_TARGET_SELECTED_USERS
+    return CA_TARGET_UNKNOWN
+
+
+# Conditional Access application/workload-identity targeting category.
+CA_APP_TARGET_ALL_CLOUD_APPS = "all_cloud_apps"
+CA_APP_TARGET_SELECTED_APPS = "selected_apps"
+CA_APP_TARGET_USER_ACTIONS = "user_actions"
+CA_APP_TARGET_AUTHENTICATION_CONTEXT = "authentication_context"
+CA_APP_TARGET_UNKNOWN = "unknown"
+
+
+def categorize_ca_app_targeting(conditions_applications: object) -> str:
+    """Categorize a Conditional Access policy's `conditions.applications`
+    targeting into a coarse category, preferring counts over storing the
+    actual app-ID list.
+    """
+    if not isinstance(conditions_applications, dict):
+        return CA_APP_TARGET_UNKNOWN
+
+    include_apps = conditions_applications.get("includeApplications")
+    user_actions = conditions_applications.get("includeUserActions")
+    auth_context = conditions_applications.get("includeAuthenticationContextClassReferences")
+
+    if isinstance(include_apps, list) and "All" in include_apps:
+        return CA_APP_TARGET_ALL_CLOUD_APPS
+    if auth_context:
+        return CA_APP_TARGET_AUTHENTICATION_CONTEXT
+    if user_actions:
+        return CA_APP_TARGET_USER_ACTIONS
+    if include_apps:
+        return CA_APP_TARGET_SELECTED_APPS
+    return CA_APP_TARGET_UNKNOWN
+
+
+# Conditional Access client-app-type targeting category, used to derive
+# whether a policy is explicitly targeting legacy authentication protocols.
+CLIENT_APP_BROWSER = "browser"
+CLIENT_APP_MOBILE_DESKTOP = "mobileAppsAndDesktopClients"
+CLIENT_APP_EXCHANGE_ACTIVESYNC = "exchangeActiveSync"
+CLIENT_APP_OTHER_LEGACY = "other"
+CLIENT_APP_UNKNOWN = "unknown"
+
+_KNOWN_CLIENT_APP_TYPES = frozenset(
+    {
+        CLIENT_APP_BROWSER,
+        CLIENT_APP_MOBILE_DESKTOP,
+        CLIENT_APP_EXCHANGE_ACTIVESYNC,
+        CLIENT_APP_OTHER_LEGACY,
+    }
+)
+
+
+def categorize_client_app_types(client_app_types: object) -> list:
+    """Normalize the `conditions.clientAppTypes` list into bounded, sorted,
+    deduplicated categories. An entry Graph doesn't document falls back to
+    "unknown" rather than being silently dropped.
+    """
+    if not isinstance(client_app_types, list) or not client_app_types:
+        return [CLIENT_APP_UNKNOWN]
+    categories = set()
+    for entry in client_app_types:
+        if isinstance(entry, str) and entry in _KNOWN_CLIENT_APP_TYPES:
+            categories.add(entry)
+        else:
+            categories.add(CLIENT_APP_UNKNOWN)
+    return sorted(categories)
+
+
+def is_legacy_auth_targeted(client_app_types: object) -> bool:
+    """Whether a policy's client-app-type targeting explicitly names legacy
+    authentication protocols. Derived ONLY from the explicit
+    `exchangeActiveSync`/`other` categories Graph documents as covering
+    legacy auth — never inferred from the absence of a client-app-types
+    condition, since an absent condition means "all client app types"
+    (which includes but is not limited to legacy auth) rather than
+    specifically targeting it.
+    """
+    categories = categorize_client_app_types(client_app_types)
+    return CLIENT_APP_EXCHANGE_ACTIVESYNC in categories or CLIENT_APP_OTHER_LEGACY in categories
+
+
+# Conditional Access grant-control boolean operator.
+GRANT_OPERATOR_AND = "AND"
+GRANT_OPERATOR_OR = "OR"
+GRANT_OPERATOR_UNKNOWN = "unknown"
+
+
+def categorize_grant_operator(raw_operator: object) -> str:
+    """Normalize `grantControls.operator`. Missing/malformed stays unknown —
+    it is NEVER assumed to be AND (the stricter reading) or OR (the looser
+    reading), since guessing either direction could misclassify a policy's
+    actual enforcement strength.
+    """
+    if raw_operator == "AND":
+        return GRANT_OPERATOR_AND
+    if raw_operator == "OR":
+        return GRANT_OPERATOR_OR
+    return GRANT_OPERATOR_UNKNOWN
+
+
+# Known built-in Conditional Access grant control values.
+GRANT_CONTROL_MFA = "mfa"
+GRANT_CONTROL_COMPLIANT_DEVICE = "compliantDevice"
+GRANT_CONTROL_DOMAIN_JOINED_DEVICE = "domainJoinedDevice"
+GRANT_CONTROL_APPROVED_APPLICATION = "approvedApplication"
+GRANT_CONTROL_COMPLIANT_APPLICATION = "compliantApplication"
+GRANT_CONTROL_PASSWORD_CHANGE = "passwordChange"
+GRANT_CONTROL_AUTHENTICATION_STRENGTH = "authenticationStrength"
+GRANT_CONTROL_BLOCK = "block"
+
+_KNOWN_GRANT_CONTROLS = frozenset(
+    {
+        GRANT_CONTROL_MFA,
+        GRANT_CONTROL_COMPLIANT_DEVICE,
+        GRANT_CONTROL_DOMAIN_JOINED_DEVICE,
+        GRANT_CONTROL_APPROVED_APPLICATION,
+        GRANT_CONTROL_COMPLIANT_APPLICATION,
+        GRANT_CONTROL_PASSWORD_CHANGE,
+        GRANT_CONTROL_AUTHENTICATION_STRENGTH,
+        GRANT_CONTROL_BLOCK,
+    }
+)
+
+
+def normalize_grant_controls(built_in_controls: object) -> list:
+    """Normalize `grantControls.builtInControls` into a bounded, sorted,
+    deduplicated list of known control names. Unrecognized entries are
+    dropped from this list (they cannot be safely modeled) but the caller
+    is responsible for using `mfa_requirement_from_grant_controls()`'s
+    unknown fallback when the raw controls list itself is malformed.
+    """
+    if not isinstance(built_in_controls, list):
+        return []
+    return sorted({c for c in built_in_controls if c in _KNOWN_GRANT_CONTROLS})
+
+
+# MFA requirement category derived from grant-control operator + controls.
+MFA_REQUIREMENT_REQUIRED = "required"
+MFA_REQUIREMENT_ONE_OF_MULTIPLE = "one_of_multiple_controls"
+MFA_REQUIREMENT_NOT_REQUIRED = "not_required"
+MFA_REQUIREMENT_BLOCKED = "blocked"
+MFA_REQUIREMENT_UNKNOWN = "unknown"
+
+# Directional rank for classifying MFA-requirement transitions. Only used
+# to compare two KNOWN categories against each other — an "unknown" on
+# either side of a transition must never be ranked, so callers must check
+# for unknown before consulting this table.
+MFA_REQUIREMENT_RANK = {
+    MFA_REQUIREMENT_NOT_REQUIRED: 0,
+    MFA_REQUIREMENT_ONE_OF_MULTIPLE: 1,
+    MFA_REQUIREMENT_REQUIRED: 2,
+    MFA_REQUIREMENT_BLOCKED: 2,
+}
+
+
+def mfa_requirement_from_grant_controls(
+    grant_controls: object,
+) -> str:
+    """Derive the MFA requirement category from a Conditional Access
+    policy's `grantControls` block. `grant_controls` is the raw dict as
+    returned by Graph (containing `operator` and `builtInControls`), or
+    None/malformed if the policy has no grant controls block at all.
+
+    Rules (must not be shortcut):
+    - Missing/malformed grantControls -> unknown (never "not_required" --
+      a policy might rely on session controls alone, or the block may have
+      failed to collect).
+    - `builtInControls` containing "block" -> blocked (access denied
+      entirely; MFA is moot).
+    - "mfa" absent from builtInControls -> not_required.
+    - "mfa" present AND operator is AND (or there is exactly one control)
+      -> required.
+    - "mfa" present AND operator is OR with more than one control ->
+      one_of_multiple_controls (MFA is merely one of several satisfying
+      options, NOT strictly required).
+    - "mfa" present AND operator unknown -> unknown (cannot tell if MFA is
+      actually enforced or just one OR-branch).
+    """
+    if not isinstance(grant_controls, dict):
+        return MFA_REQUIREMENT_UNKNOWN
+
+    controls = normalize_grant_controls(grant_controls.get("builtInControls"))
+    if not isinstance(grant_controls.get("builtInControls"), list):
+        return MFA_REQUIREMENT_UNKNOWN
+
+    if GRANT_CONTROL_BLOCK in controls:
+        return MFA_REQUIREMENT_BLOCKED
+    if GRANT_CONTROL_MFA not in controls:
+        return MFA_REQUIREMENT_NOT_REQUIRED
+
+    if len(controls) == 1:
+        return MFA_REQUIREMENT_REQUIRED
+
+    operator = categorize_grant_operator(grant_controls.get("operator"))
+    if operator == GRANT_OPERATOR_AND:
+        return MFA_REQUIREMENT_REQUIRED
+    if operator == GRANT_OPERATOR_OR:
+        return MFA_REQUIREMENT_ONE_OF_MULTIPLE
+    return MFA_REQUIREMENT_UNKNOWN
+
+
+# Conditional Access risk-level category (user risk / sign-in risk
+# conditions). Bounded, sorted, deduplicated -- never a raw Identity
+# Protection risk-event ingestion.
+RISK_LEVEL_LOW = "low"
+RISK_LEVEL_MEDIUM = "medium"
+RISK_LEVEL_HIGH = "high"
+RISK_LEVEL_NONE = "none"
+RISK_LEVEL_UNKNOWN = "unknown"
+
+_KNOWN_RISK_LEVELS = frozenset(
+    {RISK_LEVEL_LOW, RISK_LEVEL_MEDIUM, RISK_LEVEL_HIGH, RISK_LEVEL_NONE}
+)
+
+
+def normalize_risk_levels(risk_levels: object) -> list:
+    """Normalize a `conditions.userRiskLevels` / `conditions.signInRiskLevels`
+    list into bounded, sorted, deduplicated categories. This is policy
+    CONFIGURATION only -- it never ingests or represents actual Identity
+    Protection risk events.
+    """
+    if not isinstance(risk_levels, list) or not risk_levels:
+        return [RISK_LEVEL_UNKNOWN]
+    categories = set()
+    for entry in risk_levels:
+        if isinstance(entry, str) and entry in _KNOWN_RISK_LEVELS:
+            categories.add(entry)
+        else:
+            categories.add(RISK_LEVEL_UNKNOWN)
+    return sorted(categories)
+
+
+# Conditional Access session-control categories.
+SESSION_CONTROL_SIGN_IN_FREQUENCY = "sign_in_frequency"
+SESSION_CONTROL_PERSISTENT_BROWSER = "persistent_browser"
+SESSION_CONTROL_CAE = "continuous_access_evaluation"
+SESSION_CONTROL_APP_ENFORCED_RESTRICTIONS = "app_enforced_restrictions"
+
+# Sign-in frequency interval bucket, reusing the same coarse boundary
+# philosophy as the session-lifetime bucketing used elsewhere in this
+# taxonomy family: shorter intervals re-challenge the user more often and
+# are the stricter posture.
+SIGN_IN_FREQUENCY_EVERY_TIME = "every_time"
+SIGN_IN_FREQUENCY_VERY_SHORT = "very_short"
+SIGN_IN_FREQUENCY_SHORT = "short"
+SIGN_IN_FREQUENCY_STANDARD = "standard"
+SIGN_IN_FREQUENCY_EXTENDED = "extended"
+SIGN_IN_FREQUENCY_UNKNOWN = "unknown"
+
+SIGN_IN_FREQUENCY_RANK = {
+    SIGN_IN_FREQUENCY_EVERY_TIME: 0,
+    SIGN_IN_FREQUENCY_VERY_SHORT: 1,
+    SIGN_IN_FREQUENCY_SHORT: 2,
+    SIGN_IN_FREQUENCY_STANDARD: 3,
+    SIGN_IN_FREQUENCY_EXTENDED: 4,
+}
+
+_ISO8601_DURATION_RE = _re.compile(
+    r"^P(?:(?P<days>\d+)D)?"
+    r"(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+)
+
+
+def parse_iso8601_duration_to_minutes(raw_duration: object) -> Optional[int]:
+    """Parse a bounded subset of ISO8601 durations (days/hours/minutes/
+    seconds) into whole minutes. Returns None for missing/malformed input
+    rather than guessing -- callers must treat None as unknown.
+    """
+    if not isinstance(raw_duration, str) or not raw_duration:
+        return None
+    match = _ISO8601_DURATION_RE.match(raw_duration.strip())
+    if not match or not any(match.groups()):
+        return None
+    days = int(match.group("days") or 0)
+    hours = int(match.group("hours") or 0)
+    minutes = int(match.group("minutes") or 0)
+    seconds = int(match.group("seconds") or 0)
+    return days * 24 * 60 + hours * 60 + minutes + (1 if seconds else 0)
+
+
+def categorize_sign_in_frequency(
+    is_enabled: object, frequency_value: object, frequency_unit: object
+) -> str:
+    """Categorize a Conditional Access session control's sign-in-frequency
+    setting into a coarse bucket. `frequency_value`/`frequency_unit` follow
+    Graph's `signInFrequency.value`/`signInFrequency.type` (hours/days), or
+    the newer `everyTime` authentication-based frequency.
+    """
+    if is_enabled is not True:
+        return SIGN_IN_FREQUENCY_UNKNOWN
+    if frequency_unit == "everyTime":
+        return SIGN_IN_FREQUENCY_EVERY_TIME
+    if not isinstance(frequency_value, (int, float)) or frequency_value <= 0:
+        return SIGN_IN_FREQUENCY_UNKNOWN
+
+    if frequency_unit == "days":
+        minutes = frequency_value * 24 * 60
+    elif frequency_unit == "hours":
+        minutes = frequency_value * 60
+    else:
+        return SIGN_IN_FREQUENCY_UNKNOWN
+
+    if minutes < 60:
+        return SIGN_IN_FREQUENCY_VERY_SHORT
+    if minutes < 24 * 60:
+        return SIGN_IN_FREQUENCY_SHORT
+    if minutes < 7 * 24 * 60:
+        return SIGN_IN_FREQUENCY_STANDARD
+    return SIGN_IN_FREQUENCY_EXTENDED
+
+
+# Conditional Access policy coverage-breadth category, combining user and
+# app targeting into one coarse label for reporting/severity guidance.
+COVERAGE_ALL_USERS_ALL_APPS = "all_users_all_apps"
+COVERAGE_ALL_USERS_SELECTED_APPS = "all_users_selected_apps"
+COVERAGE_SELECTED_PRINCIPALS_ALL_APPS = "selected_principals_all_apps"
+COVERAGE_SELECTED_PRINCIPALS_SELECTED_APPS = "selected_principals_selected_apps"
+COVERAGE_GUESTS = "guests"
+COVERAGE_WORKLOADS = "workloads"
+COVERAGE_UNKNOWN = "unknown"
+
+
+def categorize_policy_coverage(user_target: str, app_target: str) -> str:
+    """Combine a policy's user-targeting and app-targeting categories into
+    a coarse coverage-breadth label, used only for reporting/severity
+    guidance -- never as an exact effective-access computation.
+    """
+    if user_target == CA_TARGET_GUESTS_EXTERNAL:
+        return COVERAGE_GUESTS
+    if user_target == CA_TARGET_WORKLOAD_IDENTITIES:
+        return COVERAGE_WORKLOADS
+    if user_target == CA_TARGET_UNKNOWN or app_target == CA_APP_TARGET_UNKNOWN:
+        return COVERAGE_UNKNOWN
+    if user_target == CA_TARGET_ALL_USERS and app_target == CA_APP_TARGET_ALL_CLOUD_APPS:
+        return COVERAGE_ALL_USERS_ALL_APPS
+    if user_target == CA_TARGET_ALL_USERS:
+        return COVERAGE_ALL_USERS_SELECTED_APPS
+    if app_target == CA_APP_TARGET_ALL_CLOUD_APPS:
+        return COVERAGE_SELECTED_PRINCIPALS_ALL_APPS
+    return COVERAGE_SELECTED_PRINCIPALS_SELECTED_APPS
+
+
+# ---------------------------------------------------------------------------
+# Authentication strength taxonomy.
+# ---------------------------------------------------------------------------
+
+AUTH_STRENGTH_BUILT_IN = "built_in"
+AUTH_STRENGTH_CUSTOM = "custom"
+AUTH_STRENGTH_KIND_UNKNOWN = "unknown"
+
+# Microsoft's well-known, tenant-agnostic built-in authentication strength
+# policy IDs (documented, stable GUIDs -- never inferred from display name).
+BUILT_IN_AUTH_STRENGTH_IDS = frozenset(
+    {
+        "00000000-0000-0000-0000-000000000002",  # Multifactor authentication
+        "00000000-0000-0000-0000-000000000003",  # Passwordless MFA
+        "00000000-0000-0000-0000-000000000004",  # Phishing-resistant MFA
+    }
+)
+
+
+def categorize_auth_strength_kind(policy_type: object, policy_id: object = None) -> str:
+    """Categorize an authentication strength policy as built-in or custom.
+
+    Prefers Graph's own documented ``policyType`` field ("builtIn"/
+    "custom") when present -- this is the authoritative, structured signal.
+    Falls back to matching ``policy_id`` against the well-known built-in
+    strength GUIDs only when ``policyType`` is missing/malformed. Never
+    inferred from ``displayName``, which a tenant admin can freely rename.
+    """
+    if policy_type == "builtIn":
+        return AUTH_STRENGTH_BUILT_IN
+    if policy_type == "custom":
+        return AUTH_STRENGTH_CUSTOM
+    if isinstance(policy_id, str) and policy_id in BUILT_IN_AUTH_STRENGTH_IDS:
+        return AUTH_STRENGTH_BUILT_IN
+    return AUTH_STRENGTH_KIND_UNKNOWN
+
+
+# Authentication method combination values (Graph's
+# `allowedCombinations` entries) bucketed by phishing-resistance and
+# passwordless categories. Combination values not in either set are
+# treated conservatively (not phishing-resistant, not passwordless).
+PHISHING_RESISTANT_COMBOS = frozenset(
+    {
+        "fido2",
+        "windowsHelloForBusiness",
+        "x509CertificateMultiFactor",
+        "x509CertificateSingleFactor",
+    }
+)
+
+PASSWORDLESS_COMBOS = frozenset(
+    {
+        "fido2",
+        "windowsHelloForBusiness",
+        "x509CertificateMultiFactor",
+        "x509CertificateSingleFactor",
+        "microsoftAuthenticatorPasswordless",
+        "temporaryAccessPassMultiUse",
+        "temporaryAccessPassOneTime",
+    }
+)
+
+PHISHING_RESISTANT = "phishing_resistant"
+NOT_PHISHING_RESISTANT = "not_phishing_resistant"
+PHISHING_RESISTANCE_UNKNOWN = "unknown"
+
+
+def phishing_resistance_from_allowed_combinations(allowed_combinations: object) -> str:
+    """Categorize an authentication strength's phishing-resistance posture
+    from its `allowedCombinations` list. A strength is only labeled
+    "phishing_resistant" when EVERY allowed combination is itself
+    phishing-resistant -- a strength that also permits a weaker fallback
+    (e.g. password+SMS) cannot be said to enforce phishing resistance
+    end-to-end. SMS/voice/email/TOTP-only combinations are NEVER
+    classified phishing-resistant.
+    """
+    if not isinstance(allowed_combinations, list) or not allowed_combinations:
+        return PHISHING_RESISTANCE_UNKNOWN
+    if all(
+        isinstance(combo, str) and combo in PHISHING_RESISTANT_COMBOS
+        for combo in allowed_combinations
+    ):
+        return PHISHING_RESISTANT
+    return NOT_PHISHING_RESISTANT
+
+
+def passwordless_posture_from_allowed_combinations(allowed_combinations: object) -> str:
+    """Categorize whether every allowed combination in an authentication
+    strength supports passwordless sign-in. Same all-must-qualify rule as
+    phishing resistance, for the same end-to-end reasoning.
+    """
+    if not isinstance(allowed_combinations, list) or not allowed_combinations:
+        return PHISHING_RESISTANCE_UNKNOWN
+    if all(
+        isinstance(combo, str) and combo in PASSWORDLESS_COMBOS
+        for combo in allowed_combinations
+    ):
+        return "passwordless"
+    return "not_passwordless"
+
+
+def count_allowed_combinations(allowed_combinations: object) -> int:
+    """Bounded count of an authentication strength's allowed combinations --
+    never the raw combinations payload itself."""
+    if not isinstance(allowed_combinations, list):
+        return 0
+    return len(allowed_combinations)
+
+
+STRENGTH_MFA_CAPABLE = "mfa_capable"
+STRENGTH_MFA_UNKNOWN = "unknown"
+
+
+def categorize_strength_mfa_capability(allowed_combinations: object) -> str:
+    """Categorize whether an authentication strength's allowed-combinations
+    list is populated (Graph's authenticationStrengthPolicies collection
+    only ever lists multi-factor-eligible combinations, so a non-empty,
+    well-formed list is treated as MFA-capable). Missing/malformed input
+    stays unknown -- never assumed MFA-capable.
+    """
+    if not isinstance(allowed_combinations, list) or not allowed_combinations:
+        return STRENGTH_MFA_UNKNOWN
+    return STRENGTH_MFA_CAPABLE
+
+
+# ---------------------------------------------------------------------------
+# Authentication method (tenant-wide method-configuration) taxonomy.
+# ---------------------------------------------------------------------------
+
+METHOD_TYPE_FIDO2 = "fido2"
+METHOD_TYPE_MICROSOFT_AUTHENTICATOR = "microsoft_authenticator"
+METHOD_TYPE_TEMPORARY_ACCESS_PASS = "temporary_access_pass"
+METHOD_TYPE_EMAIL_OTP = "email_otp"
+METHOD_TYPE_SMS = "sms"
+METHOD_TYPE_VOICE = "voice"
+METHOD_TYPE_SOFTWARE_OATH = "software_oath"
+METHOD_TYPE_HARDWARE_OATH = "hardware_oath"
+METHOD_TYPE_CERTIFICATE_BASED_AUTH = "certificate_based_auth"
+METHOD_TYPE_WINDOWS_HELLO_FOR_BUSINESS = "windows_hello_for_business"
+METHOD_TYPE_UNKNOWN = "unknown"
+
+# Graph's well-known, stable authentication-method configuration IDs (the
+# `id` of each singleton config resource under
+# `policies/authenticationMethodsPolicy/authenticationMethodConfigurations`).
+# These are fixed, tenant-agnostic identifiers documented by Microsoft --
+# never inferred from a display name.
+_METHOD_CONFIG_ID_MAP = {
+    "Fido2": METHOD_TYPE_FIDO2,
+    "MicrosoftAuthenticator": METHOD_TYPE_MICROSOFT_AUTHENTICATOR,
+    "TemporaryAccessPass": METHOD_TYPE_TEMPORARY_ACCESS_PASS,
+    "Email": METHOD_TYPE_EMAIL_OTP,
+    "Sms": METHOD_TYPE_SMS,
+    "Voice": METHOD_TYPE_VOICE,
+    "SoftwareOath": METHOD_TYPE_SOFTWARE_OATH,
+    "HardwareOath": METHOD_TYPE_HARDWARE_OATH,
+    "X509Certificate": METHOD_TYPE_CERTIFICATE_BASED_AUTH,
+}
+
+
+def categorize_method_type(config_id: object) -> str:
+    """Categorize an authentication method configuration's type from its
+    stable Graph config ID only. An ID this taxonomy doesn't recognize
+    stays unknown rather than being guessed from a display string.
+    """
+    if not isinstance(config_id, str) or not config_id:
+        return METHOD_TYPE_UNKNOWN
+    return _METHOD_CONFIG_ID_MAP.get(config_id, METHOD_TYPE_UNKNOWN)
+
+
+# Fixed method-type -> phishing-resistance mapping. Only FIDO2, CBA, and
+# Windows Hello for Business qualify. SMS/voice/email/software-OATH/TAP
+# must NEVER be classified phishing-resistant, regardless of configuration.
+_PHISHING_RESISTANT_METHOD_TYPES = frozenset(
+    {
+        METHOD_TYPE_FIDO2,
+        METHOD_TYPE_CERTIFICATE_BASED_AUTH,
+        METHOD_TYPE_WINDOWS_HELLO_FOR_BUSINESS,
+    }
+)
+
+
+def phishing_resistance_for_method_type(method_type: str) -> str:
+    """Fixed phishing-resistance category for a given method-type category.
+    Unlike authentication strengths (which combine multiple methods), a
+    single method type is either always phishing-resistant or never --
+    there is no partial-combination case here.
+    """
+    if method_type == METHOD_TYPE_UNKNOWN:
+        return PHISHING_RESISTANCE_UNKNOWN
+    if method_type in _PHISHING_RESISTANT_METHOD_TYPES:
+        return PHISHING_RESISTANT
+    return NOT_PHISHING_RESISTANT
+
+
+# Authentication method configuration state.
+METHOD_STATE_ENABLED = "enabled"
+METHOD_STATE_DISABLED = "disabled"
+METHOD_STATE_UNKNOWN = "unknown"
+
+
+def categorize_method_state(raw_state: object) -> str:
+    """Normalize an authentication method configuration's `state` field.
+    Missing/malformed input stays unknown -- never coerced toward
+    "disabled" (which would risk a false "method removed" diff) or
+    "enabled" (which would risk overstating the tenant's MFA posture).
+    """
+    if raw_state == "enabled":
+        return METHOD_STATE_ENABLED
+    if raw_state == "disabled":
+        return METHOD_STATE_DISABLED
+    return METHOD_STATE_UNKNOWN
+
+
+# Authentication method target scope category (mirrors CA targeting's
+# include/exclude-count-only philosophy -- never large group ID arrays).
+METHOD_TARGET_ALL_USERS = "all_users"
+METHOD_TARGET_SELECTED_GROUPS = "selected_groups"
+METHOD_TARGET_UNKNOWN = "unknown"
+
+
+def categorize_method_targeting(include_targets: object) -> str:
+    """Categorize an authentication method configuration's
+    `includeTargets` list into a coarse scope category. Only the presence
+    of the well-known "all_users" target ID is inspected -- individual
+    group IDs are never surfaced beyond a count by the caller.
+    """
+    if not isinstance(include_targets, list) or not include_targets:
+        return METHOD_TARGET_UNKNOWN
+    for target in include_targets:
+        if isinstance(target, dict) and target.get("id") == "all_users":
+            return METHOD_TARGET_ALL_USERS
+    return METHOD_TARGET_SELECTED_GROUPS
+
+
+def count_method_targets(targets: object) -> int:
+    """Bounded count of an authentication method configuration's
+    include/exclude target entries -- never the raw target array."""
+    if not isinstance(targets, list):
+        return 0
+    return len(targets)
+
+
+# ---------------------------------------------------------------------------
+# Conditional Access location targeting + session control categorizers.
+# ---------------------------------------------------------------------------
+
+CA_LOCATION_TARGET_ALL = "all"
+CA_LOCATION_TARGET_ALL_TRUSTED = "all_trusted"
+CA_LOCATION_TARGET_SELECTED = "selected"
+CA_LOCATION_TARGET_UNKNOWN = "unknown"
+
+
+def categorize_ca_location_targeting(conditions_locations: object) -> str:
+    """Categorize a Conditional Access policy's `conditions.locations`
+    targeting into a coarse category. Only inspects the well-known "All"/
+    "AllTrusted" sentinel values -- individual named-location IDs (which
+    could reveal IP ranges) are never read beyond presence.
+    """
+    if not isinstance(conditions_locations, dict):
+        return CA_LOCATION_TARGET_UNKNOWN
+    include = conditions_locations.get("includeLocations")
+    if not isinstance(include, list) or not include:
+        return CA_LOCATION_TARGET_UNKNOWN
+    if "All" in include:
+        return CA_LOCATION_TARGET_ALL
+    if "AllTrusted" in include:
+        return CA_LOCATION_TARGET_ALL_TRUSTED
+    return CA_LOCATION_TARGET_SELECTED
+
+
+_KNOWN_DEVICE_PLATFORMS = frozenset(
+    {"android", "iOS", "windows", "windowsPhone", "macOS", "linux", "all"}
+)
+DEVICE_PLATFORM_UNKNOWN = "unknown"
+
+
+def categorize_device_platforms(platforms_condition: object) -> list:
+    """Normalize `conditions.platforms.includePlatforms` into a bounded,
+    sorted, deduplicated list of known platform categories. An entry this
+    taxonomy doesn't recognize falls back to "unknown" rather than being
+    silently dropped."""
+    if not isinstance(platforms_condition, dict):
+        return [DEVICE_PLATFORM_UNKNOWN]
+    include = platforms_condition.get("includePlatforms")
+    if not isinstance(include, list) or not include:
+        return [DEVICE_PLATFORM_UNKNOWN]
+    categories = set()
+    for entry in include:
+        if isinstance(entry, str) and entry in _KNOWN_DEVICE_PLATFORMS:
+            categories.add(entry)
+        else:
+            categories.add(DEVICE_PLATFORM_UNKNOWN)
+    return sorted(categories)
+
+
+PERSISTENT_BROWSER_ALWAYS = "always"
+PERSISTENT_BROWSER_NEVER = "never"
+PERSISTENT_BROWSER_UNKNOWN = "unknown"
+
+
+def categorize_persistent_browser_mode(session_controls: object) -> str:
+    """Categorize `sessionControls.persistentBrowser` mode. Missing/
+    disabled/malformed all stay unknown -- never assumed "never" (which
+    would understate a persistent-browser-enabled policy's exposure)."""
+    if not isinstance(session_controls, dict):
+        return PERSISTENT_BROWSER_UNKNOWN
+    persistent_browser = session_controls.get("persistentBrowser")
+    if not isinstance(persistent_browser, dict) or persistent_browser.get("isEnabled") is not True:
+        return PERSISTENT_BROWSER_UNKNOWN
+    mode = persistent_browser.get("mode")
+    if mode == "always":
+        return PERSISTENT_BROWSER_ALWAYS
+    if mode == "never":
+        return PERSISTENT_BROWSER_NEVER
+    return PERSISTENT_BROWSER_UNKNOWN
+
+
+CAE_STRICT = "strict_enforcement"
+CAE_DISABLED = "disabled"
+CAE_UNKNOWN = "unknown"
+
+
+def categorize_cae_mode(session_controls: object) -> str:
+    """Categorize `sessionControls.continuousAccessEvaluation` mode."""
+    if not isinstance(session_controls, dict):
+        return CAE_UNKNOWN
+    cae = session_controls.get("continuousAccessEvaluation")
+    if not isinstance(cae, dict):
+        return CAE_UNKNOWN
+    mode = cae.get("mode")
+    if mode == "strictEnforcement":
+        return CAE_STRICT
+    if mode == "disabled":
+        return CAE_DISABLED
+    return CAE_UNKNOWN
+
+
+def app_enforced_restrictions_enabled(session_controls: object) -> Optional[bool]:
+    """Whether `sessionControls.applicationEnforcedRestrictions` is
+    enabled. Returns None (unknown) rather than False when the block is
+    missing/malformed."""
+    if not isinstance(session_controls, dict):
+        return None
+    restriction = session_controls.get("applicationEnforcedRestrictions")
+    if not isinstance(restriction, dict):
+        return None
+    is_enabled = restriction.get("isEnabled")
+    return is_enabled if isinstance(is_enabled, bool) else None
