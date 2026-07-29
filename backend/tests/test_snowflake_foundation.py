@@ -27,7 +27,9 @@ from app.connectors.snowflake import (
     _ACCOUNT_ROLES_STATEMENT,
     _CAPABILITY_PROBES,
     _DATABASE_NAMES_FOR_ROLE_DISCOVERY_STATEMENT,
+    _SHARES_STATEMENT,
     _USERS_STATEMENT,
+    _WAREHOUSES_STATEMENT,
     CATEGORY_AUTH_FAILED,
     CATEGORY_SUCCESS,
     CATEGORY_THROTTLED,
@@ -489,11 +491,11 @@ class TestQuerySafety:
         connector-owned constants — never string-interpolated with
         credential/user input.
 
-        Message 2 added SHOW USERS/SHOW ROLES/SHOW DATABASES as further
-        fixed constants issued unconditionally by fetch(); this test's
-        router does not mock them, so they fail soft (family status
-        unavailable) but are still issued and must be included in the
-        allowlist here.
+        Message 2 added SHOW USERS/SHOW ROLES/SHOW DATABASES, and message 3
+        added SHOW WAREHOUSES/SHOW SHARES, as further fixed constants
+        issued unconditionally by fetch(); this test's router does not
+        mock them, so they fail soft (family status unavailable) but are
+        still issued and must be included in the allowlist here.
         """
         route = respx.post(_STATEMENTS_URL).mock(side_effect=_make_sql_router())
         conn = SnowflakeConnector()
@@ -503,6 +505,8 @@ class TestQuerySafety:
             _USERS_STATEMENT,
             _ACCOUNT_ROLES_STATEMENT,
             _DATABASE_NAMES_FOR_ROLE_DISCOVERY_STATEMENT,
+            _WAREHOUSES_STATEMENT,
+            _SHARES_STATEMENT,
         } | {stmt for _f, stmt in _CAPABILITY_PROBES}
         for call in route.calls:
             body = json.loads(call.request.content)

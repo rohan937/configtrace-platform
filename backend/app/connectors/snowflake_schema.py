@@ -427,3 +427,266 @@ def categorize_principal_type(raw_granted_to: object) -> str:
 GRANT_OPTION_TRUE = "true"
 GRANT_OPTION_FALSE = "false"
 GRANT_OPTION_UNKNOWN = "unknown"
+
+
+def categorize_grant_option(raw_value: object) -> str:
+    """Bounded true/false/unknown category for a SHOW GRANTS-family
+    ``grant_option`` column. Unlike message 2's user-role/hierarchy grants
+    (which never expose this column at all), ``SHOW GRANTS TO ROLE`` /
+    ``SHOW FUTURE GRANTS`` DO expose it — so an actual value here is
+    trusted, but anything missing/malformed is still ``unknown``, never
+    coerced to ``false``."""
+    if isinstance(raw_value, bool):
+        return GRANT_OPTION_TRUE if raw_value else GRANT_OPTION_FALSE
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip().lower()
+        if cleaned == "true":
+            return GRANT_OPTION_TRUE
+        if cleaned == "false":
+            return GRANT_OPTION_FALSE
+    return GRANT_OPTION_UNKNOWN
+
+
+# ── Snowflake message 3: data objects (databases/schemas/warehouses/shares)
+#    and object/future grants ───────────────────────────────────────────────
+
+SNOWFLAKE_DATABASE = "snowflake_database"
+SNOWFLAKE_SCHEMA = "snowflake_schema"
+SNOWFLAKE_WAREHOUSE = "snowflake_warehouse"
+SNOWFLAKE_SHARE = "snowflake_share"
+SNOWFLAKE_OBJECT_GRANT = "snowflake_object_grant"
+
+ALL_SNOWFLAKE_RECORD_TYPES = ALL_SNOWFLAKE_RECORD_TYPES | frozenset({
+    SNOWFLAKE_DATABASE,
+    SNOWFLAKE_SCHEMA,
+    SNOWFLAKE_WAREHOUSE,
+    SNOWFLAKE_SHARE,
+    SNOWFLAKE_OBJECT_GRANT,
+})
+
+COLLECTION_FAMILY_DATABASES = "databases"
+COLLECTION_FAMILY_SCHEMAS = "schemas"
+COLLECTION_FAMILY_WAREHOUSES = "warehouses"
+COLLECTION_FAMILY_SHARES = "shares"
+COLLECTION_FAMILY_OBJECT_GRANTS = "object_grants"
+COLLECTION_FAMILY_FUTURE_GRANTS = "future_grants"
+
+DATA_OBJECT_COLLECTION_FAMILIES: tuple[str, ...] = (
+    COLLECTION_FAMILY_DATABASES,
+    COLLECTION_FAMILY_SCHEMAS,
+    COLLECTION_FAMILY_WAREHOUSES,
+    COLLECTION_FAMILY_SHARES,
+    COLLECTION_FAMILY_OBJECT_GRANTS,
+    COLLECTION_FAMILY_FUTURE_GRANTS,
+)
+
+
+# ── Database taxonomy ────────────────────────────────────────────────────────
+#
+# Confirmed via current official docs (SHOW DATABASES reference): the
+# ``kind`` column distinguishes STANDARD, IMPORTED DATABASE (shared from
+# another account), APPLICATION, PERSONAL DATABASE, and CATALOG-LINKED
+# DATABASE. Never inferred from the database's display name.
+
+DATABASE_KIND_STANDARD = "standard"
+DATABASE_KIND_IMPORTED = "imported"
+DATABASE_KIND_APPLICATION = "application"
+DATABASE_KIND_PERSONAL = "personal"
+DATABASE_KIND_CATALOG_LINKED = "catalog_linked"
+DATABASE_KIND_UNKNOWN = "unknown"
+
+_DATABASE_KIND_MAP = {
+    "STANDARD": DATABASE_KIND_STANDARD,
+    "IMPORTED DATABASE": DATABASE_KIND_IMPORTED,
+    "APPLICATION": DATABASE_KIND_APPLICATION,
+    "PERSONAL DATABASE": DATABASE_KIND_PERSONAL,
+    "CATALOG-LINKED DATABASE": DATABASE_KIND_CATALOG_LINKED,
+}
+
+
+def categorize_database_kind(raw_kind: object) -> str:
+    if not isinstance(raw_kind, str):
+        return DATABASE_KIND_UNKNOWN
+    return _DATABASE_KIND_MAP.get(raw_kind.strip().upper(), DATABASE_KIND_UNKNOWN)
+
+
+# ── OPTIONS-column token parsing (shared by databases/schemas) ─────────────
+#
+# Confirmed via current official docs (CREATE SCHEMA reference): SHOW
+# DATABASES/SHOW SCHEMAS' ``options`` column is a space-separated token
+# list (e.g. ``TRANSIENT``, ``MANAGED ACCESS``) — never a single fixed
+# enum value. Presence/absence of a token is checked directly rather than
+# assuming a canonical ordering or a single-value column.
+
+def _options_contains(raw_options: object, token: str) -> str:
+    """Return the shared TRISTATE_* category for whether `token` appears
+    in a SHOW-command ``options`` column. Missing/non-string options is
+    unknown — never coerced to false (an object with no visible options
+    value could still have the property; the caller simply couldn't see
+    it, e.g. a privilege-filtered row)."""
+    if not isinstance(raw_options, str):
+        return TRISTATE_UNKNOWN
+    tokens = raw_options.upper()
+    return TRISTATE_TRUE if token in tokens else TRISTATE_FALSE
+
+
+def categorize_managed_access(raw_options: object) -> str:
+    return _options_contains(raw_options, "MANAGED ACCESS")
+
+
+def categorize_transient(raw_options: object) -> str:
+    return _options_contains(raw_options, "TRANSIENT")
+
+
+# ── Warehouse auto-resume/state (booleans/categories, never a Finding) ─────
+
+WAREHOUSE_STATE_STARTED = "started"
+WAREHOUSE_STATE_SUSPENDED = "suspended"
+WAREHOUSE_STATE_RESIZING = "resizing"
+WAREHOUSE_STATE_UNKNOWN = "unknown"
+
+_WAREHOUSE_STATE_MAP = {
+    "STARTED": WAREHOUSE_STATE_STARTED,
+    "SUSPENDED": WAREHOUSE_STATE_SUSPENDED,
+    "RESIZING": WAREHOUSE_STATE_RESIZING,
+}
+
+
+def categorize_warehouse_state(raw_state: object) -> str:
+    if not isinstance(raw_state, str):
+        return WAREHOUSE_STATE_UNKNOWN
+    return _WAREHOUSE_STATE_MAP.get(raw_state.strip().upper(), WAREHOUSE_STATE_UNKNOWN)
+
+
+# ── Share kind taxonomy ───────────────────────────────────────────────────────
+#
+# Confirmed via current official docs (SHOW SHARES reference): ``kind`` is
+# INBOUND (share available to consume/create a database from) or OUTBOUND
+# (this account is sharing data out). A share is Snowflake-to-Snowflake
+# controlled secure sharing — its mere existence is never treated as "data
+# is public" anywhere in this connector or its risk classifier.
+
+SHARE_KIND_OUTBOUND = "outbound"
+SHARE_KIND_INBOUND = "inbound"
+SHARE_KIND_UNKNOWN = "unknown"
+
+_SHARE_KIND_MAP = {
+    "OUTBOUND": SHARE_KIND_OUTBOUND,
+    "INBOUND": SHARE_KIND_INBOUND,
+}
+
+
+def categorize_share_kind(raw_kind: object) -> str:
+    if not isinstance(raw_kind, str):
+        return SHARE_KIND_UNKNOWN
+    return _SHARE_KIND_MAP.get(raw_kind.strip().upper(), SHARE_KIND_UNKNOWN)
+
+
+# ── Object-type taxonomy (grant target) ──────────────────────────────────────
+#
+# ``granted_on``/``grant_on`` values from SHOW GRANTS TO ROLE / SHOW FUTURE
+# GRANTS, confirmed via current official docs. ROLE-typed rows are
+# deliberately NOT part of this taxonomy — they represent role-hierarchy
+# edges (already collected in message 2 via SHOW GRANTS OF ROLE, the
+# reverse direction) and are filtered out before reaching a grant
+# normalizer, never re-derived as a second, potentially conflicting,
+# hierarchy source.
+
+OBJECT_TYPE_DATABASE = "database"
+OBJECT_TYPE_SCHEMA = "schema"
+OBJECT_TYPE_TABLE = "table"
+OBJECT_TYPE_VIEW = "view"
+OBJECT_TYPE_WAREHOUSE = "warehouse"
+OBJECT_TYPE_FUNCTION_PROCEDURE = "function_procedure"
+OBJECT_TYPE_STAGE = "stage"
+OBJECT_TYPE_FILE_FORMAT = "file_format"
+OBJECT_TYPE_SEQUENCE = "sequence"
+OBJECT_TYPE_PIPE = "pipe"
+OBJECT_TYPE_STREAM = "stream"
+OBJECT_TYPE_TASK = "task"
+OBJECT_TYPE_SHARE = "share"
+OBJECT_TYPE_INTEGRATION = "integration"
+OBJECT_TYPE_ACCOUNT = "account"
+OBJECT_TYPE_UNKNOWN = "unknown"
+
+_OBJECT_TYPE_MAP = {
+    "DATABASE": OBJECT_TYPE_DATABASE,
+    "SCHEMA": OBJECT_TYPE_SCHEMA,
+    "TABLE": OBJECT_TYPE_TABLE,
+    "VIEW": OBJECT_TYPE_VIEW,
+    "MATERIALIZED VIEW": OBJECT_TYPE_VIEW,
+    "WAREHOUSE": OBJECT_TYPE_WAREHOUSE,
+    "FUNCTION": OBJECT_TYPE_FUNCTION_PROCEDURE,
+    "PROCEDURE": OBJECT_TYPE_FUNCTION_PROCEDURE,
+    "STAGE": OBJECT_TYPE_STAGE,
+    "FILE FORMAT": OBJECT_TYPE_FILE_FORMAT,
+    "SEQUENCE": OBJECT_TYPE_SEQUENCE,
+    "PIPE": OBJECT_TYPE_PIPE,
+    "STREAM": OBJECT_TYPE_STREAM,
+    "TASK": OBJECT_TYPE_TASK,
+    "SHARE": OBJECT_TYPE_SHARE,
+    "INTEGRATION": OBJECT_TYPE_INTEGRATION,
+    "ACCOUNT": OBJECT_TYPE_ACCOUNT,
+}
+
+
+def categorize_object_type(raw_granted_on: object) -> str:
+    if not isinstance(raw_granted_on, str):
+        return OBJECT_TYPE_UNKNOWN
+    return _OBJECT_TYPE_MAP.get(raw_granted_on.strip().upper(), OBJECT_TYPE_UNKNOWN)
+
+
+def is_role_hierarchy_row(raw_granted_on: object) -> bool:
+    """True for a SHOW GRANTS TO ROLE row whose ``granted_on`` is ROLE or
+    DATABASE_ROLE — these are role-hierarchy edges (message 2's domain via
+    SHOW GRANTS OF ROLE), never normalized as an object grant here."""
+    return isinstance(raw_granted_on, str) and raw_granted_on.strip().upper() in ("ROLE", "DATABASE_ROLE")
+
+
+# ── Privilege taxonomy ────────────────────────────────────────────────────────
+#
+# Bounded structural-severity categories for Change classification. Uses
+# ONLY actual documented Snowflake privilege strings — never invented.
+# Message 5 owns full effective-privilege computation; these categories
+# exist so message 3 can classify Changes with reasonable structural
+# severity today.
+
+PRIVILEGE_CATEGORY_OWNERSHIP = "ownership"
+PRIVILEGE_CATEGORY_DATA_READ = "data_read"
+PRIVILEGE_CATEGORY_DATA_WRITE = "data_write"
+PRIVILEGE_CATEGORY_OBJECT_CREATE = "object_create"
+PRIVILEGE_CATEGORY_OPERATIONAL_CONTROL = "operational_control"
+PRIVILEGE_CATEGORY_USAGE = "usage"
+PRIVILEGE_CATEGORY_MONITOR = "monitor"
+PRIVILEGE_CATEGORY_UNKNOWN = "unknown"
+
+_PRIVILEGE_CATEGORY_MAP = {
+    "OWNERSHIP": PRIVILEGE_CATEGORY_OWNERSHIP,
+    "SELECT": PRIVILEGE_CATEGORY_DATA_READ,
+    "REFERENCES": PRIVILEGE_CATEGORY_DATA_READ,
+    "REFERENCE_USAGE": PRIVILEGE_CATEGORY_DATA_READ,
+    "INSERT": PRIVILEGE_CATEGORY_DATA_WRITE,
+    "UPDATE": PRIVILEGE_CATEGORY_DATA_WRITE,
+    "DELETE": PRIVILEGE_CATEGORY_DATA_WRITE,
+    "TRUNCATE": PRIVILEGE_CATEGORY_DATA_WRITE,
+    "USAGE": PRIVILEGE_CATEGORY_USAGE,
+    "IMPORTED PRIVILEGES": PRIVILEGE_CATEGORY_USAGE,
+    "APPLY": PRIVILEGE_CATEGORY_OPERATIONAL_CONTROL,
+    "MODIFY": PRIVILEGE_CATEGORY_OPERATIONAL_CONTROL,
+    "OPERATE": PRIVILEGE_CATEGORY_OPERATIONAL_CONTROL,
+    "MONITOR": PRIVILEGE_CATEGORY_MONITOR,
+}
+
+
+def categorize_privilege(raw_privilege: object) -> str:
+    """Categorize a raw Snowflake privilege string. ``CREATE <OBJECT>``
+    privileges (e.g. ``CREATE TABLE``, ``CREATE SCHEMA``) are matched by
+    prefix since Snowflake documents a large, growing family of them, all
+    of which grant object-creation authority — never invented, only
+    recognized by the well-documented ``CREATE `` prefix convention."""
+    if not isinstance(raw_privilege, str) or not raw_privilege.strip():
+        return PRIVILEGE_CATEGORY_UNKNOWN
+    cleaned = raw_privilege.strip().upper()
+    if cleaned.startswith("CREATE "):
+        return PRIVILEGE_CATEGORY_OBJECT_CREATE
+    return _PRIVILEGE_CATEGORY_MAP.get(cleaned, PRIVILEGE_CATEGORY_UNKNOWN)

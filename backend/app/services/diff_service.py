@@ -3887,6 +3887,40 @@ _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "parent_role_type",
         "grant_option",
     ),
+    "snowflake_database": (
+        "owner",
+        "database_kind",
+        "transient",
+    ),
+    "snowflake_schema": (
+        "owner",
+        "managed_access",
+        "transient",
+    ),
+    "snowflake_warehouse": (
+        "owner",
+        "state",
+        "size",
+        "auto_suspend",
+        "auto_resume",
+        "resource_monitor",
+    ),
+    "snowflake_share": (
+        "share_kind",
+        "owner",
+        "consumer_count",
+        "database_name",
+    ),
+    "snowflake_object_grant": (
+        "grantee_name",
+        "grantee_type",
+        "privilege",
+        "object_type",
+        "object_fqn",
+        "grant_option",
+        "future_grant",
+        "ownership",
+    ),
 }
 
 
@@ -4573,6 +4607,21 @@ def _build_provider_metadata(
         metadata["parent_role_type"] = context_record.get("parent_role_type") or record.get("parent_role_type") or ""
         metadata["child_role_name"] = context_record.get("child_role_name") or record.get("child_role_name") or ""
         metadata["child_role_type"] = context_record.get("child_role_type") or record.get("child_role_type") or ""
+
+    # Snowflake message 3: object/future grants carry grantee/privilege/
+    # object-identity context the risk classifier needs to distinguish an
+    # ordinary grant from OWNERSHIP, a PUBLIC/ACCOUNTADMIN grantee, or a
+    # future grant. Uses context_record (the NEW record on a modified
+    # change) for the same reason as the message-2 stanzas above.
+    if record.get("record_type") == "snowflake_object_grant":
+        metadata["grantee_name"] = context_record.get("grantee_name") or record.get("grantee_name") or ""
+        metadata["grantee_type"] = context_record.get("grantee_type") or record.get("grantee_type") or ""
+        metadata["privilege"] = context_record.get("privilege") or record.get("privilege") or ""
+        metadata["privilege_category"] = context_record.get("privilege_category") or record.get("privilege_category") or ""
+        metadata["object_type"] = context_record.get("object_type") or record.get("object_type") or ""
+        metadata["object_fqn"] = context_record.get("object_fqn") or record.get("object_fqn") or ""
+        metadata["future_grant"] = bool(context_record.get("future_grant") or record.get("future_grant"))
+        metadata["ownership"] = bool(context_record.get("ownership") or record.get("ownership"))
 
     if record.get("record_type") == "okta_application":
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
