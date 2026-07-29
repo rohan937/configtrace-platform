@@ -1589,14 +1589,15 @@ _ENTRA = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Microsoft Entra ID messages 1-6 of 8. Message 1 established the "
-        "read-only connector foundation (OAuth 2.0 client_credentials "
-        "app-only auth, GUID tenant/client-ID validation, stable tenant "
-        "identity, @odata.nextLink pagination, bounded 429/5xx retry, "
-        "in-memory token cache). Messages 2-5 built out full drift "
-        "coverage: identity lifecycle (users/groups/direct memberships), "
-        "application security (app registrations/service principals/"
-        "enterprise-app assignments/OAuth delegated grants/permission-risk "
+        "Microsoft Entra ID message 8 of 8 — public launch complete. "
+        "Message 1 established the read-only connector foundation (OAuth "
+        "2.0 client_credentials app-only auth, GUID tenant/client-ID "
+        "validation, stable tenant identity, @odata.nextLink pagination, "
+        "bounded 429/5xx retry, tenant/client-bound in-memory token "
+        "cache). Messages 2-5 built out full drift coverage: identity "
+        "lifecycle (users/groups/direct memberships), application "
+        "security (app registrations/service principals/enterprise-app "
+        "assignments/OAuth delegated grants/permission-risk "
         "categorization), authentication policy (Conditional Access/MFA "
         "semantics/authentication strengths/authentication methods/legacy-"
         "auth posture), and privileged identity (directory roles/role "
@@ -1610,22 +1611,41 @@ _ENTRA = ProviderCapability(
         "applications/credentials, identity lifecycle, and groups/app-"
         "assignment posture — see "
         "backend/tests/reports/entra_security_findings_matrix.md for the "
-        "full rule inventory. Distinct from this repository's existing "
-        "'azure' (Azure cloud infrastructure) provider; the two are never "
-        "merged. Microsoft commercial/global cloud only — GCC High/DoD/"
-        "China (21Vianet) national clouds are not supported and not "
-        "claimed. Change/reliability hardening (message 7) and public "
-        "launch (message 8) are not yet implemented. The provider remains "
-        "registered internally only (dispatch, schema, capability matrix, "
-        "sync scheduling, security-rule registry/confidence/pack/"
-        "evaluator) and is NOT publicly connectable — excluded from the "
-        "frontend's PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS and from "
-        "security_coverage_service.PROVIDERS until Entra message 8. "
-        "planned_next_stage: Entra message 7: exhaustive Change-"
+        "full rule inventory. Message 7 completed exhaustive Change-"
         "classification QA and partial-sync/pagination reliability "
-        "hardening."
+        "hardening (7 bugs fixed — see "
+        "backend/tests/reports/entra_reliability_change_matrix.md). "
+        "Message 8 completed public launch certification: the credential "
+        "path (tenant_id + client_id + client_secret) is wired end-to-end "
+        "through the standard integration creation and reconnect flow, "
+        "creation now runs synchronous create-time validation (app-only "
+        "token acquisition + GET /organization), Full/Partial/Invalid "
+        "coverage diagnostics are available via "
+        "build_entra_permission_diagnostics(), reconnect rejects "
+        "credentials for a genuinely different tenant while accepting "
+        "same-tenant secret/client rotation, and the integration card and "
+        "setup form are live — see "
+        "backend/tests/reports/entra_provider_certification.md. Known "
+        "limitations: no runtime sign-in-event/Identity Protection "
+        "ingestion, no per-user authentication-method enumeration, no "
+        "exact effective Conditional Access evaluation, no nested/"
+        "transitive group flattening, PIM eligible-role schedules are not "
+        "modeled (only active directory-role assignments), no "
+        "certificate-based ConfigTrace authentication (client secret "
+        "only), Microsoft commercial/global cloud only — GCC High/DoD/"
+        "China (21Vianet) national clouds are not supported. Activity "
+        "ingestion, signals, risk x activity correlations, demo/QA "
+        "seeding, and case reporting are not built for this provider — "
+        "Entra's security stack is drift + Security Findings only, the "
+        "same dual-stack scope as Okta/Kubernetes. Distinct from this "
+        "repository's existing 'azure' (Azure cloud infrastructure) "
+        "provider; the two are never merged. Microsoft Entra ID provider "
+        "expansion is complete."
     ),
 )
+
+
+PROVIDER_CAPABILITIES.append(_ENTRA)
 
 
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
@@ -1641,7 +1661,6 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
-    _ENTRA,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

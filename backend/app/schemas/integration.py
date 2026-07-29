@@ -1070,6 +1070,38 @@ class IntegrationReconnectRequest(BaseModel):
             "responses."
         ),
     )
+    entra_tenant_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Optional new Microsoft Entra tenant ID. Entra integrations "
+            "only. Only needed when rotating credentials for a different "
+            "tenant GUID — a secret rotation with no tenant change may "
+            "omit this field. A tenant ID that resolves to a genuinely "
+            "different tenant than the one this integration is connected "
+            "to is rejected."
+        ),
+    )
+    entra_client_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Optional new Microsoft Entra application (client) ID. Entra "
+            "integrations only. Only needed when rotating to a different "
+            "app registration for the SAME tenant — a secret rotation "
+            "with no client change may omit this field."
+        ),
+    )
+    entra_client_secret: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Microsoft Entra application client secret. Required for "
+            "Entra integrations. A rotated secret for the SAME tenant is "
+            "accepted; credentials resolving to a different tenant are "
+            "rejected. Stored encrypted — never returned in API responses."
+        ),
+    )
 
 
 class IntegrationResponse(BaseModel):

@@ -51,18 +51,20 @@ class TestProviderDispatchWiring:
     ):
         from unittest.mock import patch
 
+        from app.connectors.entra import EntraConnector
         from app.models.resource import Resource
         from app.schemas.integration import IntegrationResponse
         from app.services import integration_service
 
         credentials = {"tenant_id": _TENANT_ID, "client_id": _CLIENT_ID, "client_secret": _SECRET}
-        integration = integration_service.create_integration(
-            user_id=test_user.id,
-            provider="entra",
-            display_name="entra-test",
-            credentials=credentials,
-            db=db_session,
-        )
+        with patch.object(EntraConnector, "validate_credentials", return_value=True):
+            integration = integration_service.create_integration(
+                user_id=test_user.id,
+                provider="entra",
+                display_name="entra-test",
+                credentials=credentials,
+                db=db_session,
+            )
         try:
             assert integration.provider == "entra"
             assert integration.encrypted_credentials is not None
@@ -248,14 +250,17 @@ class TestDiffRiskDispatch:
 # ── Capability matrix ─────────────────────────────────────────────────────────
 
 class TestCapabilityMatrix:
-    def test_entra_registered_in_partial_list_not_complete_list(self):
+    def test_entra_registered_in_complete_list_not_partial_list(self):
+        """Message 8 (public launch): Entra is now a fully launched
+        provider — it must appear in PROVIDER_CAPABILITIES (complete), not
+        the PROVIDER_CAPABILITIES_PARTIAL staging list."""
         from app.services.provider_capability_matrix_service import (
             PROVIDER_CAPABILITIES,
             PROVIDER_CAPABILITIES_PARTIAL,
         )
 
-        assert "entra" in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
-        assert "entra" not in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "entra" in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "entra" not in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
 
     def test_entra_drift_snapshots_true_security_rules_true(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -291,28 +296,26 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("entra")
         assert cap.maturity in MATURITY_LEVELS
 
-    def test_get_matrix_does_not_include_entra_yet(self):
-        """entra is in PROVIDER_CAPABILITIES_PARTIAL (a staging list), not
-        PROVIDER_CAPABILITIES — get_matrix() only reports the latter, so
-        Entra must not appear in the public matrix endpoint's provider list
-        until a later message promotes it."""
+    def test_get_matrix_includes_entra(self):
+        """Message 8: Entra is promoted to PROVIDER_CAPABILITIES, so it
+        must now appear in the public matrix endpoint's provider list."""
         from app.services.provider_capability_matrix_service import get_matrix
 
         matrix = get_matrix()
         provider_ids = {p["provider"] for p in matrix["providers"]}
-        assert "entra" not in provider_ids
+        assert "entra" in provider_ids
 
-    def test_entra_not_in_security_coverage_providers_yet(self):
+    def test_entra_in_security_coverage_providers(self):
         from app.services.security_coverage_service import PROVIDERS
 
-        assert "entra" not in PROVIDERS
+        assert "entra" in PROVIDERS
 
 
 # ── Frontend catalog state ────────────────────────────────────────────────────
 
 class TestFrontendCatalogState:
-    """Source-scan checks (no TS execution) confirming Entra is present for
-    metadata lookups but NOT yet user-connectable."""
+    """Source-scan checks (no TS execution) confirming Entra is present and
+    fully user-connectable (message 8 — public launch)."""
 
     def _providers_ts_text(self) -> str:
         from pathlib import Path
@@ -333,26 +336,28 @@ class TestFrontendCatalogState:
         text = self._providers_ts_text()
         assert "entra: {" in text
 
-    def test_entra_not_in_connectable_provider_ids(self):
+    def test_entra_in_connectable_provider_ids(self):
         text = self._providers_ts_text()
         start = text.index("export const CONNECTABLE_PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"entra"' not in block
+        assert '"entra"' in block
 
-    def test_entra_not_in_provider_ids_display_order(self):
+    def test_entra_in_provider_ids_display_order(self):
         text = self._providers_ts_text()
         start = text.index("export const PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"entra"' not in block
+        assert '"entra"' in block
 
-    def test_entra_trust_note_does_not_claim_live_coverage(self):
+    def test_entra_card_copy_omits_stale_planned_wording(self):
         text = self._providers_ts_text()
         start = text.index("entra: {")
         end = text.index("\n  },", start)
         block = text[start:end]
-        assert "foundation" in block.lower() or "planned" in block.lower()
+        assert "(planned)" not in block
+        assert "foundation stage" not in block.lower()
+        assert "architecture-foundation" not in block.lower()
 
     def test_entra_display_name_is_microsoft_entra_id_not_azure_ad(self):
         text = self._providers_ts_text()

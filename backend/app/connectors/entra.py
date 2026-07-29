@@ -2846,3 +2846,130 @@ class EntraConnector(BaseConnector):
         # the normalized snapshot or its fingerprint.
         records.sort(key=lambda r: (r["record_type"], r["record_id"]))
         return records
+
+
+# ── Permission / coverage diagnostics (Entra message 8 — public launch) ─────
+
+_ENTRA_DIAGNOSTIC_FAMILIES: tuple[tuple[str, str], ...] = (
+    ("users", "Directory identities (users)"),
+    ("groups", "Groups"),
+    ("memberships", "Group memberships"),
+    ("applications", "Applications (app registrations)"),
+    ("service_principals", "Enterprise applications (service principals)"),
+    ("app_role_assignments", "Application/enterprise-app role assignments"),
+    ("oauth2_permission_grants", "OAuth permissions & consent (delegated grants)"),
+    ("conditional_access_policies", "Conditional Access policies"),
+    ("authentication_strengths", "Authentication strength policies"),
+    ("authentication_methods", "Authentication methods policy"),
+    ("directory_role_definitions", "Directory roles (definitions)"),
+    ("directory_role_assignments", "Directory role assignments & privileged identities"),
+)
+
+_ENTRA_DIAGNOSTIC_STATUS_LABEL: dict[str, str] = {
+    FAMILY_COMPLETE: "readable",
+    FAMILY_PARTIAL: "partially readable",
+    FAMILY_DENIED: "denied by this app registration's permissions",
+    FAMILY_UNAVAILABLE: "unavailable",
+    "unknown": "status unknown",
+}
+
+
+def build_entra_permission_diagnostics(records: list[dict]) -> dict:
+    """Build a redacted, user-facing permission/coverage diagnostics report
+    from a normalized Entra record list (the output of ``fetch()``).
+
+    Never includes the client secret, access token, Authorization header
+    value, or any raw Microsoft Graph API response — only category labels
+    and the per-family ``family_completeness`` status already present on
+    the ``entra_organization`` record.
+
+    Coverage semantics (Entra message 8, matching the Okta/Kubernetes
+    launch precedent):
+      * ``"full"``    — every monitored family reports ``"complete"``.
+      * ``"partial"`` — the tenant is reachable and at least one family is
+        readable, but one or more of the 12 families is denied,
+        unavailable, or only partially collected. This is NOT rejected —
+        a least-privileged app registration commonly cannot read
+        Conditional Access, authentication strength/method policy, or
+        directory roles without additional application permissions and
+        admin consent (see ``entra_graph_permission_matrix.md``).
+      * ``"invalid"`` — the tenant record itself could not be found (the
+        ``/organization`` call never succeeded), or literally zero of the
+        12 families are readable — a credential that can prove tenant
+        identity but reads nothing meaningful is not useful for
+        monitoring.
+    """
+    org_record = next((r for r in records if r.get("record_type") == ENTRA_ORGANIZATION), None)
+    if org_record is None:
+        return {
+            "org_reachable": False,
+            "coverage": "invalid",
+            "sections": [],
+            "security_findings_note": (
+                "Security Findings were not evaluated — the Microsoft Entra "
+                "tenant could not be reached."
+            ),
+            "change_detection_note": "Change detection is unavailable without a successful sync.",
+        }
+
+    family_completeness = org_record.get("family_completeness") or {}
+    entries = []
+    complete_count = 0
+    readable_count = 0
+    for family_key, label in _ENTRA_DIAGNOSTIC_FAMILIES:
+        status = family_completeness.get(family_key, "unknown")
+        entries.append({
+            "resource": label,
+            "status": status,
+            "status_label": _ENTRA_DIAGNOSTIC_STATUS_LABEL.get(status, "status unknown"),
+        })
+        if status == FAMILY_COMPLETE:
+            complete_count += 1
+        if status in (FAMILY_COMPLETE, FAMILY_PARTIAL):
+            readable_count += 1
+
+    if readable_count == 0:
+        coverage = "invalid"
+    elif complete_count == len(_ENTRA_DIAGNOSTIC_FAMILIES):
+        coverage = "full"
+    else:
+        coverage = "partial"
+
+    return {
+        "org_reachable": True,
+        "tenant_id": org_record.get("tenant_id"),
+        "display_name": org_record.get("display_name"),
+        "sections": [{"name": "Monitored API families", "resources": entries}],
+        "coverage": coverage,
+        "security_findings_note": (
+            "Security Findings are evaluated only for families ConfigTrace could read; "
+            "denied/unavailable families are excluded, never assumed safe."
+        ),
+        "change_detection_note": (
+            "Change detection is available for every family marked readable above; "
+            "denied/unavailable/partial families never generate false removal Changes."
+        ),
+        "record_count": len(records),
+    }
+
+
+def format_entra_permission_diagnostics_text(report: dict) -> str:
+    """Render ``build_entra_permission_diagnostics()``'s output as a plain-text
+    report. Purely a display helper — contains no information not already in
+    the structured report."""
+    if not report.get("org_reachable"):
+        return "Microsoft Entra ID connection could not be validated.\n\n" + report.get(
+            "security_findings_note", ""
+        )
+
+    lines = [
+        "Microsoft Entra ID connection validated", "",
+        f"Coverage:\n  {report['coverage'].capitalize()}", "",
+    ]
+    for section in report["sections"]:
+        lines.append(f"{section['name']}:")
+        for entry in section["resources"]:
+            lines.append(f"  {entry['resource']}: {entry['status_label']}")
+    lines.append("")
+    lines.append(f"Security Findings:\n  {report['security_findings_note']}")
+    return "\n".join(lines)

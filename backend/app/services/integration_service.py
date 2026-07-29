@@ -1734,20 +1734,35 @@ def _create_entra_integration(
     supplied display name and the non-secret tenant_id are used for
     resource identity.
 
-    Live API validation (acquiring an app-only token and confirming the
-    tenant is reachable via GET /organization) is deferred to the first
-    sync, matching the established pattern for the majority of ConfigTrace
-    providers (Auth0, GitLab, Jira, Okta's original message-1 design,
-    etc.) — this avoids leaking tenant-reachability details through a
-    synchronous create-time error message.
+    Message 8 (public launch): the tenant/client/secret are validated
+    synchronously against the live Microsoft identity platform + Graph
+    ``/organization`` endpoint before anything is written —
+    ``validate_credentials()`` acquires an app-only token and confirms the
+    tenant is reachable, without requiring any broader read permission
+    (``Organization.Read.All`` — or the broader ``Directory.Read.All`` —
+    is sufficient). This matches the Okta/Kubernetes launch precedent and
+    gives the "Invalid" launch-certification state (malformed tenant/
+    client GUID, invalid_client, wrong secret, unreachable tenant)
+    immediate feedback instead of a silent 201.
 
-    Entra is registered internally (dispatch, schema, capability matrix)
-    but is NOT publicly connectable — it is excluded from the frontend's
-    PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Entra message 8.
+    Full resource collection across the 12 monitored Graph API families
+    (and therefore the Full/Partial coverage determination —
+    ``build_entra_permission_diagnostics()``) is intentionally NOT run
+    synchronously here — a least-privileged app registration legitimately
+    cannot read every family (e.g. Conditional Access, authentication
+    method policy, or directory roles without additional application
+    permissions and admin consent), and probing that requires many calls,
+    so it stays on the first sync, same as every other multi-resource
+    provider (Okta, Kubernetes included).
     """
+    from app.connectors.entra import EntraConnector
     from app.connectors.entra_schema import validate_tenant_id
 
     tenant_id = validate_tenant_id(credentials.get("tenant_id"))
+
+    # Raises AuthenticationError / NetworkError / ConnectorError — caught by
+    # the router and returned as a 400/502, matching every other provider.
+    EntraConnector().validate_credentials(credentials)
 
     # ── 1. Encrypt credentials ────────────────────────────────────────────────
     ciphertext, iv = encrypt_credentials(credentials)
@@ -2519,6 +2534,111 @@ def reconnect_credentials_okta(
             "this integration is connected to. To monitor a different Okta "
             "org, create a new integration instead of replacing this one's "
             "credentials."
+        )
+
+    # Encrypt and store.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
+    if integration.status in ("error", "needs_reconnect"):
+        integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_entra(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_tenant_id: str | None,
+    new_client_id: str | None,
+    new_client_secret: str,
+    db: Session,
+) -> Integration:
+    """Replace the client secret (and optionally the tenant ID / client ID)
+    for an existing Microsoft Entra ID integration.
+
+    The new credentials are validated against the live Microsoft identity
+    platform + Graph ``/organization`` endpoint before the database row is
+    updated. Because an Entra tenant ID is itself the immutable tenant
+    identity (supplied up front, never resolved via a separate lookup —
+    see ``EntraConnector.compute_tenant_id()``), a genuinely different
+    tenant is detected by direct comparison, with no extra Graph call
+    required beyond the credential-validation call.
+
+    Supports:
+      * same tenant + rotated secret (token-only rotation)
+      * same tenant + new client (app registration) ID + new secret
+        (client rotation) — accepted as long as the tenant identity is
+        unchanged
+      * different tenant — rejected; the caller must create a new
+        integration instead
+
+    SECURITY: the client secret is stored encrypted only. It is NEVER
+    logged or returned.
+    """
+    from app.connectors.entra import EntraConnector
+    from app.connectors.entra_schema import validate_client_id, validate_tenant_id
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # tenant_id/client_id may be omitted for a secret-only rotation — fall
+    # back to the existing encrypted credentials so the same app
+    # registration is reused.
+    existing_creds = decrypt_credentials(
+        integration.encrypted_credentials,
+        integration.credential_iv,
+    )
+    tenant_id = validate_tenant_id(new_tenant_id or existing_creds.get("tenant_id"))
+    client_id = validate_client_id(new_client_id or existing_creds.get("client_id"))
+
+    new_creds = {"tenant_id": tenant_id, "client_id": client_id, "client_secret": new_client_secret}
+
+    connector = EntraConnector()
+    # Validates tenant_id/client_id shape and that the secret is accepted.
+    # Raises AuthenticationError/NetworkError/ConnectorError on failure.
+    connector.validate_credentials(new_creds)
+
+    new_stable_tenant_id = connector.compute_tenant_id(tenant_id, {})
+
+    existing_org_resource = (
+        db.query(Resource)
+        .filter(
+            Resource.integration_id == integration_id,
+            Resource.provider_resource_type == "entra_organization",
+        )
+        .first()
+    )
+    # A pre-first-sync resource row still has the creation-time placeholder
+    # provider_resource_id (str(integration.id)) rather than a real
+    # "organization/<tenant_id>" identity — only compare once a real
+    # identity has actually been recorded, otherwise every reconnect
+    # attempted before the first sync would spuriously look like a tenant
+    # mismatch.
+    existing_resource_id = (
+        existing_org_resource.provider_resource_id if existing_org_resource is not None else None
+    )
+    existing_stable_tenant_id = (
+        existing_resource_id[len("organization/"):]
+        if isinstance(existing_resource_id, str) and existing_resource_id.startswith("organization/")
+        else None
+    )
+
+    if existing_stable_tenant_id and existing_stable_tenant_id != new_stable_tenant_id:
+        raise ConnectorError(
+            "These credentials point to a different Microsoft Entra tenant "
+            "than the one this integration is connected to. To monitor a "
+            "different tenant, create a new integration instead of "
+            "replacing this one's credentials."
         )
 
     # Encrypt and store.

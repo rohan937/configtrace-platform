@@ -188,7 +188,9 @@ export interface IntegrationCreateRequest {
     // ── Kubernetes message 9 — public launch ───────────────────────────────────
     | "kubernetes"
     // ── Okta message 8 — public launch ─────────────────────────────────────────
-    | "okta";
+    | "okta"
+    // ── Microsoft Entra ID message 8 — public launch ────────────────────────────
+    | "entra";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -427,6 +429,18 @@ export interface IntegrationCreateRequest {
    * server-side — NEVER returned in API responses.
    */
   okta_api_token?: string;
+  // ── Microsoft Entra ID fields (message 8 — public launch) ───────────────────
+  /** Microsoft Entra tenant (directory) GUID. Required for the entra provider. */
+  entra_tenant_id?: string;
+  /** Application (client) ID of the app registration used for ConfigTrace. Required for entra. */
+  entra_client_id?: string;
+  /**
+   * Client secret for the app registration.
+   * Sent to backend once; never stored in frontend state after submission,
+   * never logged, never echoed back. Stored encrypted server-side — NEVER
+   * returned in API responses.
+   */
+  entra_client_secret?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

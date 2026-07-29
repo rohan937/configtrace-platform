@@ -54,6 +54,7 @@ PROVIDERS = [
     "terraform_cloud",
     "kubernetes",
     "okta",
+    "entra",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -699,11 +700,10 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "okta_app_assigned_to_everyone_group": ("okta_application_group_assignment",),
     "okta_deprovisioned_user_retains_app_assignment": ("okta_application_user_assignment",),
     "okta_suspended_user_retains_app_assignment": ("okta_application_user_assignment",),
-    # Microsoft Entra ID (message 6 of 8) — groundwork mapping only. "entra"
-    # is NOT added to PROVIDERS/PROVIDER_SURFACES below (the provider is not
-    # publicly connectable until Entra message 8 — see the module docstring
-    # and the provider_capability_matrix_service notes), mirroring how Okta
-    # required RULE_RECORD_TYPES parity ahead of its own later public launch.
+    # Microsoft Entra ID (message 8 of 8 — public launch). "entra" is now
+    # in PROVIDERS above; the 45 rule -> record_type mappings below were
+    # built in message 6 ahead of the public launch, mirroring Okta's own
+    # message-5/message-8 sequencing.
     "entra_global_admin_assigned": ("entra_directory_role_assignment",),
     "entra_privileged_role_administrator_assigned": ("entra_directory_role_assignment",),
     "entra_privileged_authentication_administrator_assigned": ("entra_directory_role_assignment",),
@@ -908,6 +908,13 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Password policy",
         "Application SSO (OIDC/SAML) configuration",
         "Application user/group assignments",
+    ],
+    "entra": [
+        "Directory role assignments & privileged identity/group/service-principal posture",
+        "Conditional Access & MFA requirement posture",
+        "Authentication strengths & authentication methods policy",
+        "Applications, service principals, and enterprise-app assignments",
+        "OAuth delegated permission grants / consent posture",
     ],
 }
 

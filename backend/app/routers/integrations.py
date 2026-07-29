@@ -933,6 +933,41 @@ def reconnect_integration(
                 detail=f"Could not reach the Okta org: {exc}",
             ) from exc
         return _build_response(integration, db)
+    elif integration.provider == "entra":
+        if not body.entra_client_secret:
+            raise HTTPException(
+                status_code=422,
+                detail="entra_client_secret is required for Microsoft Entra ID integrations.",
+            )
+        try:
+            integration = integration_service.reconnect_credentials_entra(
+                integration_id=integration_id,
+                user_id=current_user.id,
+                new_tenant_id=body.entra_tenant_id,
+                new_client_id=body.entra_client_id,
+                new_client_secret=body.entra_client_secret,
+                db=db,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Authentication failed: {exc}",
+            ) from exc
+        except ConnectorError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider validation error: {exc}",
+            ) from exc
+        except NetworkError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach Microsoft Graph: {exc}",
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _build_response(integration, db)
     else:
         raise HTTPException(
             status_code=400,

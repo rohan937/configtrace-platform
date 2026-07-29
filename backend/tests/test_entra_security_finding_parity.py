@@ -152,18 +152,15 @@ class TestPackParity:
 
 
 class TestCoverageParity:
-    def test_entra_not_in_connectable_providers_list(self):
-        # Entra is NOT publicly connectable until Entra message 8 — must not
-        # appear in the live connected-integration coverage surface yet.
-        assert "entra" not in security_coverage_service.PROVIDERS
+    def test_entra_in_connectable_providers_list(self):
+        # Message 8: Entra is now publicly connectable — must appear in the
+        # live connected-integration coverage surface.
+        assert "entra" in security_coverage_service.PROVIDERS
 
-    def test_entra_not_in_provider_surfaces(self):
-        assert "entra" not in security_coverage_service.PROVIDER_SURFACES
+    def test_entra_in_provider_surfaces(self):
+        assert "entra" in security_coverage_service.PROVIDER_SURFACES
 
     def test_every_registered_entra_rule_has_record_types(self):
-        # Groundwork mapping parity is still required ahead of message 8,
-        # mirroring Okta's identical pre-launch requirement at its own
-        # message 6.
         missing = _registry_entra_keys() - _coverage_entra_keys()
         assert not missing, f"missing coverage RULE_RECORD_TYPES entries: {sorted(missing)}"
 

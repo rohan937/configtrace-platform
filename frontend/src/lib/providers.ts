@@ -608,26 +608,23 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     borderColor: "rgba(252,109,38,0.25)",
   },
 
-  // ── Microsoft Entra ID message 1 — provider architecture foundation ────────
-  // NOT included in PROVIDER_IDS or CONNECTABLE_PROVIDER_IDS yet — there is
-  // no connect-form UI built yet, so this entry exists only so
-  // getProviderMeta("entra") resolves safely if referenced. Do not surface
-  // this provider as connectable or "Live" until Entra message 8.
+  // ── Microsoft Entra ID message 8 — public launch ────────────────────────────
   entra: {
     id: "entra",
     label: "Microsoft Entra ID",
     shortLabel: "Entra ID",
     category: "identity",
     description:
-      "Connect a Microsoft Entra ID tenant with a read-only app registration (client credentials). ConfigTrace will monitor identity, application access, authentication policy, and privileged-role configuration across Microsoft Entra ID (formerly Azure AD).",
+      "Connect a Microsoft Entra ID tenant with a read-only app registration (client credentials). ConfigTrace tracks configuration drift and flags security risk across identity lifecycle, applications and enterprise apps, OAuth consent, Conditional Access, authentication methods, and privileged directory-role assignments.",
     monitoredSurfaces: [
-      "Users, groups, and group memberships (planned)",
-      "Enterprise applications, service principals, and app registrations (planned)",
-      "Conditional Access, authentication methods, and MFA posture (planned)",
-      "Directory roles, privileged identities, and consent grants (planned)",
+      "Users, groups, and group memberships (lifecycle status only — no profile attributes)",
+      "Applications, service principals, and enterprise-app assignments",
+      "OAuth delegated permission grants (consent) and Graph application permissions",
+      "Conditional Access policies, authentication strengths, and authentication methods",
+      "Directory role definitions/assignments and derived privileged identity/group/service-principal posture",
     ],
     trustNote:
-      "ConfigTrace stores your Microsoft Entra app registration client secret encrypted and uses it only to read tenant configuration metadata via Microsoft Graph. It does not store the client secret value, passwords, password hashes, recovery codes, authentication method secrets, private keys, certificates containing private key material, or session/refresh/access tokens. This provider is in architecture-foundation stage: only tenant identity and read-permission capability metadata are currently collected. User, group, application, Conditional Access, and directory-role monitoring are planned in upcoming stages and are not yet live. Supports the Microsoft commercial/global cloud only — GCC High, DoD, and China (21Vianet) national clouds are not supported.",
+      "ConfigTrace stores your Microsoft Entra app registration client secret encrypted and uses it only to read tenant configuration metadata via Microsoft Graph. It does not store the client secret value, passwords, password hashes, recovery codes, authentication method secrets, private keys, certificates containing private key material, or session/refresh/access tokens. ConfigTrace requests only the read application permissions needed for the surfaces above and never asks for Directory.ReadWrite.All or Global Administrator — a least-privileged app registration may not be granted every optional permission (e.g. Conditional Access, authentication methods, or directory roles), which is expected and does not block the connection; coverage diagnostics are shown after the first sync. ConfigTrace does not ingest runtime sign-in events or Identity Protection risk events, does not enumerate per-user authentication methods, does not evaluate the exact effective outcome of Conditional Access for a given sign-in, does not flatten nested/transitive group membership, and does not model Privileged Identity Management (PIM) eligible-role schedules — only active directory-role assignments are observed. Supports the Microsoft commercial/global cloud only — GCC High, DoD, and China (21Vianet) national clouds are not supported.",
     color: "#0078D4",
     bgColor: "rgba(0,120,212,0.10)",
     borderColor: "rgba(0,120,212,0.25)",
@@ -668,6 +665,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "kubernetes",
   // ── Okta message 8 — public launch ───────────────────────────────────────
   "okta",
+  // ── Microsoft Entra ID message 8 — public launch ─────────────────────────
+  "entra",
 ];
 
 /**
@@ -710,6 +709,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "kubernetes",
   // ── Okta message 8 — public launch ───────────────────────────────────────
   "okta",
+  // ── Microsoft Entra ID message 8 — public launch ─────────────────────────
+  "entra",
 ];
 
 /**

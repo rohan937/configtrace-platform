@@ -41,6 +41,7 @@ import GitLabIntegrationForm from "@/components/integrations/GitLabIntegrationFo
 import TerraformCloudIntegrationForm from "@/components/integrations/TerraformCloudIntegrationForm";
 import KubernetesIntegrationForm from "@/components/integrations/KubernetesIntegrationForm";
 import OktaIntegrationForm from "@/components/integrations/OktaIntegrationForm";
+import EntraIntegrationForm from "@/components/integrations/EntraIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -1349,6 +1350,10 @@ export default function IntegrationsPage() {
     // ── Okta message 8 — public launch ───────────────────────────────────────────
     if (selectedProvider === "okta") {
       return <OktaIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── Microsoft Entra ID message 8 — public launch ──────────────────────────────
+    if (selectedProvider === "entra") {
+      return <EntraIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {
