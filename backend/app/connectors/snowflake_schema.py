@@ -690,3 +690,245 @@ def categorize_privilege(raw_privilege: object) -> str:
     if cleaned.startswith("CREATE "):
         return PRIVILEGE_CATEGORY_OBJECT_CREATE
     return _PRIVILEGE_CATEGORY_MAP.get(cleaned, PRIVILEGE_CATEGORY_UNKNOWN)
+
+
+# ── Snowflake message 4: network/authentication policy + security/storage/
+#    external-access integration coverage ────────────────────────────────────
+
+SNOWFLAKE_NETWORK_POLICY = "snowflake_network_policy"
+SNOWFLAKE_NETWORK_RULE = "snowflake_network_rule"
+SNOWFLAKE_AUTHENTICATION_POLICY = "snowflake_authentication_policy"
+SNOWFLAKE_SECURITY_INTEGRATION = "snowflake_security_integration"
+SNOWFLAKE_STORAGE_INTEGRATION = "snowflake_storage_integration"
+SNOWFLAKE_EXTERNAL_ACCESS_INTEGRATION = "snowflake_external_access_integration"
+
+ALL_SNOWFLAKE_RECORD_TYPES = ALL_SNOWFLAKE_RECORD_TYPES | frozenset({
+    SNOWFLAKE_NETWORK_POLICY,
+    SNOWFLAKE_NETWORK_RULE,
+    SNOWFLAKE_AUTHENTICATION_POLICY,
+    SNOWFLAKE_SECURITY_INTEGRATION,
+    SNOWFLAKE_STORAGE_INTEGRATION,
+    SNOWFLAKE_EXTERNAL_ACCESS_INTEGRATION,
+})
+
+COLLECTION_FAMILY_NETWORK_POLICIES = "network_policies"
+COLLECTION_FAMILY_NETWORK_RULES = "network_rules"
+COLLECTION_FAMILY_AUTHENTICATION_POLICIES = "authentication_policies"
+COLLECTION_FAMILY_SECURITY_INTEGRATIONS = "security_integrations"
+COLLECTION_FAMILY_STORAGE_INTEGRATIONS = "storage_integrations"
+COLLECTION_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS = "external_access_integrations"
+
+POLICY_COLLECTION_FAMILIES: tuple[str, ...] = (
+    COLLECTION_FAMILY_NETWORK_POLICIES,
+    COLLECTION_FAMILY_NETWORK_RULES,
+    COLLECTION_FAMILY_AUTHENTICATION_POLICIES,
+    COLLECTION_FAMILY_SECURITY_INTEGRATIONS,
+    COLLECTION_FAMILY_STORAGE_INTEGRATIONS,
+    COLLECTION_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS,
+)
+
+# Deferred this message (documented, not silently dropped): API integrations
+# (category=API, more deployment/API-Gateway infrastructure than central
+# account security posture — task explicitly permits deferring) and session
+# policies (idle/session timeout posture — materially smaller security
+# signal than network/authentication policies; would require yet another
+# SHOW + per-policy DESCRIBE round trip for comparatively low value this
+# message). Both remain candidates for a future message.
+
+
+# ── Detail-collection completeness (per-record, distinct from family
+#    completeness) ───────────────────────────────────────────────────────────
+#
+# A SHOW-level list can succeed while a per-record DESCRIBE fails for one
+# specific object — the object's identity/list-level fields must still be
+# preserved (never dropped), with only the DESCRIBE-derived fields left
+# unknown. Reuses the same FAMILY_* string values as message-1's family
+# completeness taxonomy for consistency (complete/partial/denied/
+# unavailable), scoped to a single record instead of a whole family.
+DETAIL_COMPLETE = FAMILY_COMPLETE
+DETAIL_DENIED = FAMILY_DENIED
+DETAIL_UNAVAILABLE = FAMILY_UNAVAILABLE
+
+
+# ── Broad-network-access tri-state ──────────────────────────────────────────
+#
+# Confirmed via current official docs (DESCRIBE NETWORK POLICY reference):
+# ALLOWED_IP_LIST/BLOCKED_IP_LIST return the actual configured CIDR ranges.
+# This connector checks ONLY for the literal "0.0.0.0/0" (IPv4-anywhere) and
+# "::/0" (IPv6-anywhere) substrings in that per-policy DESCRIBE response —
+# the full list is discarded immediately after the check and NEVER stored
+# on the normalized record (task's own IP/CIDR privacy boundary).
+
+BROAD_ACCESS_TRUE = "true"
+BROAD_ACCESS_FALSE = "false"
+BROAD_ACCESS_UNKNOWN = "unknown"
+
+
+def categorize_broad_access(contains_anywhere_sentinel: Optional[bool]) -> str:
+    if contains_anywhere_sentinel is None:
+        return BROAD_ACCESS_UNKNOWN
+    return BROAD_ACCESS_TRUE if contains_anywhere_sentinel else BROAD_ACCESS_FALSE
+
+
+# ── Authentication-method taxonomy ──────────────────────────────────────────
+#
+# Confirmed via current official docs (CREATE AUTHENTICATION POLICY
+# reference): AUTHENTICATION_METHODS accepts ALL, SAML, OIDC, PASSWORD,
+# OAUTH, KEYPAIR, PROGRAMMATIC_ACCESS_TOKEN, WORKLOAD_IDENTITY.
+
+AUTH_METHOD_ALL = "all"
+AUTH_METHOD_SAML = "saml"
+AUTH_METHOD_OIDC = "oidc"
+AUTH_METHOD_PASSWORD = "password"
+AUTH_METHOD_OAUTH = "oauth"
+AUTH_METHOD_KEYPAIR = "keypair"
+AUTH_METHOD_PROGRAMMATIC_ACCESS_TOKEN = "programmatic_access_token"
+AUTH_METHOD_WORKLOAD_IDENTITY = "workload_identity"
+AUTH_METHOD_UNKNOWN = "unknown"
+
+_AUTH_METHOD_MAP = {
+    "ALL": AUTH_METHOD_ALL,
+    "SAML": AUTH_METHOD_SAML,
+    "OIDC": AUTH_METHOD_OIDC,
+    "PASSWORD": AUTH_METHOD_PASSWORD,
+    "OAUTH": AUTH_METHOD_OAUTH,
+    "KEYPAIR": AUTH_METHOD_KEYPAIR,
+    "PROGRAMMATIC_ACCESS_TOKEN": AUTH_METHOD_PROGRAMMATIC_ACCESS_TOKEN,
+    "WORKLOAD_IDENTITY": AUTH_METHOD_WORKLOAD_IDENTITY,
+}
+
+
+def categorize_auth_methods(raw_methods: object) -> list[str]:
+    """Categorize a comma/list-shaped AUTHENTICATION_METHODS value into a
+    bounded list of categories. Never invents a method; anything
+    unrecognized is dropped from the list rather than guessed (the caller
+    can tell a method was filtered by comparing count-of-raw vs
+    count-of-categorized only if it chooses to; this function does not
+    fabricate an 'unknown' placeholder per unrecognized entry to avoid
+    implying a specific count of unrecognized methods)."""
+    if isinstance(raw_methods, str):
+        raw_list = [m.strip().strip("'\"") for m in raw_methods.strip("[]").split(",") if m.strip()]
+    elif isinstance(raw_methods, list):
+        raw_list = [str(m).strip() for m in raw_methods if str(m).strip()]
+    else:
+        return []
+    return [_AUTH_METHOD_MAP[m.upper()] for m in raw_list if m.upper() in _AUTH_METHOD_MAP]
+
+
+# ── MFA enrollment taxonomy ──────────────────────────────────────────────────
+#
+# Confirmed via current official docs (CREATE AUTHENTICATION POLICY
+# reference): MFA_ENROLLMENT accepts REQUIRED, REQUIRED_PASSWORD_ONLY,
+# OPTIONAL. Never conflated with service-user PAT/key-pair authentication —
+# Snowflake's MFA enforcement model applies to human/password-adjacent
+# login, not machine-to-machine PAT/key-pair auth (see the connector
+# module docstring for the full person-vs-service authentication
+# rationale).
+
+MFA_ENROLLMENT_REQUIRED = "required"
+MFA_ENROLLMENT_REQUIRED_PASSWORD_ONLY = "required_password_only"
+MFA_ENROLLMENT_OPTIONAL = "optional"
+MFA_ENROLLMENT_UNKNOWN = "unknown"
+
+_MFA_ENROLLMENT_MAP = {
+    "REQUIRED": MFA_ENROLLMENT_REQUIRED,
+    "REQUIRED_PASSWORD_ONLY": MFA_ENROLLMENT_REQUIRED_PASSWORD_ONLY,
+    "OPTIONAL": MFA_ENROLLMENT_OPTIONAL,
+}
+
+
+def categorize_mfa_enrollment(raw_value: object) -> str:
+    if not isinstance(raw_value, str):
+        return MFA_ENROLLMENT_UNKNOWN
+    return _MFA_ENROLLMENT_MAP.get(raw_value.strip().upper(), MFA_ENROLLMENT_UNKNOWN)
+
+
+# ── Client-types taxonomy ────────────────────────────────────────────────────
+#
+# Confirmed via current official docs: CLIENT_TYPES accepts ALL,
+# SNOWFLAKE_UI, DRIVERS, SNOWFLAKE_CLI, SNOWSQL. Stored as a bounded
+# category, never a raw free-form list.
+
+CLIENT_TYPES_ALL = "all"
+CLIENT_TYPES_RESTRICTED = "restricted"
+CLIENT_TYPES_UNKNOWN = "unknown"
+
+
+def categorize_client_types(raw_value: object) -> str:
+    """ALL means every client type is permitted; any other non-empty,
+    narrower configuration is 'restricted' (the specific allowed types are
+    intentionally not enumerated here — this is a coarse posture category,
+    not a full client-type inventory)."""
+    if isinstance(raw_value, list):
+        if not raw_value:
+            return CLIENT_TYPES_UNKNOWN
+        joined = ",".join(str(v) for v in raw_value).upper()
+    elif isinstance(raw_value, str) and raw_value.strip():
+        joined = raw_value.strip().upper()
+    else:
+        return CLIENT_TYPES_UNKNOWN
+    return CLIENT_TYPES_ALL if "ALL" in joined else CLIENT_TYPES_RESTRICTED
+
+
+# ── Security-integration type taxonomy ──────────────────────────────────────
+#
+# Confirmed via current official docs (CREATE SECURITY INTEGRATION
+# reference): TYPE accepts API_AUTHENTICATION, EXTERNAL_OAUTH, OAUTH,
+# OIDC, SAML2, SCIM. ``OAUTH`` alone (Snowflake OAuth) is distinguished
+# from ``EXTERNAL_OAUTH`` — never conflated.
+
+INTEGRATION_TYPE_SAML2 = "saml2"
+INTEGRATION_TYPE_OAUTH_SNOWFLAKE = "oauth_snowflake"
+INTEGRATION_TYPE_EXTERNAL_OAUTH = "external_oauth"
+INTEGRATION_TYPE_OIDC = "oidc"
+INTEGRATION_TYPE_SCIM = "scim"
+INTEGRATION_TYPE_API_AUTHENTICATION = "api_authentication"
+INTEGRATION_TYPE_UNKNOWN = "unknown"
+
+_INTEGRATION_TYPE_MAP = {
+    "SAML2": INTEGRATION_TYPE_SAML2,
+    "OAUTH": INTEGRATION_TYPE_OAUTH_SNOWFLAKE,
+    "EXTERNAL_OAUTH": INTEGRATION_TYPE_EXTERNAL_OAUTH,
+    "OIDC": INTEGRATION_TYPE_OIDC,
+    "SCIM": INTEGRATION_TYPE_SCIM,
+    "API_AUTHENTICATION": INTEGRATION_TYPE_API_AUTHENTICATION,
+}
+
+
+def categorize_integration_type(raw_type: object) -> str:
+    if not isinstance(raw_type, str):
+        return INTEGRATION_TYPE_UNKNOWN
+    cleaned = raw_type.strip().upper()
+    # SHOW INTEGRATIONS' `type` column may render as e.g. "OAUTH - SNOWFLAKE_OAUTH"
+    # or "SAML2" alone depending on integration subtype — match the leading
+    # token against the documented TYPE values rather than requiring an
+    # exact full-string match.
+    leading_token = cleaned.split(" ")[0].split("-")[0].strip()
+    if "EXTERNAL_OAUTH" in cleaned:
+        return INTEGRATION_TYPE_EXTERNAL_OAUTH
+    return _INTEGRATION_TYPE_MAP.get(leading_token, INTEGRATION_TYPE_UNKNOWN)
+
+
+# ── Storage-provider taxonomy ────────────────────────────────────────────────
+#
+# Confirmed via current official docs (CREATE STORAGE INTEGRATION
+# reference): STORAGE_PROVIDER accepts S3, S3CHINA, S3GOV, GCS, AZURE.
+
+STORAGE_PROVIDER_S3 = "s3"
+STORAGE_PROVIDER_GCS = "gcs"
+STORAGE_PROVIDER_AZURE = "azure"
+STORAGE_PROVIDER_UNKNOWN = "unknown"
+
+_STORAGE_PROVIDER_MAP = {
+    "S3": STORAGE_PROVIDER_S3,
+    "S3CHINA": STORAGE_PROVIDER_S3,
+    "S3GOV": STORAGE_PROVIDER_S3,
+    "GCS": STORAGE_PROVIDER_GCS,
+    "AZURE": STORAGE_PROVIDER_AZURE,
+}
+
+
+def categorize_storage_provider(raw_provider: object) -> str:
+    if not isinstance(raw_provider, str):
+        return STORAGE_PROVIDER_UNKNOWN
+    return _STORAGE_PROVIDER_MAP.get(raw_provider.strip().upper(), STORAGE_PROVIDER_UNKNOWN)

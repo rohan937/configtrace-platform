@@ -1,5 +1,5 @@
-"""Snowflake risk classification rules — foundation, identity/role, and
-data-object security coverage (Snowflake messages 1-3 of 8).
+"""Snowflake risk classification rules — foundation, identity/role,
+data-object, and security-policy coverage (Snowflake messages 1-4 of 8).
 
 This module exists to give every ``snowflake_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -38,12 +38,21 @@ Classification here is deliberately structural, not incident-level:
   as "data is public" — Snowflake secure sharing is account-to-account
   only, never global.
 
-Future messages (4-7) will add classifiers for network/authentication/
-security integrations and privileged-role posture as those record types
-are introduced — this module's dispatcher already fails safely into a
-generic low-severity message for any ``snowflake_*`` record type that does
-not have a classifier yet, so this module continues to work unmodified as
-an incremental target for those insertions.
+- Message 4 (network policies/rules, authentication policies, security/
+  storage/external-access integrations) classifies broad-network-access
+  introduction (0.0.0.0/0 or ::/0) as High, MFA-required-removed as High,
+  and treats "unknown" broad-access/MFA state as never broad/never
+  required (unknown-safe discipline) — a missing per-record DESCRIBE never
+  silently implies the strongest OR weakest posture. Enabling a
+  federated-SSO/OAuth/SCIM integration is Medium (posture broadened, not
+  itself an incident); disabling one is Low (restrictive, though it could
+  break functionality — message 6 owns whether that's itself a Finding).
+
+Future messages (5-7) will add privileged-role/effective-privilege posture
+as those record types are introduced — this module's dispatcher already
+fails safely into a generic low-severity message for any ``snowflake_*``
+record type that does not have a classifier yet, so this module continues
+to work unmodified as an incremental target for those insertions.
 """
 
 from __future__ import annotations
@@ -51,9 +60,13 @@ from __future__ import annotations
 from typing import Any
 
 from app.connectors.snowflake_schema import (
+    BROAD_ACCESS_TRUE,
     CAPABILITY_AVAILABLE,
     DISABLED_DISABLED,
     DISABLED_ENABLED,
+    MFA_ENROLLMENT_OPTIONAL,
+    MFA_ENROLLMENT_REQUIRED,
+    MFA_ENROLLMENT_REQUIRED_PASSWORD_ONLY,
     PRIVILEGE_CATEGORY_DATA_WRITE,
     PRIVILEGE_CATEGORY_MONITOR,
     PRIVILEGE_CATEGORY_OBJECT_CREATE,
@@ -62,12 +75,18 @@ from app.connectors.snowflake_schema import (
     SNOWFLAKE_ACCOUNT,
     SNOWFLAKE_ACCOUNT_ROLE,
     SNOWFLAKE_API_CAPABILITY,
+    SNOWFLAKE_AUTHENTICATION_POLICY,
     SNOWFLAKE_DATABASE,
     SNOWFLAKE_DATABASE_ROLE,
+    SNOWFLAKE_EXTERNAL_ACCESS_INTEGRATION,
+    SNOWFLAKE_NETWORK_POLICY,
+    SNOWFLAKE_NETWORK_RULE,
     SNOWFLAKE_OBJECT_GRANT,
     SNOWFLAKE_ROLE_HIERARCHY_GRANT,
     SNOWFLAKE_SCHEMA,
+    SNOWFLAKE_SECURITY_INTEGRATION,
     SNOWFLAKE_SHARE,
+    SNOWFLAKE_STORAGE_INTEGRATION,
     SNOWFLAKE_USER,
     SNOWFLAKE_USER_ROLE_GRANT,
     SNOWFLAKE_WAREHOUSE,
@@ -77,6 +96,12 @@ from app.connectors.snowflake_schema import (
 # direct grant/hierarchy severity — message 5 owns the full
 # effective-privilege graph and may deepen or override these.
 _CRITICAL_BUILT_IN_ROLES = {"ACCOUNTADMIN", "SECURITYADMIN"}
+
+_MFA_WEAKER_RANK = {
+    MFA_ENROLLMENT_REQUIRED: 2,
+    MFA_ENROLLMENT_REQUIRED_PASSWORD_ONLY: 1,
+    MFA_ENROLLMENT_OPTIONAL: 0,
+}
 _ACCOUNTADMIN = "ACCOUNTADMIN"
 _PUBLIC = "PUBLIC"
 _HIGH_IMPACT_PRIVILEGE_CATEGORIES = {
@@ -370,6 +395,171 @@ def _classify_object_grant_change(change: object) -> tuple[str, str]:
     return "medium", f"A Snowflake {privilege} grant was added."
 
 
+def _classify_network_policy_change(change: object) -> tuple[str, str]:
+    """Broad-network-access (0.0.0.0/0 / ::/0) introduction is High.
+    Unknown broad-access state is NEVER treated as broad (unknown-safe
+    discipline) — only an explicit "true" escalates."""
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        raw_pm = _get(change, "provider_metadata")
+        pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+        if pm.get("allows_anywhere_ipv4") == BROAD_ACCESS_TRUE or pm.get("allows_anywhere_ipv6") == BROAD_ACCESS_TRUE:
+            return "high", "A new Snowflake network policy explicitly allows access from anywhere (0.0.0.0/0 or ::/0)."
+        return "low", "A new Snowflake network policy was added to monitoring."
+    if ct == "removed":
+        return "medium", "A Snowflake network policy is no longer visible to ConfigTrace — protective network controls may have been removed."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp in ("allows_anywhere_ipv4", "allows_anywhere_ipv6"):
+        nv = _get(change, "new_value")
+        pv = _get(change, "prev_value")
+        if nv == BROAD_ACCESS_TRUE and pv != BROAD_ACCESS_TRUE:
+            return "high", "A Snowflake network policy now allows access from anywhere (0.0.0.0/0 or ::/0) — broad network access introduced."
+        if pv == BROAD_ACCESS_TRUE and nv != BROAD_ACCESS_TRUE:
+            return "low", "A Snowflake network policy no longer allows access from anywhere — a restrictive change."
+        return "low", "A Snowflake network policy's broad-access posture changed."
+    if fp == "allowed_ipv4_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return "medium", "A Snowflake network policy's allowed IP range count increased."
+        return "low", "A Snowflake network policy's allowed IP range count changed."
+    if fp == "blocked_ipv4_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv < pv:
+            return "medium", "A Snowflake network policy's blocked IP range count decreased."
+        return "low", "A Snowflake network policy's blocked IP range count changed."
+    if fp == "owner":
+        return "medium", "A Snowflake network policy's ownership was transferred to a different role."
+    return "low", "A Snowflake network policy's metadata changed."
+
+
+def _classify_network_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Snowflake network rule was added to monitoring."
+    if ct == "removed":
+        return "low", "A Snowflake network rule is no longer visible to ConfigTrace."
+    return "low", "A Snowflake network rule's metadata changed."
+
+
+def _classify_authentication_policy_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Snowflake authentication policy was added to monitoring."
+    if ct == "removed":
+        return "medium", "A Snowflake authentication policy is no longer visible to ConfigTrace — an authentication requirement may have been removed."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp == "mfa_enrollment":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        nv_rank = _MFA_WEAKER_RANK.get(nv, None)
+        pv_rank = _MFA_WEAKER_RANK.get(pv, None)
+        if nv_rank is not None and pv_rank is not None:
+            if nv_rank < pv_rank:
+                return "high", "A Snowflake authentication policy's MFA enrollment requirement was weakened."
+            if nv_rank > pv_rank:
+                return "low", "A Snowflake authentication policy's MFA enrollment requirement was strengthened."
+        return "low", "A Snowflake authentication policy's MFA enrollment setting changed."
+    if fp == "authentication_methods":
+        nv = _get(change, "new_value") or []
+        pv = _get(change, "prev_value") or []
+        if isinstance(nv, list) and isinstance(pv, list):
+            if set(nv) - set(pv):
+                return "medium", "A Snowflake authentication policy's allowed authentication methods were broadened."
+            if set(pv) - set(nv):
+                return "low", "A Snowflake authentication policy's allowed authentication methods were narrowed."
+        return "low", "A Snowflake authentication policy's allowed authentication methods changed."
+    if fp == "client_types":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv == "all" and pv == "restricted":
+            return "medium", "A Snowflake authentication policy's allowed client types were broadened to all clients."
+        return "low", "A Snowflake authentication policy's allowed client types changed."
+    if fp == "owner":
+        return "medium", "A Snowflake authentication policy's ownership was transferred to a different role."
+    return "low", "A Snowflake authentication policy's metadata changed."
+
+
+def _classify_security_integration_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    enabled = pm.get("enabled")
+    integration_type = pm.get("integration_type") or ""
+
+    if ct == "added":
+        if enabled == "true":
+            return "medium", f"A new Snowflake {integration_type} security integration was added and enabled."
+        return "low", f"A new Snowflake {integration_type} security integration was added (disabled)."
+    if ct == "removed":
+        if enabled == "true":
+            return "medium", f"An enabled Snowflake {integration_type} security integration is no longer visible to ConfigTrace."
+        return "low", "A Snowflake security integration is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp == "enabled":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv == "true" and pv != "true":
+            return "medium", f"A Snowflake {integration_type} security integration was enabled."
+        if pv == "true" and nv != "true":
+            return "low", f"A Snowflake {integration_type} security integration was disabled."
+        return "low", "A Snowflake security integration's enabled state changed."
+    if fp == "scim_run_as_role":
+        return "medium", "A Snowflake SCIM integration's run-as role changed. Full privilege context is evaluated in a later message."
+    return "low", "A Snowflake security integration's metadata changed."
+
+
+def _classify_storage_integration_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Snowflake storage integration was added to monitoring."
+    if ct == "removed":
+        return "low", "A Snowflake storage integration is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp == "enabled":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv == "true" and pv != "true":
+            return "medium", "A Snowflake storage integration was enabled."
+        return "low", "A Snowflake storage integration's enabled state changed."
+    if fp == "allowed_location_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return "medium", "A Snowflake storage integration's allowed storage locations were broadened."
+        return "low", "A Snowflake storage integration's allowed location count changed."
+    if fp == "blocked_location_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv < pv:
+            return "medium", "A Snowflake storage integration's blocked storage locations were reduced."
+        return "low", "A Snowflake storage integration's blocked location count changed."
+    return "low", "A Snowflake storage integration's metadata changed."
+
+
+def _classify_external_access_integration_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "medium", "A new Snowflake external access integration was added, permitting outbound connectivity for UDFs/procedures."
+    if ct == "removed":
+        return "low", "A Snowflake external access integration is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp == "enabled":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv == "true" and pv != "true":
+            return "medium", "A Snowflake external access integration was enabled."
+        return "low", "A Snowflake external access integration's enabled state changed."
+    if fp == "allowed_network_rule_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return "medium", "A Snowflake external access integration's allowed network rules increased."
+        return "low", "A Snowflake external access integration's allowed network rule count changed."
+    if fp in ("allowed_secret_count", "allowed_api_authentication_integration_count"):
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return "medium", "A Snowflake external access integration's allowed secret/API-authentication references increased."
+        return "low", "A Snowflake external access integration's metadata changed."
+    return "low", "A Snowflake external access integration's metadata changed."
+
+
 def classify_snowflake_change(change: object) -> tuple[str, str]:
     """Route a Snowflake Change to its record-type classifier.
 
@@ -406,4 +596,16 @@ def classify_snowflake_change(change: object) -> tuple[str, str]:
         return _classify_share_change(change)
     if record_type == SNOWFLAKE_OBJECT_GRANT:
         return _classify_object_grant_change(change)
+    if record_type == SNOWFLAKE_NETWORK_POLICY:
+        return _classify_network_policy_change(change)
+    if record_type == SNOWFLAKE_NETWORK_RULE:
+        return _classify_network_rule_change(change)
+    if record_type == SNOWFLAKE_AUTHENTICATION_POLICY:
+        return _classify_authentication_policy_change(change)
+    if record_type == SNOWFLAKE_SECURITY_INTEGRATION:
+        return _classify_security_integration_change(change)
+    if record_type == SNOWFLAKE_STORAGE_INTEGRATION:
+        return _classify_storage_integration_change(change)
+    if record_type == SNOWFLAKE_EXTERNAL_ACCESS_INTEGRATION:
+        return _classify_external_access_integration_change(change)
     return "low", "A Snowflake configuration field changed."

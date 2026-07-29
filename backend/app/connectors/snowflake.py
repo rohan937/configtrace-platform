@@ -211,16 +211,25 @@ from app.connectors.snowflake_schema import (
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
     COLLECTION_FAMILY_ACCOUNT_ROLES,
+    COLLECTION_FAMILY_AUTHENTICATION_POLICIES,
     COLLECTION_FAMILY_DATABASE_ROLES,
     COLLECTION_FAMILY_DATABASES,
+    COLLECTION_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS,
     COLLECTION_FAMILY_FUTURE_GRANTS,
+    COLLECTION_FAMILY_NETWORK_POLICIES,
+    COLLECTION_FAMILY_NETWORK_RULES,
     COLLECTION_FAMILY_OBJECT_GRANTS,
     COLLECTION_FAMILY_ROLE_HIERARCHY,
     COLLECTION_FAMILY_SCHEMAS,
+    COLLECTION_FAMILY_SECURITY_INTEGRATIONS,
     COLLECTION_FAMILY_SHARES,
+    COLLECTION_FAMILY_STORAGE_INTEGRATIONS,
     COLLECTION_FAMILY_USER_ROLE_GRANTS,
     COLLECTION_FAMILY_USERS,
     COLLECTION_FAMILY_WAREHOUSES,
+    DETAIL_COMPLETE,
+    DETAIL_DENIED,
+    DETAIL_UNAVAILABLE,
     FAMILY_COMPLETE,
     FAMILY_DENIED,
     FAMILY_PARTIAL,
@@ -234,25 +243,37 @@ from app.connectors.snowflake_schema import (
     SNOWFLAKE_ACCOUNT,
     SNOWFLAKE_ACCOUNT_ROLE,
     SNOWFLAKE_API_CAPABILITY,
+    SNOWFLAKE_AUTHENTICATION_POLICY,
     SNOWFLAKE_DATABASE,
     SNOWFLAKE_DATABASE_ROLE,
+    SNOWFLAKE_EXTERNAL_ACCESS_INTEGRATION,
+    SNOWFLAKE_NETWORK_POLICY,
+    SNOWFLAKE_NETWORK_RULE,
     SNOWFLAKE_OBJECT_GRANT,
     SNOWFLAKE_ROLE_HIERARCHY_GRANT,
     SNOWFLAKE_SCHEMA,
+    SNOWFLAKE_SECURITY_INTEGRATION,
     SNOWFLAKE_SHARE,
+    SNOWFLAKE_STORAGE_INTEGRATION,
     SNOWFLAKE_USER,
     SNOWFLAKE_USER_ROLE_GRANT,
     SNOWFLAKE_WAREHOUSE,
     categorize_account_role,
+    categorize_auth_methods,
+    categorize_broad_access,
+    categorize_client_types,
     categorize_database_kind,
     categorize_disabled,
     categorize_grant_option,
+    categorize_integration_type,
     categorize_managed_access,
+    categorize_mfa_enrollment,
     categorize_object_type,
     categorize_principal_type,
     categorize_privilege,
     categorize_secondary_roles,
     categorize_share_kind,
+    categorize_storage_provider,
     categorize_transient,
     categorize_tristate_bool,
     categorize_user_type,
@@ -396,6 +417,40 @@ def _grants_to_database_role_statement(database_name: str, role_name: str) -> st
 
 def _future_grants_in_database_statement(database_name: str) -> str:
     return f"SHOW FUTURE GRANTS IN DATABASE {_quote_identifier(database_name)}"
+
+
+# ── Message 4: network/authentication policy + security/storage/external-
+#    access integration collection statements ───────────────────────────────
+#
+# Continues the SHOW-over-ACCOUNT_USAGE bias. Each family's SHOW command is
+# a single account-wide call; per-record DESCRIBE calls are bounded by
+# object count (same shape as message 2/3's per-role loops), never a
+# per-user or per-object-instance walk. Network-policy DESCRIBE calls are
+# used ONLY to derive a boolean "allows anywhere" signal — the actual IP/
+# CIDR list is discarded immediately after that check and never stored
+# (task's IP/CIDR privacy boundary). Deferred this message (documented):
+# API integrations (category=API — deployment/API-Gateway infrastructure,
+# not central account security posture) and session policies (materially
+# smaller security signal than network/authentication policies for the
+# added SHOW + per-policy DESCRIBE cost).
+_NETWORK_POLICIES_STATEMENT = "SHOW NETWORK POLICIES"
+_NETWORK_RULES_STATEMENT = "SHOW NETWORK RULES"
+_AUTHENTICATION_POLICIES_STATEMENT = "SHOW AUTHENTICATION POLICIES"
+_SECURITY_INTEGRATIONS_STATEMENT = "SHOW SECURITY INTEGRATIONS"
+_STORAGE_INTEGRATIONS_STATEMENT = "SHOW STORAGE INTEGRATIONS"
+_EXTERNAL_ACCESS_INTEGRATIONS_STATEMENT = "SHOW EXTERNAL ACCESS INTEGRATIONS"
+
+
+def _describe_network_policy_statement(policy_name: str) -> str:
+    return f"DESCRIBE NETWORK POLICY {_quote_identifier(policy_name)}"
+
+
+def _describe_authentication_policy_statement(policy_name: str) -> str:
+    return f"DESCRIBE AUTHENTICATION POLICY {_quote_identifier(policy_name)}"
+
+
+def _describe_integration_statement(integration_name: str) -> str:
+    return f"DESCRIBE INTEGRATION {_quote_identifier(integration_name)}"
 
 
 # ── Fail-soft API-call wrapper (mirrors the Okta/Entra/Kubernetes
@@ -697,6 +752,34 @@ def _safe_int(raw_value: object) -> Optional[int]:
     if isinstance(raw_value, str) and raw_value.strip().lstrip("-").isdigit():
         return int(raw_value.strip())
     return None
+
+
+def _count_list_like(raw_value: object) -> Optional[int]:
+    """Count entries in a DESCRIBE-property list-shaped value.
+
+    Snowflake's SQL API returns every property value as a scalar string
+    (list-typed properties like STORAGE_ALLOWED_LOCATIONS or
+    ALLOWED_NETWORK_RULES render as a Python-repr-like bracketed,
+    comma-separated string, e.g. ``"['a', 'b']"``) — never a native JSON
+    list. This performs a bounded, defensive count (never a full parse or
+    validation of the underlying entries) and returns ``None`` (never 0)
+    for anything that isn't a parseable list-shaped string, so a missing/
+    malformed property is never mistaken for an empty list."""
+    if isinstance(raw_value, list):
+        return len(raw_value)
+    if not isinstance(raw_value, str):
+        return None
+    cleaned = raw_value.strip()
+    if not cleaned:
+        return None
+    if cleaned.upper() in ("NONE", "NULL"):
+        return 0
+    inner = cleaned.strip("[]").strip()
+    if not inner:
+        return 0
+    entries = [e.strip().strip("'\"") for e in inner.split(",")]
+    entries = [e for e in entries if e]
+    return len(entries)
 
 
 def _family_status_for_outcome(outcome: "CallOutcome") -> str:
@@ -1236,6 +1319,241 @@ class SnowflakeConnector(BaseConnector):
             "ownership": privilege == "OWNERSHIP",
         }
 
+    # ── Message 4: DESCRIBE property-row parsing ─────────────────────────────
+
+    @staticmethod
+    def _property_value_map(rows: list[dict]) -> dict[str, Any]:
+        """Flatten a DESCRIBE-style property/value row list into a dict
+        keyed by UPPERCASE property name. Handles both observed DESCRIBE
+        row shapes (``PROPERTY``/``PROPERTY_VALUE`` for DESCRIBE
+        INTEGRATION, or ``NAME``/``VALUE`` for DESCRIBE NETWORK POLICY /
+        DESCRIBE AUTHENTICATION POLICY) rather than assuming a single
+        fixed shape. Unrecognized row shapes are safely skipped."""
+        out: dict[str, Any] = {}
+        for row in rows:
+            key = row.get("PROPERTY") if "PROPERTY" in row else row.get("NAME")
+            value = row.get("PROPERTY_VALUE") if "PROPERTY_VALUE" in row else row.get("VALUE")
+            if isinstance(key, str) and key.strip():
+                out[key.strip().upper()] = value
+        return out
+
+    @staticmethod
+    def _contains_anywhere_sentinel(raw_value: object) -> Optional[bool]:
+        """Check a DESCRIBE NETWORK POLICY IP-list value for the literal
+        IPv4/IPv6 "anywhere" sentinels. Returns ``None`` (unknown) if the
+        value itself is missing/malformed — never coerced to False. The
+        raw value is NEVER stored anywhere; only this boolean check's
+        result is retained by the caller."""
+        if not isinstance(raw_value, str):
+            return None
+        return "0.0.0.0/0" in raw_value or "::/0" in raw_value
+
+    # ── Message 4: network/authentication policy normalizers ────────────────
+
+    @staticmethod
+    def _normalize_network_policy(
+        account_id: str,
+        row: dict,
+        *,
+        allows_anywhere_ipv4: Optional[bool] = None,
+        allows_anywhere_ipv6: Optional[bool] = None,
+        detail_collection_status: str = DETAIL_UNAVAILABLE,
+    ) -> Optional[dict]:
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        policy_name = name.strip()[:_MAX_STR_LEN]
+        allowed_ip_count = _safe_int(row.get("ENTRIES_IN_ALLOWED_IP_LIST"))
+        blocked_ip_count = _safe_int(row.get("ENTRIES_IN_BLOCKED_IP_LIST"))
+        allowed_rule_count = _safe_int(row.get("ENTRIES_IN_ALLOWED_NETWORK_RULES"))
+        blocked_rule_count = _safe_int(row.get("ENTRIES_IN_BLOCKED_NETWORK_RULES"))
+        return {
+            "record_type": SNOWFLAKE_NETWORK_POLICY,
+            "record_id": f"{account_id}/network_policy/{policy_name.lower()}",
+            "provider_resource_id": f"network_policy/{policy_name}",
+            "account_id": account_id,
+            "policy_name": policy_name,
+            "owner": (
+                row["OWNER"].strip()[:_MAX_STR_LEN]
+                if isinstance(row.get("OWNER"), str) and row["OWNER"].strip()
+                else None
+            ),
+            "allowed_ipv4_count": allowed_ip_count,
+            "blocked_ipv4_count": blocked_ip_count,
+            "allowed_network_rule_count": allowed_rule_count,
+            "blocked_network_rule_count": blocked_rule_count,
+            "has_allowlist": bool(allowed_ip_count or allowed_rule_count) if (allowed_ip_count is not None or allowed_rule_count is not None) else None,
+            "has_blocklist": bool(blocked_ip_count or blocked_rule_count) if (blocked_ip_count is not None or blocked_rule_count is not None) else None,
+            # Derived from a bounded per-policy DESCRIBE NETWORK POLICY —
+            # the raw IP list itself is NEVER stored; only this boolean
+            # check's result. Unknown (never coerced to false) when the
+            # DESCRIBE call was not attempted or failed.
+            "allows_anywhere_ipv4": categorize_broad_access(allows_anywhere_ipv4),
+            "allows_anywhere_ipv6": categorize_broad_access(allows_anywhere_ipv6),
+            "detail_collection_status": detail_collection_status,
+        }
+
+    @staticmethod
+    def _normalize_network_rule(account_id: str, row: dict) -> Optional[dict]:
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        rule_name = name.strip()[:_MAX_STR_LEN]
+        database_name = row.get("DATABASE_NAME")
+        schema_name = row.get("SCHEMA_NAME")
+        return {
+            "record_type": SNOWFLAKE_NETWORK_RULE,
+            "record_id": f"{account_id}/network_rule/{rule_name.lower()}",
+            "provider_resource_id": f"network_rule/{rule_name}",
+            "account_id": account_id,
+            "rule_name": rule_name,
+            "database_name": (
+                database_name.strip()[:_MAX_STR_LEN]
+                if isinstance(database_name, str) and database_name.strip()
+                else None
+            ),
+            "schema_name": (
+                schema_name.strip()[:_MAX_STR_LEN]
+                if isinstance(schema_name, str) and schema_name.strip()
+                else None
+            ),
+            "owner": (
+                row["OWNER"].strip()[:_MAX_STR_LEN]
+                if isinstance(row.get("OWNER"), str) and row["OWNER"].strip()
+                else None
+            ),
+            "rule_type": (
+                row["TYPE"].strip().upper()[:_MAX_STR_LEN]
+                if isinstance(row.get("TYPE"), str) and row["TYPE"].strip()
+                else None
+            ),
+            "rule_mode": (
+                row["MODE"].strip().upper()[:_MAX_STR_LEN]
+                if isinstance(row.get("MODE"), str) and row["MODE"].strip()
+                else None
+            ),
+            "value_count": _safe_int(row.get("ENTRIES_IN_VALUELIST")),
+        }
+
+    @classmethod
+    def _normalize_authentication_policy(cls, account_id: str, row: dict, *, properties: Optional[dict] = None) -> Optional[dict]:
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        policy_name = name.strip()[:_MAX_STR_LEN]
+        props = properties or {}
+        return {
+            "record_type": SNOWFLAKE_AUTHENTICATION_POLICY,
+            "record_id": f"{account_id}/authentication_policy/{policy_name.lower()}",
+            "provider_resource_id": f"authentication_policy/{policy_name}",
+            "account_id": account_id,
+            "policy_name": policy_name,
+            "owner": (
+                row["OWNER"].strip()[:_MAX_STR_LEN]
+                if isinstance(row.get("OWNER"), str) and row["OWNER"].strip()
+                else None
+            ),
+            "set_on": (
+                row["SET_ON"].strip().upper()[:_MAX_STR_LEN]
+                if isinstance(row.get("SET_ON"), str) and row["SET_ON"].strip()
+                else None
+            ),
+            "authentication_methods": categorize_auth_methods(props.get("AUTHENTICATION_METHODS")) if properties is not None else None,
+            "mfa_enrollment": categorize_mfa_enrollment(props.get("MFA_ENROLLMENT")) if properties is not None else "unknown",
+            "client_types": categorize_client_types(props.get("CLIENT_TYPES")) if properties is not None else "unknown",
+            "detail_collection_status": DETAIL_COMPLETE if properties is not None else DETAIL_UNAVAILABLE,
+        }
+
+    @classmethod
+    def _normalize_security_integration(cls, account_id: str, row: dict, *, properties: Optional[dict] = None) -> Optional[dict]:
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        integration_name = name.strip()[:_MAX_STR_LEN]
+        integration_type = categorize_integration_type(row.get("TYPE"))
+        props = properties or {}
+        record = {
+            "record_type": SNOWFLAKE_SECURITY_INTEGRATION,
+            "record_id": f"{account_id}/security_integration/{integration_name.lower()}/{integration_type}",
+            "provider_resource_id": f"security_integration/{integration_name}",
+            "account_id": account_id,
+            "integration_name": integration_name,
+            "integration_type": integration_type,
+            "enabled": categorize_tristate_bool(row.get("ENABLED")),
+            "owner": (
+                row["OWNER"].strip()[:_MAX_STR_LEN]
+                if isinstance(row.get("OWNER"), str) and row["OWNER"].strip()
+                else None
+            ),
+            "detail_collection_status": DETAIL_COMPLETE if properties is not None else DETAIL_UNAVAILABLE,
+        }
+        if properties is None:
+            return record
+        # Type-specific safe posture only — never certificate/secret bodies.
+        if integration_type == "saml2":
+            record["saml2_issuer_configured"] = categorize_tristate_bool(bool(props.get("SAML2_ISSUER")) or None)
+            record["saml2_sso_url_configured"] = categorize_tristate_bool(bool(props.get("SAML2_SSO_URL")) or None)
+            record["saml2_certificate_configured"] = categorize_tristate_bool(bool(props.get("SAML2_X509_CERT")) or None)
+        elif integration_type in ("oauth_snowflake", "external_oauth"):
+            record["oauth_client_category"] = (
+                str(props.get("OAUTH_CLIENT_TYPE") or props.get("EXTERNAL_OAUTH_TYPE") or "")[:_MAX_STR_LEN] or None
+            )
+            record["oauth_issuer_configured"] = categorize_tristate_bool(bool(props.get("EXTERNAL_OAUTH_ISSUER")) or None)
+        elif integration_type == "scim":
+            run_as_role = props.get("SCIM_RUN_AS_ROLE") or props.get("RUN_AS_ROLE")
+            record["scim_run_as_role"] = (
+                str(run_as_role).strip()[:_MAX_STR_LEN] if isinstance(run_as_role, str) and run_as_role.strip() else None
+            )
+        return record
+
+    @classmethod
+    def _normalize_storage_integration(cls, account_id: str, row: dict, *, properties: Optional[dict] = None) -> Optional[dict]:
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        integration_name = name.strip()[:_MAX_STR_LEN]
+        props = properties or {}
+        allowed_locations = props.get("STORAGE_ALLOWED_LOCATIONS")
+        blocked_locations = props.get("STORAGE_BLOCKED_LOCATIONS")
+        return {
+            "record_type": SNOWFLAKE_STORAGE_INTEGRATION,
+            "record_id": f"{account_id}/storage_integration/{integration_name.lower()}",
+            "provider_resource_id": f"storage_integration/{integration_name}",
+            "account_id": account_id,
+            "integration_name": integration_name,
+            "enabled": categorize_tristate_bool(row.get("ENABLED")),
+            "storage_provider": categorize_storage_provider(props.get("STORAGE_PROVIDER")) if properties is not None else "unknown",
+            "allowed_location_count": _count_list_like(allowed_locations),
+            "blocked_location_count": _count_list_like(blocked_locations),
+            "cloud_identity_configured": categorize_tristate_bool(
+                bool(props.get("STORAGE_AWS_IAM_USER_ARN") or props.get("AZURE_CONSENT_URL") or props.get("STORAGE_GCP_SERVICE_ACCOUNT")) or None
+            ),
+            "detail_collection_status": DETAIL_COMPLETE if properties is not None else DETAIL_UNAVAILABLE,
+        }
+
+    @classmethod
+    def _normalize_external_access_integration(cls, account_id: str, row: dict, *, properties: Optional[dict] = None) -> Optional[dict]:
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        integration_name = name.strip()[:_MAX_STR_LEN]
+        props = properties or {}
+        allowed_rules = props.get("ALLOWED_NETWORK_RULES")
+        allowed_secrets = props.get("ALLOWED_AUTHENTICATION_SECRETS")
+        allowed_api_auth = props.get("ALLOWED_API_AUTHENTICATION_INTEGRATIONS")
+        return {
+            "record_type": SNOWFLAKE_EXTERNAL_ACCESS_INTEGRATION,
+            "record_id": f"{account_id}/external_access_integration/{integration_name.lower()}",
+            "provider_resource_id": f"external_access_integration/{integration_name}",
+            "account_id": account_id,
+            "integration_name": integration_name,
+            "enabled": categorize_tristate_bool(row.get("ENABLED")),
+            "allowed_network_rule_count": _count_list_like(allowed_rules),
+            "allowed_secret_count": _count_list_like(allowed_secrets),
+            "allowed_api_authentication_integration_count": _count_list_like(allowed_api_auth),
+            "detail_collection_status": DETAIL_COMPLETE if properties is not None else DETAIL_UNAVAILABLE,
+        }
+
     # ── Message 2: identity/role collection ──────────────────────────────────
 
     @classmethod
@@ -1588,6 +1906,148 @@ class SnowflakeConnector(BaseConnector):
 
         return list(grants.values()), object_grants_status, future_grants_status
 
+    # ── Message 4: network/authentication policy + integration collection ───
+
+    @classmethod
+    def _collect_network_policies(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str]:
+        """SHOW NETWORK POLICIES (single account-wide call) followed by a
+        bounded per-policy DESCRIBE NETWORK POLICY — used ONLY to derive
+        the allows-anywhere booleans. The DESCRIBE response's raw IP list
+        is discarded immediately after that check; a per-policy DESCRIBE
+        failure never removes the policy's identity/count fields, only
+        leaves ``detail_collection_status``/``allows_anywhere_*`` at their
+        unknown/unavailable defaults."""
+        outcome = call_sql_api(client, _NETWORK_POLICIES_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome)
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        records: dict[str, dict] = {}
+        for row in rows:
+            name = row.get("NAME")
+            detail_outcome = None
+            if isinstance(name, str) and name.strip():
+                detail_outcome = call_sql_api(
+                    client, _describe_network_policy_statement(name.strip()), role=role, _sleep_fn=_sleep_fn,
+                )
+            allows_v4 = allows_v6 = None
+            detail_status = DETAIL_UNAVAILABLE
+            if detail_outcome is not None:
+                if detail_outcome.ok:
+                    props = cls._property_value_map(_rows_as_dicts(detail_outcome.columns, detail_outcome.rows))
+                    allows_v4 = cls._contains_anywhere_sentinel(props.get("ALLOWED_IP_LIST"))
+                    allows_v6 = cls._contains_anywhere_sentinel(props.get("ALLOWED_IP_LIST"))
+                    detail_status = DETAIL_COMPLETE
+                elif detail_outcome.category == CATEGORY_PERMISSION_DENIED:
+                    detail_status = DETAIL_DENIED
+            record = cls._normalize_network_policy(
+                account_id, row,
+                allows_anywhere_ipv4=allows_v4, allows_anywhere_ipv6=allows_v6,
+                detail_collection_status=detail_status,
+            )
+            if record is not None:
+                records[record["record_id"]] = record
+        return list(records.values()), FAMILY_COMPLETE
+
+    @classmethod
+    def _collect_network_rules(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str]:
+        """SHOW NETWORK RULES already exposes type/mode/value-count — no
+        per-rule DESCRIBE is needed to satisfy this record's safe-fields
+        list."""
+        outcome = call_sql_api(client, _NETWORK_RULES_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome)
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        records: dict[str, dict] = {}
+        for row in rows:
+            record = cls._normalize_network_rule(account_id, row)
+            if record is not None:
+                records[record["record_id"]] = record
+        return list(records.values()), FAMILY_COMPLETE
+
+    @classmethod
+    def _collect_authentication_policies(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str]:
+        outcome = call_sql_api(client, _AUTHENTICATION_POLICIES_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome)
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        records: dict[str, dict] = {}
+        for row in rows:
+            name = row.get("NAME")
+            properties = None
+            if isinstance(name, str) and name.strip():
+                detail_outcome = call_sql_api(
+                    client, _describe_authentication_policy_statement(name.strip()), role=role, _sleep_fn=_sleep_fn,
+                )
+                if detail_outcome.ok:
+                    properties = cls._property_value_map(_rows_as_dicts(detail_outcome.columns, detail_outcome.rows))
+            record = cls._normalize_authentication_policy(account_id, row, properties=properties)
+            if record is not None:
+                records[record["record_id"]] = record
+        return list(records.values()), FAMILY_COMPLETE
+
+    @classmethod
+    def _collect_security_integrations(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str]:
+        outcome = call_sql_api(client, _SECURITY_INTEGRATIONS_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome)
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        records: dict[str, dict] = {}
+        for row in rows:
+            name = row.get("NAME")
+            properties = None
+            if isinstance(name, str) and name.strip():
+                detail_outcome = call_sql_api(
+                    client, _describe_integration_statement(name.strip()), role=role, _sleep_fn=_sleep_fn,
+                )
+                if detail_outcome.ok:
+                    properties = cls._property_value_map(_rows_as_dicts(detail_outcome.columns, detail_outcome.rows))
+            record = cls._normalize_security_integration(account_id, row, properties=properties)
+            if record is not None:
+                records[record["record_id"]] = record
+        return list(records.values()), FAMILY_COMPLETE
+
+    @classmethod
+    def _collect_storage_integrations(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str]:
+        outcome = call_sql_api(client, _STORAGE_INTEGRATIONS_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome)
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        records: dict[str, dict] = {}
+        for row in rows:
+            name = row.get("NAME")
+            properties = None
+            if isinstance(name, str) and name.strip():
+                detail_outcome = call_sql_api(
+                    client, _describe_integration_statement(name.strip()), role=role, _sleep_fn=_sleep_fn,
+                )
+                if detail_outcome.ok:
+                    properties = cls._property_value_map(_rows_as_dicts(detail_outcome.columns, detail_outcome.rows))
+            record = cls._normalize_storage_integration(account_id, row, properties=properties)
+            if record is not None:
+                records[record["record_id"]] = record
+        return list(records.values()), FAMILY_COMPLETE
+
+    @classmethod
+    def _collect_external_access_integrations(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str]:
+        outcome = call_sql_api(client, _EXTERNAL_ACCESS_INTEGRATIONS_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome)
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        records: dict[str, dict] = {}
+        for row in rows:
+            name = row.get("NAME")
+            properties = None
+            if isinstance(name, str) and name.strip():
+                detail_outcome = call_sql_api(
+                    client, _describe_integration_statement(name.strip()), role=role, _sleep_fn=_sleep_fn,
+                )
+                if detail_outcome.ok:
+                    properties = cls._property_value_map(_rows_as_dicts(detail_outcome.columns, detail_outcome.rows))
+            record = cls._normalize_external_access_integration(account_id, row, properties=properties)
+            if record is not None:
+                records[record["record_id"]] = record
+        return list(records.values()), FAMILY_COMPLETE
+
     # ── Capability probes ────────────────────────────────────────────────────
 
     @staticmethod
@@ -1758,6 +2218,27 @@ class SnowflakeConnector(BaseConnector):
                 _sleep_fn=_sleep_fn,
             )
 
+            # ── Message 4: network/authentication policies + security/
+            #    storage/external-access integrations.
+            network_policy_records, network_policies_status = self._collect_network_policies(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+            network_rule_records, network_rules_status = self._collect_network_rules(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+            authentication_policy_records, authentication_policies_status = self._collect_authentication_policies(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+            security_integration_records, security_integrations_status = self._collect_security_integrations(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+            storage_integration_records, storage_integrations_status = self._collect_storage_integrations(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+            external_access_integration_records, external_access_integrations_status = self._collect_external_access_integrations(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+
             family_completeness[COLLECTION_FAMILY_USERS] = users_status
             family_completeness[COLLECTION_FAMILY_ACCOUNT_ROLES] = account_roles_status
             family_completeness[COLLECTION_FAMILY_DATABASE_ROLES] = database_roles_status
@@ -1769,6 +2250,12 @@ class SnowflakeConnector(BaseConnector):
             family_completeness[COLLECTION_FAMILY_SHARES] = shares_status
             family_completeness[COLLECTION_FAMILY_OBJECT_GRANTS] = object_grants_status
             family_completeness[COLLECTION_FAMILY_FUTURE_GRANTS] = future_grants_status
+            family_completeness[COLLECTION_FAMILY_NETWORK_POLICIES] = network_policies_status
+            family_completeness[COLLECTION_FAMILY_NETWORK_RULES] = network_rules_status
+            family_completeness[COLLECTION_FAMILY_AUTHENTICATION_POLICIES] = authentication_policies_status
+            family_completeness[COLLECTION_FAMILY_SECURITY_INTEGRATIONS] = security_integrations_status
+            family_completeness[COLLECTION_FAMILY_STORAGE_INTEGRATIONS] = storage_integrations_status
+            family_completeness[COLLECTION_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS] = external_access_integrations_status
 
             account_record = self._normalize_account(
                 account_id,
@@ -1792,6 +2279,12 @@ class SnowflakeConnector(BaseConnector):
             records.extend(warehouse_records)
             records.extend(share_records)
             records.extend(object_grant_records)
+            records.extend(network_policy_records)
+            records.extend(network_rule_records)
+            records.extend(authentication_policy_records)
+            records.extend(security_integration_records)
+            records.extend(storage_integration_records)
+            records.extend(external_access_integration_records)
 
         # Deterministic ordering — API response ordering must never affect
         # the normalized snapshot or its fingerprint. Dedup is already

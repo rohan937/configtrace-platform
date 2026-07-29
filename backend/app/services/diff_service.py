@@ -3921,6 +3921,54 @@ _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "future_grant",
         "ownership",
     ),
+    "snowflake_network_policy": (
+        "owner",
+        "allowed_ipv4_count",
+        "blocked_ipv4_count",
+        "allowed_network_rule_count",
+        "blocked_network_rule_count",
+        "has_allowlist",
+        "has_blocklist",
+        "allows_anywhere_ipv4",
+        "allows_anywhere_ipv6",
+    ),
+    "snowflake_network_rule": (
+        "owner",
+        "rule_type",
+        "rule_mode",
+        "value_count",
+    ),
+    "snowflake_authentication_policy": (
+        "owner",
+        "set_on",
+        "authentication_methods",
+        "mfa_enrollment",
+        "client_types",
+    ),
+    "snowflake_security_integration": (
+        "integration_type",
+        "enabled",
+        "owner",
+        "saml2_issuer_configured",
+        "saml2_sso_url_configured",
+        "saml2_certificate_configured",
+        "oauth_client_category",
+        "oauth_issuer_configured",
+        "scim_run_as_role",
+    ),
+    "snowflake_storage_integration": (
+        "enabled",
+        "storage_provider",
+        "allowed_location_count",
+        "blocked_location_count",
+        "cloud_identity_configured",
+    ),
+    "snowflake_external_access_integration": (
+        "enabled",
+        "allowed_network_rule_count",
+        "allowed_secret_count",
+        "allowed_api_authentication_integration_count",
+    ),
 }
 
 
@@ -4622,6 +4670,38 @@ def _build_provider_metadata(
         metadata["object_fqn"] = context_record.get("object_fqn") or record.get("object_fqn") or ""
         metadata["future_grant"] = bool(context_record.get("future_grant") or record.get("future_grant"))
         metadata["ownership"] = bool(context_record.get("ownership") or record.get("ownership"))
+
+    # Snowflake message 4: network/authentication policies and security/
+    # storage/external-access integrations carry posture context the risk
+    # classifier needs (broad-network flags, MFA enrollment, integration
+    # type/enabled state) — mirrors the message-2/3 stanzas above.
+    if record.get("record_type") == "snowflake_network_policy":
+        metadata["policy_name"] = context_record.get("policy_name") or record.get("policy_name") or ""
+        metadata["allows_anywhere_ipv4"] = context_record.get("allows_anywhere_ipv4") or record.get("allows_anywhere_ipv4") or ""
+        metadata["allows_anywhere_ipv6"] = context_record.get("allows_anywhere_ipv6") or record.get("allows_anywhere_ipv6") or ""
+        metadata["has_allowlist"] = context_record.get("has_allowlist") if context_record.get("has_allowlist") is not None else record.get("has_allowlist")
+    if record.get("record_type") == "snowflake_authentication_policy":
+        metadata["policy_name"] = context_record.get("policy_name") or record.get("policy_name") or ""
+        metadata["mfa_enrollment"] = context_record.get("mfa_enrollment") or record.get("mfa_enrollment") or ""
+        metadata["authentication_methods"] = context_record.get("authentication_methods") or record.get("authentication_methods") or []
+        metadata["set_on"] = context_record.get("set_on") or record.get("set_on") or ""
+    if record.get("record_type") == "snowflake_security_integration":
+        metadata["integration_name"] = context_record.get("integration_name") or record.get("integration_name") or ""
+        metadata["integration_type"] = context_record.get("integration_type") or record.get("integration_type") or ""
+        metadata["enabled"] = context_record.get("enabled") or record.get("enabled") or ""
+        metadata["scim_run_as_role"] = context_record.get("scim_run_as_role") or record.get("scim_run_as_role") or ""
+    if record.get("record_type") == "snowflake_storage_integration":
+        metadata["integration_name"] = context_record.get("integration_name") or record.get("integration_name") or ""
+        metadata["enabled"] = context_record.get("enabled") or record.get("enabled") or ""
+        metadata["storage_provider"] = context_record.get("storage_provider") or record.get("storage_provider") or ""
+    if record.get("record_type") == "snowflake_external_access_integration":
+        metadata["integration_name"] = context_record.get("integration_name") or record.get("integration_name") or ""
+        metadata["enabled"] = context_record.get("enabled") or record.get("enabled") or ""
+        metadata["allowed_network_rule_count"] = (
+            context_record.get("allowed_network_rule_count")
+            if context_record.get("allowed_network_rule_count") is not None
+            else record.get("allowed_network_rule_count")
+        )
 
     if record.get("record_type") == "okta_application":
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
