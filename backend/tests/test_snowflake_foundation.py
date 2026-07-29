@@ -24,7 +24,10 @@ import respx
 
 from app.connectors.snowflake import (
     _ACCOUNT_IDENTITY_STATEMENT,
+    _ACCOUNT_ROLES_STATEMENT,
     _CAPABILITY_PROBES,
+    _DATABASE_NAMES_FOR_ROLE_DISCOVERY_STATEMENT,
+    _USERS_STATEMENT,
     CATEGORY_AUTH_FAILED,
     CATEGORY_SUCCESS,
     CATEGORY_THROTTLED,
@@ -484,11 +487,23 @@ class TestQuerySafety:
     def test_statement_body_never_contains_user_controlled_fragment(self):
         """Every POSTed 'statement' field must be exactly one of the fixed,
         connector-owned constants — never string-interpolated with
-        credential/user input."""
+        credential/user input.
+
+        Message 2 added SHOW USERS/SHOW ROLES/SHOW DATABASES as further
+        fixed constants issued unconditionally by fetch(); this test's
+        router does not mock them, so they fail soft (family status
+        unavailable) but are still issued and must be included in the
+        allowlist here.
+        """
         route = respx.post(_STATEMENTS_URL).mock(side_effect=_make_sql_router())
         conn = SnowflakeConnector()
-        conn.fetch(_CREDS)
-        allowed = {_ACCOUNT_IDENTITY_STATEMENT} | {stmt for _f, stmt in _CAPABILITY_PROBES}
+        conn.fetch(_CREDS, _sleep_fn=_noop_sleep)
+        allowed = {
+            _ACCOUNT_IDENTITY_STATEMENT,
+            _USERS_STATEMENT,
+            _ACCOUNT_ROLES_STATEMENT,
+            _DATABASE_NAMES_FOR_ROLE_DISCOVERY_STATEMENT,
+        } | {stmt for _f, stmt in _CAPABILITY_PROBES}
         for call in route.calls:
             body = json.loads(call.request.content)
             assert body["statement"] in allowed

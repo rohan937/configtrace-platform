@@ -210,8 +210,33 @@ from app.connectors.snowflake_schema import (
     CAPABILITY_UNAVAILABLE,
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
+    COLLECTION_FAMILY_ACCOUNT_ROLES,
+    COLLECTION_FAMILY_DATABASE_ROLES,
+    COLLECTION_FAMILY_ROLE_HIERARCHY,
+    COLLECTION_FAMILY_USER_ROLE_GRANTS,
+    COLLECTION_FAMILY_USERS,
+    FAMILY_COMPLETE,
+    FAMILY_DENIED,
+    FAMILY_PARTIAL,
+    FAMILY_UNAVAILABLE,
+    GRANT_OPTION_UNKNOWN,
+    PRINCIPAL_TYPE_ACCOUNT_ROLE,
+    PRINCIPAL_TYPE_DATABASE_ROLE,
+    PRINCIPAL_TYPE_USER,
     SNOWFLAKE_ACCOUNT,
+    SNOWFLAKE_ACCOUNT_ROLE,
     SNOWFLAKE_API_CAPABILITY,
+    SNOWFLAKE_DATABASE_ROLE,
+    SNOWFLAKE_ROLE_HIERARCHY_GRANT,
+    SNOWFLAKE_USER,
+    SNOWFLAKE_USER_ROLE_GRANT,
+    categorize_account_role,
+    categorize_disabled,
+    categorize_principal_type,
+    categorize_secondary_roles,
+    categorize_tristate_bool,
+    categorize_user_type,
+    is_public_role,
     validate_account_identifier,
     validate_role,
     validate_username,
@@ -274,6 +299,50 @@ _CAPABILITY_PROBES: tuple[tuple[str, str], ...] = (
 assert {f for f, _ in _CAPABILITY_PROBES} == set(CAPABILITY_FAMILIES)
 
 
+# ── Message 2: identity/role collection statements ──────────────────────────
+#
+# Collection-strategy decision (see module docstring's "SHOW vs
+# ACCOUNT_USAGE" section, extended below): every message-2 family uses
+# SHOW, never SNOWFLAKE.ACCOUNT_USAGE. Rationale: ACCOUNT_USAGE views
+# require an active/resumed virtual warehouse to scan (they are ordinary
+# table-backed views, unlike the context functions and SHOW commands used
+# throughout message 1), and the message-1 credential model deliberately
+# has no warehouse field. Introducing a mandatory warehouse requirement
+# here — silently or otherwise — was explicitly out of scope for this
+# message. SHOW is also strictly better for this data: it reflects current
+# state with no replication latency (ACCOUNT_USAGE.USERS/ROLES/
+# GRANTS_TO_USERS/GRANTS_TO_ROLES all document up to ~120 minutes of lag),
+# and it never returns a dropped/deleted object at all, which sidesteps
+# ACCOUNT_USAGE's historical-row retention entirely (no risk of a stale
+# deleted row being mistaken for a live one).
+#
+# Trade-off accepted: SHOW USERS/ROLES filter most columns to NULL unless
+# the active role has OWNERSHIP on the object or MANAGE GRANTS on the
+# account (documented). Missing values are therefore normalized as
+# "unknown", never coerced to a default.
+_USERS_STATEMENT = "SHOW USERS"
+_ACCOUNT_ROLES_STATEMENT = "SHOW ROLES"
+
+# Used ONLY to discover database names so database roles (which require
+# ``IN DATABASE <name>`` — Snowflake does not offer an account-wide
+# variant of SHOW DATABASE ROLES) can be enumerated. This is NOT database
+# inventory collection — no ``snowflake_database`` record is produced from
+# this query. Full database/schema/warehouse/share inventory is message 3.
+_DATABASE_NAMES_FOR_ROLE_DISCOVERY_STATEMENT = "SHOW DATABASES"
+
+
+def _database_roles_statement(database_name: str) -> str:
+    return f"SHOW DATABASE ROLES IN DATABASE {_quote_identifier(database_name)}"
+
+
+def _grants_of_account_role_statement(role_name: str) -> str:
+    return f"SHOW GRANTS OF ROLE {_quote_identifier(role_name)}"
+
+
+def _grants_of_database_role_statement(database_name: str, role_name: str) -> str:
+    return f"SHOW GRANTS OF DATABASE ROLE {_quote_identifier(database_name)}.{_quote_identifier(role_name)}"
+
+
 # ── Fail-soft API-call wrapper (mirrors the Okta/Entra/Kubernetes
 #    reliability pattern) ────────────────────────────────────────────────────
 
@@ -286,6 +355,7 @@ class CallOutcome:
 
     ok: bool
     rows: Any = None
+    columns: Optional[list[str]] = None
     category: str = "success"
     detail: str = ""
 
@@ -503,7 +573,84 @@ def _parse_success(resp: httpx.Response) -> CallOutcome:
     rows = data.get("data")
     if not isinstance(rows, list):
         return CallOutcome(ok=False, category=CATEGORY_MALFORMED_RESPONSE, detail="Snowflake returned a response with no result rows.")
-    return CallOutcome(ok=True, rows=rows, category=CATEGORY_SUCCESS)
+    columns = _extract_column_names(data)
+    return CallOutcome(ok=True, rows=rows, columns=columns, category=CATEGORY_SUCCESS)
+
+
+def _extract_column_names(body: dict) -> Optional[list[str]]:
+    """Extract column names (in row order) from the SQL API's
+    ``resultSetMetaData.rowType`` array, used to map SHOW-command rows by
+    column name rather than by hardcoded position — SHOW USERS alone
+    returns ~30 columns, and guessing positions would be exactly the kind
+    of unverified assumption this connector avoids. Returns ``None`` (never
+    an empty-but-wrong list) if the metadata is absent or malformed."""
+    meta = body.get("resultSetMetaData")
+    if not isinstance(meta, dict):
+        return None
+    row_type = meta.get("rowType")
+    if not isinstance(row_type, list):
+        return None
+    names: list[str] = []
+    for col in row_type:
+        if isinstance(col, dict) and isinstance(col.get("name"), str):
+            names.append(col["name"])
+        else:
+            names.append("")
+    return names
+
+
+def _rows_as_dicts(columns: Optional[list[str]], rows: Any) -> list[dict[str, Any]]:
+    """Zip SQL API rows with their column names into dicts keyed by
+    UPPERCASE column name. Rows that can't be matched to a column list
+    (metadata missing) are dropped rather than guessed at."""
+    if not columns or not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        d: dict[str, Any] = {}
+        for i, col in enumerate(columns):
+            if not col:
+                continue
+            d[col.upper()] = row[i] if i < len(row) else None
+        out.append(d)
+    return out
+
+
+# Snowflake unquoted-identifier characters are letters/digits/underscore/
+# dollar; a quoted identifier can contain almost anything, escaped by
+# doubling embedded double-quotes. SHOW's own grammar requires the target
+# object name as an identifier (not a bind-parameterizable string
+# literal), so database/role names returned by Snowflake itself must be
+# safely re-quoted before being composed into a follow-up SHOW statement.
+# Double-quoting + escaping guarantees the value can never break out of
+# the identifier position into a new SQL clause.
+def _quote_identifier(name: str) -> str:
+    escaped = name.replace('"', '""')
+    return f'"{escaped}"'
+
+
+def _safe_int(raw_value: object) -> Optional[int]:
+    """Best-effort int coercion for a SHOW-command count column. Returns
+    ``None`` (never ``0``) for anything that isn't cleanly an integer —
+    a missing/filtered count must never be mistaken for a real zero."""
+    if isinstance(raw_value, bool):
+        return None
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, str) and raw_value.strip().lstrip("-").isdigit():
+        return int(raw_value.strip())
+    return None
+
+
+def _family_status_for_outcome(outcome: "CallOutcome") -> str:
+    """Map a failed message-2 collection ``CallOutcome`` to a family
+    completeness status. Reuses the same ``FAMILY_*`` taxonomy as the
+    message-1 ``family_completeness`` field."""
+    if outcome.category == CATEGORY_PERMISSION_DENIED:
+        return FAMILY_DENIED
+    return FAMILY_UNAVAILABLE
 
 
 class SnowflakeConnector(BaseConnector):
@@ -635,6 +782,340 @@ class SnowflakeConnector(BaseConnector):
             "status": status,
         }
 
+    # ── Message 2: identity/role normalizers ─────────────────────────────────
+
+    @staticmethod
+    def _normalize_user(account_id: str, row: dict) -> Optional[dict]:
+        """Normalize one SHOW USERS row. Returns ``None`` for a row with no
+        usable name (never fabricates a record for an unidentifiable row).
+
+        SECURITY: only the allowlisted safe fields below are copied out of
+        the row — password/RSA-key/PAT *contents*, email, phone, and
+        arbitrary comment text are never read from this row at all.
+        """
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        user_name = name.strip()[:_MAX_STR_LEN]
+        default_role = row.get("DEFAULT_ROLE")
+        return {
+            "record_type": SNOWFLAKE_USER,
+            "record_id": f"{account_id}/user/{user_name.lower()}",
+            "provider_resource_id": f"user/{user_name}",
+            "account_id": account_id,
+            "user_name": user_name,
+            "user_type": categorize_user_type(row.get("TYPE")),
+            "disabled": categorize_disabled(row.get("DISABLED")),
+            "default_role": (
+                default_role.strip()[:_MAX_STR_LEN]
+                if isinstance(default_role, str) and default_role.strip()
+                else None
+            ),
+            "default_secondary_roles": categorize_secondary_roles(row.get("DEFAULT_SECONDARY_ROLES")),
+            "rsa_key_configured": categorize_tristate_bool(row.get("HAS_RSA_PUBLIC_KEY")),
+            "password_configured": categorize_tristate_bool(row.get("HAS_PASSWORD")),
+            "programmatic_access_token_configured": categorize_tristate_bool(row.get("HAS_PAT")),
+            "owner": (
+                row["OWNER"].strip()[:_MAX_STR_LEN]
+                if isinstance(row.get("OWNER"), str) and row["OWNER"].strip()
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _normalize_account_role(account_id: str, row: dict) -> Optional[dict]:
+        """Normalize one SHOW ROLES row into a ``snowflake_account_role``
+        record. PUBLIC is normalized like any other role (its existence is
+        tracked) — only its automatic grantee relationships are excluded
+        from enumeration (see ``_collect_grants``)."""
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        role_name = name.strip()[:_MAX_STR_LEN]
+        return {
+            "record_type": SNOWFLAKE_ACCOUNT_ROLE,
+            "record_id": f"{account_id}/account_role/{role_name.lower()}",
+            "provider_resource_id": f"account_role/{role_name}",
+            "account_id": account_id,
+            "role_name": role_name,
+            "role_category": categorize_account_role(role_name),
+            "owner": (
+                row["OWNER"].strip()[:_MAX_STR_LEN]
+                if isinstance(row.get("OWNER"), str) and row["OWNER"].strip()
+                else None
+            ),
+            "assigned_to_users_count": _safe_int(row.get("ASSIGNED_TO_USERS")),
+            "granted_to_roles_count": _safe_int(row.get("GRANTED_TO_ROLES")),
+            "granted_roles_count": _safe_int(row.get("GRANTED_ROLES")),
+        }
+
+    @staticmethod
+    def _normalize_database_role(account_id: str, database_name: str, row: dict) -> Optional[dict]:
+        """Normalize one SHOW DATABASE ROLES row. Stable identity is
+        ``account + database + role name`` — the same role name in two
+        different databases is a distinct object, never collapsed.
+
+        SHOW DATABASE ROLES' full output-column table is not documented
+        (confirmed via current docs) beyond the SHOW ROLES-like fields it
+        is known to share, so multiple candidate column-name aliases are
+        checked defensively rather than assuming a single name; anything
+        not found is left as ``None``/unknown rather than guessed at.
+        """
+        name = row.get("NAME")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        role_name = name.strip()[:_MAX_STR_LEN]
+        granted_to_roles = row.get("GRANTED_TO_ROLES")
+        if granted_to_roles is None:
+            granted_to_roles = row.get("GRANTED_TO_DATABASE_ROLES")
+        granted_roles = row.get("GRANTED_DATABASE_ROLES")
+        if granted_roles is None:
+            granted_roles = row.get("GRANTED_ROLES")
+        return {
+            "record_type": SNOWFLAKE_DATABASE_ROLE,
+            "record_id": f"{account_id}/database_role/{database_name.lower()}.{role_name.lower()}",
+            "provider_resource_id": f"database_role/{database_name}.{role_name}",
+            "account_id": account_id,
+            "database_name": database_name[:_MAX_STR_LEN],
+            "role_name": role_name,
+            "owner": (
+                row["OWNER"].strip()[:_MAX_STR_LEN]
+                if isinstance(row.get("OWNER"), str) and row["OWNER"].strip()
+                else None
+            ),
+            "granted_to_roles_count": _safe_int(granted_to_roles),
+            "granted_roles_count": _safe_int(granted_roles),
+        }
+
+    @staticmethod
+    def _normalize_user_role_grant(
+        account_id: str,
+        *,
+        user_name: str,
+        role_name: str,
+        role_type: str,
+        default_role_match: bool,
+        granted_by: Optional[str],
+    ) -> dict:
+        return {
+            "record_type": SNOWFLAKE_USER_ROLE_GRANT,
+            "record_id": f"{account_id}/user_role_grant/{user_name.lower()}/{role_name.lower()}",
+            "provider_resource_id": f"user_role_grant/{user_name}/{role_name}",
+            "account_id": account_id,
+            "user_name": user_name[:_MAX_STR_LEN],
+            "role_name": role_name[:_MAX_STR_LEN],
+            "role_type": role_type,
+            "default_role_match": default_role_match,
+            "grant_option": GRANT_OPTION_UNKNOWN,
+            "granted_by": (
+                granted_by.strip()[:_MAX_STR_LEN]
+                if isinstance(granted_by, str) and granted_by.strip()
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _normalize_role_hierarchy_grant(
+        account_id: str,
+        *,
+        child_role_name: str,
+        child_role_type: str,
+        parent_role_name: str,
+        parent_role_type: str,
+        granted_by: Optional[str],
+    ) -> dict:
+        return {
+            "record_type": SNOWFLAKE_ROLE_HIERARCHY_GRANT,
+            "record_id": (
+                f"{account_id}/role_hierarchy_grant/"
+                f"{child_role_type}:{child_role_name.lower()}/{parent_role_type}:{parent_role_name.lower()}"
+            ),
+            "provider_resource_id": f"role_hierarchy_grant/{child_role_name}/{parent_role_name}",
+            "account_id": account_id,
+            "child_role_name": child_role_name[:_MAX_STR_LEN],
+            "child_role_type": child_role_type,
+            "parent_role_name": parent_role_name[:_MAX_STR_LEN],
+            "parent_role_type": parent_role_type,
+            "grant_option": GRANT_OPTION_UNKNOWN,
+            "granted_by": (
+                granted_by.strip()[:_MAX_STR_LEN]
+                if isinstance(granted_by, str) and granted_by.strip()
+                else None
+            ),
+        }
+
+    # ── Message 2: identity/role collection ──────────────────────────────────
+
+    @classmethod
+    def _collect_users(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str, dict[str, str]]:
+        """Returns (user records, family status, {user_name: default_role})."""
+        outcome = call_sql_api(client, _USERS_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome), {}
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        seen: dict[str, dict] = {}
+        default_roles: dict[str, str] = {}
+        for row in rows:
+            record = cls._normalize_user(account_id, row)
+            if record is None:
+                continue
+            seen[record["record_id"]] = record
+            if record["default_role"]:
+                default_roles[record["user_name"]] = record["default_role"]
+        return list(seen.values()), FAMILY_COMPLETE, default_roles
+
+    @classmethod
+    def _collect_account_roles(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str, list[str]]:
+        """Returns (account role records, family status, non-PUBLIC role
+        names to enumerate grants/hierarchy for)."""
+        outcome = call_sql_api(client, _ACCOUNT_ROLES_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome), []
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        seen: dict[str, dict] = {}
+        grantable_role_names: list[str] = []
+        for row in rows:
+            record = cls._normalize_account_role(account_id, row)
+            if record is None:
+                continue
+            seen[record["record_id"]] = record
+            if not is_public_role(record["role_name"]):
+                grantable_role_names.append(record["role_name"])
+        return list(seen.values()), FAMILY_COMPLETE, grantable_role_names
+
+    @classmethod
+    def _discover_database_names(cls, client: httpx.Client, *, role: str, _sleep_fn=None) -> tuple[list[str], str]:
+        """SHOW DATABASES used ONLY to discover database names for database
+        role enumeration — never normalized into a database inventory
+        record (that is message 3's scope)."""
+        outcome = call_sql_api(client, _DATABASE_NAMES_FOR_ROLE_DISCOVERY_STATEMENT, role=role, _sleep_fn=_sleep_fn)
+        if not outcome.ok:
+            return [], _family_status_for_outcome(outcome)
+        rows = _rows_as_dicts(outcome.columns, outcome.rows)
+        names: list[str] = []
+        for row in rows:
+            name = row.get("NAME")
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+        return names, FAMILY_COMPLETE
+
+    @classmethod
+    def _collect_database_roles(
+        cls, client: httpx.Client, account_id: str, database_names: list[str], *, role: str, _sleep_fn=None,
+    ) -> tuple[list[dict], str, list[tuple[str, str]]]:
+        """Returns (database role records, family status, [(database, role_name), ...]
+        non-PUBLIC pairs to enumerate grants/hierarchy for)."""
+        if not database_names:
+            return [], FAMILY_UNAVAILABLE, []
+        seen: dict[str, dict] = {}
+        pairs: list[tuple[str, str]] = []
+        any_ok = False
+        any_failed = False
+        for db_name in database_names:
+            outcome = call_sql_api(client, _database_roles_statement(db_name), role=role, _sleep_fn=_sleep_fn)
+            if not outcome.ok:
+                any_failed = True
+                continue
+            any_ok = True
+            rows = _rows_as_dicts(outcome.columns, outcome.rows)
+            for row in rows:
+                record = cls._normalize_database_role(account_id, db_name, row)
+                if record is None:
+                    continue
+                seen[record["record_id"]] = record
+                if not is_public_role(record["role_name"]):
+                    pairs.append((db_name, record["role_name"]))
+        if any_ok and not any_failed:
+            status = FAMILY_COMPLETE
+        elif any_ok and any_failed:
+            status = FAMILY_PARTIAL
+        else:
+            status = FAMILY_UNAVAILABLE
+        return list(seen.values()), status, pairs
+
+    @classmethod
+    def _collect_grants(
+        cls,
+        client: httpx.Client,
+        account_id: str,
+        *,
+        account_role_names: list[str],
+        database_role_pairs: list[tuple[str, str]],
+        default_roles_by_user: dict[str, str],
+        role: str,
+        _sleep_fn=None,
+    ) -> tuple[list[dict], list[dict], str, str]:
+        """Enumerate SHOW GRANTS OF ROLE / SHOW GRANTS OF DATABASE ROLE for
+        every non-PUBLIC account/database role, classifying each returned
+        row by its ``granted_to`` principal type into either a
+        ``snowflake_user_role_grant`` (principal type USER) or a
+        ``snowflake_role_hierarchy_grant`` (principal type ROLE/
+        DATABASE_ROLE). Returns (user_role_grants, role_hierarchy_grants,
+        user_grants_family_status, role_hierarchy_family_status)."""
+        user_grants: dict[str, dict] = {}
+        hierarchy_grants: dict[str, dict] = {}
+        any_ok = False
+        any_failed = False
+
+        def _process_rows(rows: list[dict], child_name: str, child_type: str) -> None:
+            for row in rows:
+                grantee_name = row.get("GRANTEE_NAME")
+                if not isinstance(grantee_name, str) or not grantee_name.strip():
+                    continue
+                principal_type = categorize_principal_type(row.get("GRANTED_TO"))
+                granted_by = row.get("GRANTED_BY")
+                if principal_type == PRINCIPAL_TYPE_USER:
+                    user_name = grantee_name.strip()
+                    grant = cls._normalize_user_role_grant(
+                        account_id,
+                        user_name=user_name,
+                        role_name=child_name,
+                        role_type=child_type,
+                        default_role_match=default_roles_by_user.get(user_name) == child_name,
+                        granted_by=granted_by,
+                    )
+                    user_grants[grant["record_id"]] = grant
+                elif principal_type in (PRINCIPAL_TYPE_ACCOUNT_ROLE, PRINCIPAL_TYPE_DATABASE_ROLE):
+                    grant = cls._normalize_role_hierarchy_grant(
+                        account_id,
+                        child_role_name=child_name,
+                        child_role_type=child_type,
+                        parent_role_name=grantee_name.strip(),
+                        parent_role_type=principal_type,
+                        granted_by=granted_by,
+                    )
+                    hierarchy_grants[grant["record_id"]] = grant
+                # PRINCIPAL_TYPE_UNKNOWN rows (an unrecognized/future
+                # granted_to value) are safely skipped rather than
+                # misclassified — a new principal type must be explicitly
+                # taught to this connector, never guessed.
+
+        for role_name in account_role_names:
+            outcome = call_sql_api(client, _grants_of_account_role_statement(role_name), role=role, _sleep_fn=_sleep_fn)
+            if not outcome.ok:
+                any_failed = True
+                continue
+            any_ok = True
+            _process_rows(_rows_as_dicts(outcome.columns, outcome.rows), role_name, PRINCIPAL_TYPE_ACCOUNT_ROLE)
+
+        for db_name, role_name in database_role_pairs:
+            outcome = call_sql_api(client, _grants_of_database_role_statement(db_name, role_name), role=role, _sleep_fn=_sleep_fn)
+            if not outcome.ok:
+                any_failed = True
+                continue
+            any_ok = True
+            _process_rows(_rows_as_dicts(outcome.columns, outcome.rows), role_name, PRINCIPAL_TYPE_DATABASE_ROLE)
+
+        if not account_role_names and not database_role_pairs:
+            status = FAMILY_UNAVAILABLE
+        elif any_ok and not any_failed:
+            status = FAMILY_COMPLETE
+        elif any_ok and any_failed:
+            status = FAMILY_PARTIAL
+        else:
+            status = FAMILY_UNAVAILABLE
+        return list(user_grants.values()), list(hierarchy_grants.values()), status, status
+
     # ── Capability probes ────────────────────────────────────────────────────
 
     @staticmethod
@@ -696,13 +1177,14 @@ class SnowflakeConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
-        """Fetch the Snowflake account identity + API capability inventory:
-        ``snowflake_account``, ``snowflake_api_capability`` probes.
+        """Fetch the Snowflake account identity, API capability inventory,
+        and (Snowflake message 2) users/account roles/database roles/
+        user-role grants/role-hierarchy edges.
 
-        Does NOT collect users, roles, grants, databases, schemas,
-        warehouses, shares, network policies, authentication policies, or
-        security/storage/external-access integrations yet — see the
-        module docstring for the full roadmap and sensitive-data boundary.
+        Does NOT collect databases/schemas/warehouses/shares/object grants,
+        network/authentication policies, security integrations, effective
+        privilege, or Security Findings yet — see the module docstring for
+        the full roadmap and sensitive-data boundary.
 
         SECURITY: programmatic_access_token is used only within this
         method's scope, never logged, never persisted beyond the local
@@ -711,8 +1193,8 @@ class SnowflakeConnector(BaseConnector):
         Raises:
             AuthenticationError: Token rejected or malformed credentials.
             ConnectorError: Snowflake returned an unexpected error fetching
-                the account identity itself (capability probes fail soft
-                instead of raising — see ``_probe_capabilities``).
+                the account identity itself (every other family fails soft
+                into a family-completeness status instead of raising).
             NetworkError: Transport-level failure reaching the account.
         """
         account_identifier, _username, token, role = self._credentials(credentials)
@@ -746,6 +1228,38 @@ class SnowflakeConnector(BaseConnector):
                 for r in capability_records
             }
 
+            # ── Message 2: users, account roles, database roles, grants,
+            #    role hierarchy. Each family's completeness is tracked
+            #    independently — one denied/unavailable family never
+            #    erases another (same principle as the message-1 probes).
+            user_records, users_status, default_roles_by_user = self._collect_users(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+            account_role_records, account_roles_status, grantable_account_role_names = self._collect_account_roles(
+                client, account_id, role=role, _sleep_fn=_sleep_fn,
+            )
+            database_names, _db_discovery_status = self._discover_database_names(
+                client, role=role, _sleep_fn=_sleep_fn,
+            )
+            database_role_records, database_roles_status, database_role_pairs = self._collect_database_roles(
+                client, account_id, database_names, role=role, _sleep_fn=_sleep_fn,
+            )
+            user_role_grants, role_hierarchy_grants, user_grants_status, role_hierarchy_status = self._collect_grants(
+                client,
+                account_id,
+                account_role_names=grantable_account_role_names,
+                database_role_pairs=database_role_pairs,
+                default_roles_by_user=default_roles_by_user,
+                role=role,
+                _sleep_fn=_sleep_fn,
+            )
+
+            family_completeness[COLLECTION_FAMILY_USERS] = users_status
+            family_completeness[COLLECTION_FAMILY_ACCOUNT_ROLES] = account_roles_status
+            family_completeness[COLLECTION_FAMILY_DATABASE_ROLES] = database_roles_status
+            family_completeness[COLLECTION_FAMILY_USER_ROLE_GRANTS] = user_grants_status
+            family_completeness[COLLECTION_FAMILY_ROLE_HIERARCHY] = role_hierarchy_status
+
             account_record = self._normalize_account(
                 account_id,
                 organization_name=organization_name,
@@ -758,8 +1272,15 @@ class SnowflakeConnector(BaseConnector):
 
             records.append(account_record)
             records.extend(capability_records)
+            records.extend(user_records)
+            records.extend(account_role_records)
+            records.extend(database_role_records)
+            records.extend(user_role_grants)
+            records.extend(role_hierarchy_grants)
 
         # Deterministic ordering — API response ordering must never affect
-        # the normalized snapshot or its fingerprint.
+        # the normalized snapshot or its fingerprint. Dedup is already
+        # enforced per-family (keyed by stable record_id in each
+        # ``_collect_*`` method), so this sort only needs to fix ordering.
         records.sort(key=lambda r: (r["record_type"], r["record_id"]))
         return records

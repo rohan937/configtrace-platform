@@ -38,10 +38,20 @@ import re as _re
 
 SNOWFLAKE_ACCOUNT = "snowflake_account"
 SNOWFLAKE_API_CAPABILITY = "snowflake_api_capability"
+SNOWFLAKE_USER = "snowflake_user"
+SNOWFLAKE_ACCOUNT_ROLE = "snowflake_account_role"
+SNOWFLAKE_DATABASE_ROLE = "snowflake_database_role"
+SNOWFLAKE_USER_ROLE_GRANT = "snowflake_user_role_grant"
+SNOWFLAKE_ROLE_HIERARCHY_GRANT = "snowflake_role_hierarchy_grant"
 
 ALL_SNOWFLAKE_RECORD_TYPES = frozenset({
     SNOWFLAKE_ACCOUNT,
     SNOWFLAKE_API_CAPABILITY,
+    SNOWFLAKE_USER,
+    SNOWFLAKE_ACCOUNT_ROLE,
+    SNOWFLAKE_DATABASE_ROLE,
+    SNOWFLAKE_USER_ROLE_GRANT,
+    SNOWFLAKE_ROLE_HIERARCHY_GRANT,
 })
 
 # ── Family completeness taxonomy (shared by every future collection msg) ───
@@ -203,3 +213,217 @@ def validate_role(raw_role: object) -> str:
             "snowflake: role must contain only letters, digits, and underscores"
         )
     return cleaned
+
+
+# ── Snowflake message 2: identity/role collection family names ─────────────
+#
+# Distinct from the message-1 CAPABILITY_FAMILY_* probe names above (those
+# only ever probe *readability*). These are the family names actual
+# collection completeness is tracked under, stored in the same
+# ``snowflake_account.family_completeness`` dict alongside the message-1
+# capability-probe entries.
+
+COLLECTION_FAMILY_USERS = "users"
+COLLECTION_FAMILY_ACCOUNT_ROLES = "account_roles"
+COLLECTION_FAMILY_DATABASE_ROLES = "database_roles"
+COLLECTION_FAMILY_USER_ROLE_GRANTS = "user_role_grants"
+COLLECTION_FAMILY_ROLE_HIERARCHY = "role_hierarchy"
+
+COLLECTION_FAMILIES: tuple[str, ...] = (
+    COLLECTION_FAMILY_USERS,
+    COLLECTION_FAMILY_ACCOUNT_ROLES,
+    COLLECTION_FAMILY_DATABASE_ROLES,
+    COLLECTION_FAMILY_USER_ROLE_GRANTS,
+    COLLECTION_FAMILY_ROLE_HIERARCHY,
+)
+
+
+# ── User type taxonomy ───────────────────────────────────────────────────────
+#
+# Confirmed via current official Snowflake documentation
+# (CREATE USER reference): TYPE accepts PERSON, SERVICE, SERVICE_AGENT, and
+# LEGACY_SERVICE (deprecated, kept for backward compatibility). Any other/
+# missing value is bucketed as unknown — never invented, never assumed to
+# be privileged or unprivileged by existence alone.
+
+USER_TYPE_PERSON = "person"
+USER_TYPE_SERVICE = "service"
+USER_TYPE_SERVICE_AGENT = "service_agent"
+USER_TYPE_LEGACY_SERVICE = "legacy_service"
+USER_TYPE_UNKNOWN = "unknown"
+
+_USER_TYPE_MAP = {
+    "PERSON": USER_TYPE_PERSON,
+    "SERVICE": USER_TYPE_SERVICE,
+    "SERVICE_AGENT": USER_TYPE_SERVICE_AGENT,
+    "LEGACY_SERVICE": USER_TYPE_LEGACY_SERVICE,
+}
+
+
+def categorize_user_type(raw_type: object) -> str:
+    """Map a SHOW USERS ``type`` value to a bounded category. Never invents
+    a type; anything not in the documented set (including ``None`` from a
+    privilege-filtered row) maps to ``unknown``."""
+    if not isinstance(raw_type, str):
+        return USER_TYPE_UNKNOWN
+    return _USER_TYPE_MAP.get(raw_type.strip().upper(), USER_TYPE_UNKNOWN)
+
+
+# ── Disabled tri-state ───────────────────────────────────────────────────────
+#
+# SHOW USERS filters most columns (including ``disabled``) to NULL for a
+# role without OWNERSHIP on the user or MANAGE GRANTS on the account —
+# missing therefore means "unknown", never "enabled". The SQL API can
+# return boolean-like values as native booleans or as the strings
+# "true"/"false" depending on the driver/result format, so both are
+# handled explicitly.
+
+DISABLED_ENABLED = "enabled"
+DISABLED_DISABLED = "disabled"
+DISABLED_UNKNOWN = "unknown"
+
+
+def categorize_disabled(raw_disabled: object) -> str:
+    if isinstance(raw_disabled, bool):
+        return DISABLED_DISABLED if raw_disabled else DISABLED_ENABLED
+    if isinstance(raw_disabled, str):
+        cleaned = raw_disabled.strip().lower()
+        if cleaned == "true":
+            return DISABLED_DISABLED
+        if cleaned == "false":
+            return DISABLED_ENABLED
+    return DISABLED_UNKNOWN
+
+
+# ── Generic tri-state boolean (RSA key / password / PAT presence) ──────────
+
+TRISTATE_TRUE = "true"
+TRISTATE_FALSE = "false"
+TRISTATE_UNKNOWN = "unknown"
+
+
+def categorize_tristate_bool(raw_value: object) -> str:
+    """Bounded true/false/unknown category for a presence/configuration
+    boolean column. Missing/filtered/malformed values are ``unknown`` —
+    NEVER coerced to ``false``, since a privilege-filtered SHOW USERS row
+    returns NULL for a column the caller cannot see, not a real ``false``."""
+    if isinstance(raw_value, bool):
+        return TRISTATE_TRUE if raw_value else TRISTATE_FALSE
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip().lower()
+        if cleaned == "true":
+            return TRISTATE_TRUE
+        if cleaned == "false":
+            return TRISTATE_FALSE
+    return TRISTATE_UNKNOWN
+
+
+# ── Secondary-role posture ──────────────────────────────────────────────────
+#
+# Confirmed via current official docs (CREATE USER reference):
+# DEFAULT_SECONDARY_ROLES accepts ``('ALL')`` (default) or ``()`` (none).
+# SHOW USERS surfaces this as the ``default_secondary_roles`` column.
+# Message 2 records only this coarse posture — it never computes the
+# resulting effective privilege set (message 5).
+
+SECONDARY_ROLES_ALL = "all"
+SECONDARY_ROLES_NONE = "none"
+SECONDARY_ROLES_SPECIFIC = "specific"
+SECONDARY_ROLES_UNKNOWN = "unknown"
+
+
+def categorize_secondary_roles(raw_value: object) -> str:
+    if not isinstance(raw_value, str):
+        return SECONDARY_ROLES_UNKNOWN
+    cleaned = raw_value.strip().upper()
+    if cleaned in ("ALL", "('ALL')"):
+        return SECONDARY_ROLES_ALL
+    if cleaned in ("", "NONE", "()"):
+        return SECONDARY_ROLES_NONE
+    if cleaned:
+        return SECONDARY_ROLES_SPECIFIC
+    return SECONDARY_ROLES_UNKNOWN
+
+
+# ── Built-in account-role taxonomy ──────────────────────────────────────────
+#
+# Confirmed via current official docs (Access Control overview): the
+# system-defined account roles are ACCOUNTADMIN, SECURITYADMIN, SYSADMIN,
+# USERADMIN, ORGADMIN (being phased out in favor of GLOBALORGADMIN, but
+# still currently documented), and PUBLIC (automatically granted to every
+# user and role — never a manually-assigned role).
+
+ROLE_CATEGORY_ACCOUNTADMIN = "accountadmin"
+ROLE_CATEGORY_SECURITYADMIN = "securityadmin"
+ROLE_CATEGORY_SYSADMIN = "sysadmin"
+ROLE_CATEGORY_USERADMIN = "useradmin"
+ROLE_CATEGORY_ORGADMIN = "orgadmin"
+ROLE_CATEGORY_PUBLIC = "public"
+ROLE_CATEGORY_CUSTOM = "custom"
+ROLE_CATEGORY_UNKNOWN = "unknown"
+
+_BUILT_IN_ACCOUNT_ROLE_MAP = {
+    "ACCOUNTADMIN": ROLE_CATEGORY_ACCOUNTADMIN,
+    "SECURITYADMIN": ROLE_CATEGORY_SECURITYADMIN,
+    "SYSADMIN": ROLE_CATEGORY_SYSADMIN,
+    "USERADMIN": ROLE_CATEGORY_USERADMIN,
+    "ORGADMIN": ROLE_CATEGORY_ORGADMIN,
+    "GLOBALORGADMIN": ROLE_CATEGORY_ORGADMIN,
+    "PUBLIC": ROLE_CATEGORY_PUBLIC,
+}
+
+
+def categorize_account_role(role_name: object) -> str:
+    """Map an account role name to its built-in category, or ``custom`` for
+    any other role. Never assigns a final privilege tier here — that is
+    message 5's job; this is purely deterministic name-based
+    identification of Snowflake's own documented system roles."""
+    if not isinstance(role_name, str) or not role_name.strip():
+        return ROLE_CATEGORY_UNKNOWN
+    return _BUILT_IN_ACCOUNT_ROLE_MAP.get(role_name.strip().upper(), ROLE_CATEGORY_CUSTOM)
+
+
+def is_public_role(role_name: object) -> bool:
+    """True only for the automatic, universally-granted PUBLIC role — used
+    to exclude it from grant/hierarchy enumeration so that its automatic
+    membership in every user/role never generates diff noise."""
+    return isinstance(role_name, str) and role_name.strip().upper() == "PUBLIC"
+
+
+# ── Grant / role-type taxonomy (for user-role grants and role hierarchy) ───
+#
+# ``granted_to``/``granted_to_roles`` type discriminator, confirmed via
+# current official docs (SHOW GRANTS reference): a role can be granted to
+# a USER, an account ROLE, or a DATABASE_ROLE.
+
+PRINCIPAL_TYPE_USER = "user"
+PRINCIPAL_TYPE_ACCOUNT_ROLE = "account_role"
+PRINCIPAL_TYPE_DATABASE_ROLE = "database_role"
+PRINCIPAL_TYPE_UNKNOWN = "unknown"
+
+_PRINCIPAL_TYPE_MAP = {
+    "USER": PRINCIPAL_TYPE_USER,
+    "ROLE": PRINCIPAL_TYPE_ACCOUNT_ROLE,
+    "DATABASE_ROLE": PRINCIPAL_TYPE_DATABASE_ROLE,
+}
+
+
+def categorize_principal_type(raw_granted_to: object) -> str:
+    if not isinstance(raw_granted_to, str):
+        return PRINCIPAL_TYPE_UNKNOWN
+    return _PRINCIPAL_TYPE_MAP.get(raw_granted_to.strip().upper(), PRINCIPAL_TYPE_UNKNOWN)
+
+
+# ── Grant-option tri-state ───────────────────────────────────────────────────
+#
+# ``SHOW GRANTS OF ROLE`` / ``SHOW GRANTS OF DATABASE ROLE`` (confirmed via
+# current official docs) do not expose a grant_option column at all — only
+# object-privilege grants (``SHOW GRANTS TO ROLE`` / ``GRANTS_TO_ROLES``,
+# out of scope until later object-grant work) carry one. Message 2's
+# user-role grants and role-hierarchy edges therefore always record
+# grant_option as ``unknown`` — this is a documented source limitation, not
+# a guess, and must never be coerced to ``false``.
+
+GRANT_OPTION_TRUE = "true"
+GRANT_OPTION_FALSE = "false"
+GRANT_OPTION_UNKNOWN = "unknown"

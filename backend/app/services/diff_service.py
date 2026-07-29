@@ -3855,6 +3855,38 @@ _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "snowflake_api_capability": (
         "status",
     ),
+    "snowflake_user": (
+        "disabled",
+        "user_type",
+        "default_role",
+        "default_secondary_roles",
+        "rsa_key_configured",
+        "password_configured",
+        "programmatic_access_token_configured",
+    ),
+    "snowflake_account_role": (
+        "role_category",
+        "owner",
+    ),
+    "snowflake_database_role": (
+        "database_name",
+        "role_name",
+        "owner",
+    ),
+    "snowflake_user_role_grant": (
+        "user_name",
+        "role_name",
+        "role_type",
+        "default_role_match",
+        "grant_option",
+    ),
+    "snowflake_role_hierarchy_grant": (
+        "child_role_name",
+        "parent_role_name",
+        "child_role_type",
+        "parent_role_type",
+        "grant_option",
+    ),
 }
 
 
@@ -4523,6 +4555,24 @@ def _build_provider_metadata(
         metadata["highest_privilege_tier"] = (
             context_record.get("highest_privilege_tier") or record.get("highest_privilege_tier") or ""
         )
+
+    # Snowflake message 2: user-role grants and role-hierarchy edges carry
+    # role name/type context the risk classifier needs to distinguish an
+    # ordinary custom-role grant from a direct ACCOUNTADMIN/SECURITYADMIN
+    # grant or an ACCOUNTADMIN-parent hierarchy edge — mirrors the Entra
+    # directory-role-assignment stanza above. Uses context_record (the NEW
+    # record on a modified change) so an in-flight role-name/type change is
+    # scoped against its post-change value, falling back to record for
+    # added/removed changes which have no alt_record.
+    if record.get("record_type") == "snowflake_user_role_grant":
+        metadata["role_name"] = context_record.get("role_name") or record.get("role_name") or ""
+        metadata["role_type"] = context_record.get("role_type") or record.get("role_type") or ""
+        metadata["user_name"] = context_record.get("user_name") or record.get("user_name") or ""
+    if record.get("record_type") == "snowflake_role_hierarchy_grant":
+        metadata["parent_role_name"] = context_record.get("parent_role_name") or record.get("parent_role_name") or ""
+        metadata["parent_role_type"] = context_record.get("parent_role_type") or record.get("parent_role_type") or ""
+        metadata["child_role_name"] = context_record.get("child_role_name") or record.get("child_role_name") or ""
+        metadata["child_role_type"] = context_record.get("child_role_type") or record.get("child_role_type") or ""
 
     if record.get("record_type") == "okta_application":
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
