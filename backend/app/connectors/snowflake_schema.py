@@ -607,6 +607,17 @@ OBJECT_TYPE_TASK = "task"
 OBJECT_TYPE_SHARE = "share"
 OBJECT_TYPE_INTEGRATION = "integration"
 OBJECT_TYPE_ACCOUNT = "account"
+# Added message 5 (not message 3, which predates message 4's network/
+# authentication policy families): SHOW GRANTS TO ROLE / SHOW FUTURE
+# GRANTS rows were already being collected with GRANTED_ON/GRANT_ON =
+# 'NETWORK POLICY' / 'AUTHENTICATION POLICY' whenever such a grant
+# existed — message 3's object-type map simply predated those two
+# object types, so those rows fell into OBJECT_TYPE_UNKNOWN. This is a
+# categorization-only addition (no new SQL call, no rewritten record) so
+# ownership/grant rollups over network/authentication policies can be
+# derived from data already sitting in ``snowflake_object_grant``.
+OBJECT_TYPE_NETWORK_POLICY = "network_policy"
+OBJECT_TYPE_AUTHENTICATION_POLICY = "authentication_policy"
 OBJECT_TYPE_UNKNOWN = "unknown"
 
 _OBJECT_TYPE_MAP = {
@@ -627,6 +638,8 @@ _OBJECT_TYPE_MAP = {
     "SHARE": OBJECT_TYPE_SHARE,
     "INTEGRATION": OBJECT_TYPE_INTEGRATION,
     "ACCOUNT": OBJECT_TYPE_ACCOUNT,
+    "NETWORK POLICY": OBJECT_TYPE_NETWORK_POLICY,
+    "AUTHENTICATION POLICY": OBJECT_TYPE_AUTHENTICATION_POLICY,
 }
 
 
@@ -932,3 +945,277 @@ def categorize_storage_provider(raw_provider: object) -> str:
     if not isinstance(raw_provider, str):
         return STORAGE_PROVIDER_UNKNOWN
     return _STORAGE_PROVIDER_MAP.get(raw_provider.strip().upper(), STORAGE_PROVIDER_UNKNOWN)
+
+
+# ── Snowflake message 5: effective privilege, ownership chains, PUBLIC
+#    exposure, future-grant risk, and integration privilege context ────────
+#
+# Everything below is derived LOCALLY from records messages 2-4 already
+# collected (``snowflake_user_role_grant``, ``snowflake_role_hierarchy_grant``,
+# ``snowflake_object_grant``, ``snowflake_account_role``,
+# ``snowflake_database_role``, ``snowflake_security_integration``, etc.) —
+# zero additional SQL calls. Message 5 never rewrites those raw-evidence
+# record types; it only reads them and emits three new derived record
+# types on top.
+
+SNOWFLAKE_PRIVILEGED_USER = "snowflake_privileged_user"
+SNOWFLAKE_PRIVILEGED_ROLE = "snowflake_privileged_role"
+SNOWFLAKE_PUBLIC_EXPOSURE = "snowflake_public_exposure"
+
+ALL_SNOWFLAKE_RECORD_TYPES = ALL_SNOWFLAKE_RECORD_TYPES | frozenset({
+    SNOWFLAKE_PRIVILEGED_USER,
+    SNOWFLAKE_PRIVILEGED_ROLE,
+    SNOWFLAKE_PUBLIC_EXPOSURE,
+})
+
+# One family, tracking whether the *derivation step itself* ran to
+# completion — distinct from (but dependent on) the input families'
+# completeness (users, account_roles, database_roles, user_role_grants,
+# role_hierarchy, object_grants, future_grants) already tracked above.
+COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE = "effective_privilege"
+
+PRIVILEGE_COLLECTION_FAMILIES: tuple[str, ...] = (
+    COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE,
+)
+
+# Upstream families that effective-privilege derivation depends on. Used
+# to compute per-derivation completeness: if any of these is not
+# ``FAMILY_COMPLETE``, the derived privilege records for the affected
+# principal(s) cannot claim ``PRIVILEGE_COMPLETENESS_COMPLETE``.
+PRIVILEGE_DERIVATION_INPUT_FAMILIES: tuple[str, ...] = (
+    COLLECTION_FAMILY_USERS,
+    COLLECTION_FAMILY_ACCOUNT_ROLES,
+    COLLECTION_FAMILY_DATABASE_ROLES,
+    COLLECTION_FAMILY_USER_ROLE_GRANTS,
+    COLLECTION_FAMILY_ROLE_HIERARCHY,
+    COLLECTION_FAMILY_OBJECT_GRANTS,
+    COLLECTION_FAMILY_FUTURE_GRANTS,
+)
+
+
+# ── Privilege-derivation completeness taxonomy ──────────────────────────────
+#
+# Distinct from the FAMILY_* taxonomy: this describes whether a SPECIFIC
+# derived privileged_user/privileged_role/public_exposure record's
+# computation had every input it needed, not whether an entire family
+# succeeded. A record can be "partial" even when most inputs are complete —
+# e.g. one database's role-grant enumeration failed, so an inherited
+# database-role count for an unrelated user is still fully known while
+# another user's is not.
+
+PRIVILEGE_COMPLETENESS_COMPLETE = "complete"
+PRIVILEGE_COMPLETENESS_PARTIAL = "partial"
+PRIVILEGE_COMPLETENESS_UNKNOWN = "unknown"
+
+
+def privilege_completeness_for_families(family_completeness: dict, families: "tuple[str, ...]") -> str:
+    """Roll up a set of family-completeness values into one
+    PRIVILEGE_COMPLETENESS_* verdict. Any DENIED/UNAVAILABLE input family
+    makes the derivation, at best, ``partial`` — never silently
+    ``complete``. Missing family keys are treated as unavailable (the same
+    "absence is not success" discipline used throughout this connector)."""
+    statuses = [family_completeness.get(f, FAMILY_UNAVAILABLE) for f in families]
+    if all(s == FAMILY_COMPLETE for s in statuses):
+        return PRIVILEGE_COMPLETENESS_COMPLETE
+    if any(s == FAMILY_COMPLETE for s in statuses):
+        return PRIVILEGE_COMPLETENESS_PARTIAL
+    return PRIVILEGE_COMPLETENESS_UNKNOWN
+
+
+# ── Privilege-tier taxonomy ──────────────────────────────────────────────────
+#
+# Bounded severity ranking for "how powerful is this effective privilege
+# set". Mirrors the exact rank-floor mechanism Okta's privileged-identity
+# derivation uses (``okta_schema.py``'s ``highest_privilege_tier``): unknown
+# always ranks BELOW every known tier (never the reverse) — a principal
+# with one confirmed ``read_only`` grant and one grant of an unrecognized/
+# future privilege type is reported as ``read_only``, not ``unknown``,
+# because the known evidence is strictly more informative.
+
+PRIVILEGE_TIER_CRITICAL = "critical"
+PRIVILEGE_TIER_HIGH = "high"
+PRIVILEGE_TIER_MEDIUM = "medium"
+PRIVILEGE_TIER_LOW = "low"
+PRIVILEGE_TIER_READ_ONLY = "read_only"
+PRIVILEGE_TIER_UNKNOWN = "unknown"
+
+PRIVILEGE_TIER_RANK = {
+    PRIVILEGE_TIER_UNKNOWN: 0,
+    PRIVILEGE_TIER_READ_ONLY: 1,
+    PRIVILEGE_TIER_LOW: 2,
+    PRIVILEGE_TIER_MEDIUM: 3,
+    PRIVILEGE_TIER_HIGH: 4,
+    PRIVILEGE_TIER_CRITICAL: 5,
+}
+
+
+def highest_privilege_tier(tiers: "list[str]") -> str:
+    """Return the highest-ranked tier in ``tiers``, or unknown if empty.
+    Unrecognized tier strings rank 0 (the floor), same as
+    ``PRIVILEGE_TIER_UNKNOWN`` itself — a known tier never loses to one."""
+    if not tiers:
+        return PRIVILEGE_TIER_UNKNOWN
+    return max(tiers, key=lambda t: PRIVILEGE_TIER_RANK.get(t, 0))
+
+
+# Confirmed via current official Snowflake documentation (Access Control
+# overview, fetched this message): ACCOUNTADMIN is the top-level role and
+# "encapsulates" SYSADMIN and SECURITYADMIN. SECURITYADMIN inherits
+# USERADMIN and holds MANAGE GRANTS by default (delegable to custom
+# roles). SYSADMIN is infrastructure/object administration, distinct from
+# security/grant administration, and does NOT hold MANAGE GRANTS by
+# default. USERADMIN is identity/role-management administration. PUBLIC
+# is the automatic pseudo-role — its OWN tier (as a role) is read_only;
+# what matters for PUBLIC is what has been granted TO it (see
+# ``snowflake_public_exposure`` below), never the role's intrinsic tier.
+# ORGADMIN/GLOBALORGADMIN are organization-level (cross-account) roles —
+# GLOBALORGADMIN is documented as replacing ORGADMIN, but both are
+# preserved and classified identically here (``ROLE_CATEGORY_ORGADMIN``
+# already collapses both name variants in message 2's schema).
+_BUILT_IN_ROLE_TIER = {
+    ROLE_CATEGORY_ACCOUNTADMIN: PRIVILEGE_TIER_CRITICAL,
+    ROLE_CATEGORY_SECURITYADMIN: PRIVILEGE_TIER_HIGH,
+    ROLE_CATEGORY_ORGADMIN: PRIVILEGE_TIER_HIGH,
+    ROLE_CATEGORY_SYSADMIN: PRIVILEGE_TIER_MEDIUM,
+    ROLE_CATEGORY_USERADMIN: PRIVILEGE_TIER_MEDIUM,
+    ROLE_CATEGORY_PUBLIC: PRIVILEGE_TIER_READ_ONLY,
+}
+
+
+def privilege_tier_for_role_category(role_category: str) -> str:
+    """Tier for a BUILT-IN role category (see ``categorize_account_role``).
+    ``custom``/``unknown`` return ``PRIVILEGE_TIER_UNKNOWN`` — a custom
+    role's tier is instead derived from its actual observed global
+    privileges/MANAGE GRANTS/ownership via
+    ``privilege_tier_for_custom_role_signals`` below, never from its
+    display name."""
+    return _BUILT_IN_ROLE_TIER.get(role_category, PRIVILEGE_TIER_UNKNOWN)
+
+
+def privilege_tier_for_custom_role_signals(
+    *,
+    has_manage_grants: bool,
+    has_identity_admin_privilege: bool,
+    has_object_creation_privilege: bool,
+    has_broad_ownership: bool,
+) -> str:
+    """Derive a custom account/database role's tier from its ACTUAL
+    observed grants — never from its name (e.g. a role literally named
+    ``DATA_ENGINEER`` is classified by what it holds, not what it's
+    called). Combining MANAGE GRANTS with identity-administration
+    privilege (CREATE USER/CREATE ROLE) is admin-equivalent to
+    SECURITYADMIN+USERADMIN together, so it ranks ``critical``, same as
+    the message task's own worked example."""
+    if has_manage_grants and has_identity_admin_privilege:
+        return PRIVILEGE_TIER_CRITICAL
+    if has_manage_grants or has_broad_ownership:
+        return PRIVILEGE_TIER_HIGH
+    if has_identity_admin_privilege or has_object_creation_privilege:
+        return PRIVILEGE_TIER_MEDIUM
+    return PRIVILEGE_TIER_LOW
+
+
+# ── Role privilege category taxonomy (bounded) ──────────────────────────────
+#
+# Distinct from message 3's per-grant ``PRIVILEGE_CATEGORY_*`` (which
+# categorizes a single object-grant row for Change-classification
+# purposes). This is a broader, role-level rollup of "what KIND of
+# authority does this role's full grant set represent" — computed from
+# actual observed global/account-level privilege strings (``object_type ==
+# OBJECT_TYPE_ACCOUNT`` object-grant rows) and ownership rollups, never
+# invented, never inferred from the role's display name.
+
+ROLE_PRIVILEGE_CATEGORY_ACCOUNT_ADMINISTRATION = "account_administration"
+ROLE_PRIVILEGE_CATEGORY_GRANT_MANAGEMENT = "grant_management"
+ROLE_PRIVILEGE_CATEGORY_IDENTITY_ADMINISTRATION = "identity_administration"
+ROLE_PRIVILEGE_CATEGORY_OBJECT_CREATION = "object_creation"
+ROLE_PRIVILEGE_CATEGORY_DATA_READ = "data_read"
+ROLE_PRIVILEGE_CATEGORY_DATA_WRITE = "data_write"
+ROLE_PRIVILEGE_CATEGORY_OWNERSHIP = "ownership"
+ROLE_PRIVILEGE_CATEGORY_WAREHOUSE_CONTROL = "warehouse_control"
+ROLE_PRIVILEGE_CATEGORY_INTEGRATION_CONTROL = "integration_control"
+ROLE_PRIVILEGE_CATEGORY_NETWORK_SECURITY_CONTROL = "network_security_control"
+ROLE_PRIVILEGE_CATEGORY_AUTHENTICATION_CONTROL = "authentication_control"
+ROLE_PRIVILEGE_CATEGORY_DATA_SHARING = "data_sharing"
+ROLE_PRIVILEGE_CATEGORY_MONITORING = "monitoring"
+ROLE_PRIVILEGE_CATEGORY_UNKNOWN = "unknown"
+
+ALL_ROLE_PRIVILEGE_CATEGORIES = frozenset({
+    ROLE_PRIVILEGE_CATEGORY_ACCOUNT_ADMINISTRATION,
+    ROLE_PRIVILEGE_CATEGORY_GRANT_MANAGEMENT,
+    ROLE_PRIVILEGE_CATEGORY_IDENTITY_ADMINISTRATION,
+    ROLE_PRIVILEGE_CATEGORY_OBJECT_CREATION,
+    ROLE_PRIVILEGE_CATEGORY_DATA_READ,
+    ROLE_PRIVILEGE_CATEGORY_DATA_WRITE,
+    ROLE_PRIVILEGE_CATEGORY_OWNERSHIP,
+    ROLE_PRIVILEGE_CATEGORY_WAREHOUSE_CONTROL,
+    ROLE_PRIVILEGE_CATEGORY_INTEGRATION_CONTROL,
+    ROLE_PRIVILEGE_CATEGORY_NETWORK_SECURITY_CONTROL,
+    ROLE_PRIVILEGE_CATEGORY_AUTHENTICATION_CONTROL,
+    ROLE_PRIVILEGE_CATEGORY_DATA_SHARING,
+    ROLE_PRIVILEGE_CATEGORY_MONITORING,
+    ROLE_PRIVILEGE_CATEGORY_UNKNOWN,
+})
+
+# Raw (uppercased) global/account-level privilege string -> role privilege
+# category. Only actual documented Snowflake global privilege strings —
+# never invented. Populated from ``snowflake_object_grant`` rows whose
+# ``object_type`` is ``OBJECT_TYPE_ACCOUNT`` (i.e. ``GRANTED_ON``/
+# ``GRANT_ON`` = ACCOUNT), confirmed via current official docs (Access
+# Control / Global Privileges reference) to be the account-wide privilege
+# surface, distinct from ordinary per-object grants.
+_GLOBAL_PRIVILEGE_CATEGORY_MAP = {
+    "MANAGE GRANTS": ROLE_PRIVILEGE_CATEGORY_GRANT_MANAGEMENT,
+    "CREATE USER": ROLE_PRIVILEGE_CATEGORY_IDENTITY_ADMINISTRATION,
+    "CREATE ROLE": ROLE_PRIVILEGE_CATEGORY_IDENTITY_ADMINISTRATION,
+    "CREATE WAREHOUSE": ROLE_PRIVILEGE_CATEGORY_WAREHOUSE_CONTROL,
+    "CREATE INTEGRATION": ROLE_PRIVILEGE_CATEGORY_INTEGRATION_CONTROL,
+    "CREATE SHARE": ROLE_PRIVILEGE_CATEGORY_DATA_SHARING,
+    "CREATE DATA EXCHANGE LISTING": ROLE_PRIVILEGE_CATEGORY_DATA_SHARING,
+    "CREATE LISTING": ROLE_PRIVILEGE_CATEGORY_DATA_SHARING,
+    "CREATE NETWORK POLICY": ROLE_PRIVILEGE_CATEGORY_NETWORK_SECURITY_CONTROL,
+    "CREATE DATABASE": ROLE_PRIVILEGE_CATEGORY_OBJECT_CREATION,
+    "MONITOR USAGE": ROLE_PRIVILEGE_CATEGORY_MONITORING,
+    "MONITOR EXECUTION": ROLE_PRIVILEGE_CATEGORY_MONITORING,
+    "MONITOR": ROLE_PRIVILEGE_CATEGORY_MONITORING,
+    "IMPORT SHARE": ROLE_PRIVILEGE_CATEGORY_DATA_SHARING,
+    "APPLY AUTHENTICATION POLICY": ROLE_PRIVILEGE_CATEGORY_AUTHENTICATION_CONTROL,
+    "APPLY NETWORK POLICY": ROLE_PRIVILEGE_CATEGORY_NETWORK_SECURITY_CONTROL,
+    "EXECUTE TASK": ROLE_PRIVILEGE_CATEGORY_OBJECT_CREATION,
+    "EXECUTE MANAGED TASK": ROLE_PRIVILEGE_CATEGORY_OBJECT_CREATION,
+}
+
+
+def categorize_global_privilege(raw_privilege: object) -> str:
+    """Categorize one global/account-level privilege string (from an
+    ``object_type == OBJECT_TYPE_ACCOUNT`` object-grant row) into a
+    bounded ``ROLE_PRIVILEGE_CATEGORY_*``. ``CREATE <object>`` privileges
+    not in the explicit map fall back to generic
+    ``object_creation`` (matching message 3's own ``CREATE `` prefix
+    convention) rather than ``unknown`` — the privilege IS creation
+    authority, even if this connector hasn't special-cased that exact
+    object type into a narrower category yet."""
+    if not isinstance(raw_privilege, str) or not raw_privilege.strip():
+        return ROLE_PRIVILEGE_CATEGORY_UNKNOWN
+    cleaned = raw_privilege.strip().upper()
+    if cleaned in _GLOBAL_PRIVILEGE_CATEGORY_MAP:
+        return _GLOBAL_PRIVILEGE_CATEGORY_MAP[cleaned]
+    if cleaned.startswith("CREATE "):
+        return ROLE_PRIVILEGE_CATEGORY_OBJECT_CREATION
+    return ROLE_PRIVILEGE_CATEGORY_UNKNOWN
+
+
+# ── PUBLIC exposure taxonomy ─────────────────────────────────────────────────
+#
+# MANDATORY wording discipline (repeated verbatim across this connector's
+# tests/comments — a past mistake this codebase must never repeat): PUBLIC
+# is a Snowflake-internal automatic role, NOT an internet-exposure signal.
+# "PUBLIC != internet public." Never describe a PUBLIC grant as "publicly
+# accessible on the internet" — always "available to Snowflake users
+# through the PUBLIC role." The exposure category below reflects this:
+# ``account_wide_user_access``, never anything resembling
+# ``internet_exposure``.
+
+PUBLIC_EXPOSURE_CATEGORY_ACCOUNT_WIDE = "account_wide_user_access"
+
+PUBLIC_EXPOSURE_SCOPE_ACCOUNT = "account"

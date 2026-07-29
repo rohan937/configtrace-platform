@@ -227,6 +227,7 @@ from app.connectors.snowflake_schema import (
     COLLECTION_FAMILY_USER_ROLE_GRANTS,
     COLLECTION_FAMILY_USERS,
     COLLECTION_FAMILY_WAREHOUSES,
+    COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE,
     DETAIL_COMPLETE,
     DETAIL_DENIED,
     DETAIL_UNAVAILABLE,
@@ -235,11 +236,37 @@ from app.connectors.snowflake_schema import (
     FAMILY_PARTIAL,
     FAMILY_UNAVAILABLE,
     GRANT_OPTION_UNKNOWN,
+    OBJECT_TYPE_ACCOUNT,
+    OBJECT_TYPE_AUTHENTICATION_POLICY,
     OBJECT_TYPE_DATABASE,
+    OBJECT_TYPE_INTEGRATION,
+    OBJECT_TYPE_NETWORK_POLICY,
     OBJECT_TYPE_SCHEMA,
+    OBJECT_TYPE_WAREHOUSE,
     PRINCIPAL_TYPE_ACCOUNT_ROLE,
     PRINCIPAL_TYPE_DATABASE_ROLE,
     PRINCIPAL_TYPE_USER,
+    PRIVILEGE_CATEGORY_DATA_READ,
+    PRIVILEGE_CATEGORY_DATA_WRITE,
+    PRIVILEGE_COMPLETENESS_COMPLETE,
+    PRIVILEGE_COMPLETENESS_PARTIAL,
+    PRIVILEGE_COMPLETENESS_UNKNOWN,
+    PRIVILEGE_DERIVATION_INPUT_FAMILIES,
+    PRIVILEGE_TIER_CRITICAL,
+    PRIVILEGE_TIER_HIGH,
+    PRIVILEGE_TIER_MEDIUM,
+    PRIVILEGE_TIER_UNKNOWN,
+    PUBLIC_EXPOSURE_CATEGORY_ACCOUNT_WIDE,
+    PUBLIC_EXPOSURE_SCOPE_ACCOUNT,
+    ROLE_CATEGORY_ACCOUNTADMIN,
+    ROLE_CATEGORY_CUSTOM,
+    ROLE_CATEGORY_SECURITYADMIN,
+    ROLE_CATEGORY_SYSADMIN,
+    ROLE_CATEGORY_USERADMIN,
+    ROLE_PRIVILEGE_CATEGORY_GRANT_MANAGEMENT,
+    ROLE_PRIVILEGE_CATEGORY_IDENTITY_ADMINISTRATION,
+    ROLE_PRIVILEGE_CATEGORY_OBJECT_CREATION,
+    ROLE_PRIVILEGE_CATEGORY_UNKNOWN,
     SNOWFLAKE_ACCOUNT,
     SNOWFLAKE_ACCOUNT_ROLE,
     SNOWFLAKE_API_CAPABILITY,
@@ -250,6 +277,9 @@ from app.connectors.snowflake_schema import (
     SNOWFLAKE_NETWORK_POLICY,
     SNOWFLAKE_NETWORK_RULE,
     SNOWFLAKE_OBJECT_GRANT,
+    SNOWFLAKE_PRIVILEGED_ROLE,
+    SNOWFLAKE_PRIVILEGED_USER,
+    SNOWFLAKE_PUBLIC_EXPOSURE,
     SNOWFLAKE_ROLE_HIERARCHY_GRANT,
     SNOWFLAKE_SCHEMA,
     SNOWFLAKE_SECURITY_INTEGRATION,
@@ -264,6 +294,7 @@ from app.connectors.snowflake_schema import (
     categorize_client_types,
     categorize_database_kind,
     categorize_disabled,
+    categorize_global_privilege,
     categorize_grant_option,
     categorize_integration_type,
     categorize_managed_access,
@@ -278,8 +309,12 @@ from app.connectors.snowflake_schema import (
     categorize_tristate_bool,
     categorize_user_type,
     categorize_warehouse_state,
+    highest_privilege_tier,
     is_public_role,
     is_role_hierarchy_row,
+    privilege_completeness_for_families,
+    privilege_tier_for_custom_role_signals,
+    privilege_tier_for_role_category,
     validate_account_identifier,
     validate_role,
     validate_username,
@@ -1554,6 +1589,507 @@ class SnowflakeConnector(BaseConnector):
             "detail_collection_status": DETAIL_COMPLETE if properties is not None else DETAIL_UNAVAILABLE,
         }
 
+    # ── Message 5: effective privilege derivation (pure local join) ─────────
+    #
+    # Everything below reads ONLY already-collected message 2-4 records —
+    # ZERO additional SQL/API calls (see the module docstring's message-5
+    # roadmap entry). Raw evidence record types
+    # (snowflake_user_role_grant/snowflake_role_hierarchy_grant/
+    # snowflake_object_grant/etc.) are never rewritten; three new derived
+    # record types are appended on top: snowflake_privileged_user,
+    # snowflake_privileged_role, snowflake_public_exposure.
+    #
+    # Role-hierarchy traversal direction (confirmed via current official
+    # Snowflake docs, Access Control overview, fetched this message):
+    # "Role A granted to Role B" -> "B inherits A's privileges". So a
+    # child role's privileges flow UP into its parent. Effective privilege
+    # for a directly-held role therefore requires walking DOWNWARD through
+    # that role's children (the roles granted TO it) — never upward
+    # through its parents, which would invert admins and subordinates.
+
+    @staticmethod
+    def _role_key(role_type: str, role_name: str) -> tuple[str, str]:
+        return (role_type, role_name.upper())
+
+    @classmethod
+    def _build_role_children_index(
+        cls, hierarchy_grants: list[dict],
+    ) -> dict[tuple[str, str], list[tuple[str, str]]]:
+        index: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for g in hierarchy_grants:
+            parent_key = cls._role_key(g["parent_role_type"], g["parent_role_name"])
+            child_key = cls._role_key(g["child_role_type"], g["child_role_name"])
+            index.setdefault(parent_key, []).append(child_key)
+        for key in index:
+            index[key] = sorted(set(index[key]))
+        return index
+
+    @classmethod
+    def _role_closure(
+        cls,
+        root: tuple[str, str],
+        children_index: dict[tuple[str, str], list[tuple[str, str]]],
+        memo: dict[tuple[str, str], frozenset],
+        *,
+        _in_progress: frozenset = frozenset(),
+        _depth: int = 0,
+        _max_depth: int = 128,
+        _max_nodes: int = 20000,
+    ) -> frozenset:
+        """Deterministic transitive closure of ``root`` DOWNWARD through
+        the child-granted-to-parent graph — the set of roles whose
+        privileges flow up into ``root`` when ``root`` is activated
+        (``root`` itself plus all transitive children). Memoized so each
+        node's closure is computed exactly once regardless of how many
+        users/roles reference it (no combinatorial explosion at scale).
+        Cycle-safe via an immutable in-progress path set (a well-formed
+        Snowflake account never legitimately has a role-hierarchy cycle,
+        but malformed/incomplete data must never cause unbounded
+        recursion) and bounded by both depth and total node count."""
+        if root in memo:
+            return memo[root]
+        if root in _in_progress or _depth > _max_depth:
+            return frozenset()
+        path = _in_progress | {root}
+        result = {root}
+        for child in children_index.get(root, []):
+            if len(result) >= _max_nodes:
+                break
+            result.add(child)
+            result |= cls._role_closure(
+                child, children_index, memo,
+                _in_progress=path, _depth=_depth + 1,
+                _max_depth=_max_depth, _max_nodes=_max_nodes,
+            )
+        closure = frozenset(result)
+        memo[root] = closure
+        return closure
+
+    @classmethod
+    def _build_role_signals(
+        cls,
+        object_grant_records: list[dict],
+        *,
+        security_integration_names: set[str],
+        storage_integration_names: set[str],
+        external_access_integration_names: set[str],
+        managed_access_schema_fqns: set[str],
+    ) -> dict[tuple[str, str], dict]:
+        """One signal bundle per (role_type, role_name) built by folding
+        every ``snowflake_object_grant`` row onto its grantee role — the
+        source of truth for global privileges (``object_type ==
+        OBJECT_TYPE_ACCOUNT``), MANAGE GRANTS, ownership rollups
+        (cross-referenced against message-4's integration name sets and
+        message-3's managed-access schema set, since integration
+        sub-type/managed-access posture live on those records, not on the
+        grant row itself), and future-grant rollups."""
+        signals: dict[tuple[str, str], dict] = {}
+
+        def _get(key: tuple[str, str]) -> dict:
+            return signals.setdefault(key, {
+                "has_manage_grants": False,
+                "global_privilege_categories": set(),
+                "owns_database_count": 0,
+                "owns_schema_count": 0,
+                "owns_managed_access_schema_count": 0,
+                "owns_warehouse_count": 0,
+                "owns_security_integration_count": 0,
+                "owns_storage_integration_count": 0,
+                "owns_external_access_integration_count": 0,
+                "owns_network_policy_count": 0,
+                "owns_authentication_policy_count": 0,
+                "owns_other_object_count": 0,
+                "future_grant_count": 0,
+                "future_ownership_count": 0,
+                "future_broad_grant_count": 0,
+            })
+
+        for g in object_grant_records:
+            grantee_type = g.get("grantee_type")
+            grantee_name = g.get("grantee_name")
+            if not isinstance(grantee_type, str) or not isinstance(grantee_name, str):
+                continue
+            key = cls._role_key(grantee_type, grantee_name)
+            sig = _get(key)
+            object_type = g.get("object_type")
+            privilege = g.get("privilege")
+            future = bool(g.get("future_grant"))
+            ownership = bool(g.get("ownership"))
+            object_fqn_upper = (g.get("object_fqn") or "").strip().upper()
+
+            if object_type == OBJECT_TYPE_ACCOUNT:
+                if privilege == "MANAGE GRANTS":
+                    sig["has_manage_grants"] = True
+                category = categorize_global_privilege(privilege)
+                if category != ROLE_PRIVILEGE_CATEGORY_UNKNOWN:
+                    sig["global_privilege_categories"].add(category)
+
+            if ownership:
+                if object_type == OBJECT_TYPE_DATABASE:
+                    sig["owns_database_count"] += 1
+                elif object_type == OBJECT_TYPE_SCHEMA:
+                    sig["owns_schema_count"] += 1
+                    if object_fqn_upper in managed_access_schema_fqns:
+                        sig["owns_managed_access_schema_count"] += 1
+                elif object_type == OBJECT_TYPE_WAREHOUSE:
+                    sig["owns_warehouse_count"] += 1
+                elif object_type == OBJECT_TYPE_INTEGRATION:
+                    if object_fqn_upper in security_integration_names:
+                        sig["owns_security_integration_count"] += 1
+                    elif object_fqn_upper in storage_integration_names:
+                        sig["owns_storage_integration_count"] += 1
+                    elif object_fqn_upper in external_access_integration_names:
+                        sig["owns_external_access_integration_count"] += 1
+                    else:
+                        sig["owns_other_object_count"] += 1
+                elif object_type == OBJECT_TYPE_NETWORK_POLICY:
+                    sig["owns_network_policy_count"] += 1
+                elif object_type == OBJECT_TYPE_AUTHENTICATION_POLICY:
+                    sig["owns_authentication_policy_count"] += 1
+                elif object_type not in (OBJECT_TYPE_ACCOUNT,):
+                    sig["owns_other_object_count"] += 1
+
+            if future:
+                sig["future_grant_count"] += 1
+                if ownership:
+                    sig["future_ownership_count"] += 1
+                if object_type in (OBJECT_TYPE_DATABASE, OBJECT_TYPE_SCHEMA):
+                    sig["future_broad_grant_count"] += 1
+
+        return signals
+
+    @staticmethod
+    def _empty_role_signal() -> dict:
+        return {
+            "has_manage_grants": False,
+            "global_privilege_categories": set(),
+            "owns_database_count": 0,
+            "owns_schema_count": 0,
+            "owns_managed_access_schema_count": 0,
+            "owns_warehouse_count": 0,
+            "owns_security_integration_count": 0,
+            "owns_storage_integration_count": 0,
+            "owns_external_access_integration_count": 0,
+            "owns_network_policy_count": 0,
+            "owns_authentication_policy_count": 0,
+            "owns_other_object_count": 0,
+            "future_grant_count": 0,
+            "future_ownership_count": 0,
+            "future_broad_grant_count": 0,
+        }
+
+    @classmethod
+    def _effective_signals_for_closure(
+        cls, closure: frozenset, role_signals: dict[tuple[str, str], dict],
+    ) -> dict:
+        """Union every signal bundle across a role's (or user's directly-
+        held role's) full downward closure — this is the actual
+        "effective privilege" a session activating the root role would
+        have, since Snowflake includes all descendant roles' privileges."""
+        merged = cls._empty_role_signal()
+        for node in closure:
+            sig = role_signals.get(node)
+            if sig is None:
+                continue
+            merged["has_manage_grants"] = merged["has_manage_grants"] or sig["has_manage_grants"]
+            merged["global_privilege_categories"] |= sig["global_privilege_categories"]
+            for count_key in (
+                "owns_database_count", "owns_schema_count", "owns_managed_access_schema_count",
+                "owns_warehouse_count", "owns_security_integration_count",
+                "owns_storage_integration_count", "owns_external_access_integration_count",
+                "owns_network_policy_count", "owns_authentication_policy_count",
+                "owns_other_object_count", "future_grant_count", "future_ownership_count",
+                "future_broad_grant_count",
+            ):
+                merged[count_key] += sig[count_key]
+        return merged
+
+    @staticmethod
+    def _tier_for_closure(closure: frozenset, effective: dict) -> str:
+        """Highest known tier across every role in a closure: built-in
+        roles use their fixed tier; custom roles are derived from their
+        OWN observed signals (never the closure-wide aggregate, so one
+        powerful descendant doesn't inflate an unrelated sibling's
+        individually-reported tier — this function is only ever called
+        with the FULL merged closure signal, which is correct precisely
+        because closure membership already performed that union)."""
+        tiers = []
+        has_broad_ownership = (
+            effective["owns_database_count"] > 0
+            or effective["owns_managed_access_schema_count"] > 0
+            or effective["owns_security_integration_count"] > 0
+        )
+        has_identity_admin = ROLE_PRIVILEGE_CATEGORY_IDENTITY_ADMINISTRATION in effective["global_privilege_categories"]
+        has_object_creation = bool(effective["global_privilege_categories"] - {ROLE_PRIVILEGE_CATEGORY_GRANT_MANAGEMENT})
+        for role_type, role_name in closure:
+            if role_type == PRINCIPAL_TYPE_ACCOUNT_ROLE:
+                category = categorize_account_role(role_name)
+                built_in_tier = privilege_tier_for_role_category(category)
+                if built_in_tier != PRIVILEGE_TIER_UNKNOWN:
+                    tiers.append(built_in_tier)
+        custom_tier = privilege_tier_for_custom_role_signals(
+            has_manage_grants=effective["has_manage_grants"],
+            has_identity_admin_privilege=has_identity_admin,
+            has_object_creation_privilege=has_object_creation,
+            has_broad_ownership=has_broad_ownership,
+        )
+        tiers.append(custom_tier)
+        return highest_privilege_tier(tiers)
+
+    @classmethod
+    def _derive_privileged_roles(
+        cls,
+        account_id: str,
+        *,
+        account_role_records: list[dict],
+        database_role_records: list[dict],
+        children_index: dict[tuple[str, str], list[tuple[str, str]]],
+        role_signals: dict[tuple[str, str], dict],
+        user_role_grants: list[dict],
+        closure_memo: dict[tuple[str, str], frozenset],
+        completeness: str,
+    ) -> list[dict]:
+        """One ``snowflake_privileged_role`` per account/database role
+        meeting the inclusion threshold (critical/high tier, MANAGE
+        GRANTS, meaningful ownership, high-risk future grants, or
+        security/auth/network-policy/integration ownership) — never every
+        read-only role (avoids diff/UI noise for the overwhelming
+        majority of ordinary roles)."""
+        direct_user_assignment_counts: dict[tuple[str, str], int] = {}
+        for g in user_role_grants:
+            key = cls._role_key(g["role_type"], g["role_name"])
+            direct_user_assignment_counts[key] = direct_user_assignment_counts.get(key, 0) + 1
+
+        records: list[dict] = []
+        all_roles = [
+            (PRINCIPAL_TYPE_ACCOUNT_ROLE, r["role_name"], None, r)
+            for r in account_role_records
+        ] + [
+            (PRINCIPAL_TYPE_DATABASE_ROLE, r["role_name"], r.get("database_name"), r)
+            for r in database_role_records
+        ]
+        # Sorted for deterministic output ordering regardless of the
+        # upstream API's row order.
+        all_roles.sort(key=lambda t: (t[0], t[1], t[2] or ""))
+
+        for role_type, role_name, database_name, raw_record in all_roles:
+            key = cls._role_key(role_type, role_name)
+            closure = cls._role_closure(key, children_index, closure_memo)
+            effective = cls._effective_signals_for_closure(closure, role_signals)
+            tier = cls._tier_for_closure(closure, effective)
+
+            total_owned = (
+                effective["owns_database_count"] + effective["owns_schema_count"]
+                + effective["owns_warehouse_count"] + effective["owns_security_integration_count"]
+                + effective["owns_storage_integration_count"] + effective["owns_external_access_integration_count"]
+                + effective["owns_network_policy_count"] + effective["owns_authentication_policy_count"]
+                + effective["owns_other_object_count"]
+            )
+            significant = (
+                tier in (PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH)
+                or effective["has_manage_grants"]
+                or total_owned > 0
+                or effective["future_ownership_count"] > 0
+                or effective["owns_security_integration_count"] > 0
+                or effective["owns_network_policy_count"] > 0
+                or effective["owns_authentication_policy_count"] > 0
+            )
+            if not significant:
+                continue
+
+            role_category = (
+                categorize_account_role(role_name) if role_type == PRINCIPAL_TYPE_ACCOUNT_ROLE
+                else ROLE_CATEGORY_CUSTOM
+            )
+            inherited_child_role_count = len(closure) - 1
+            inherited_database_role_count = sum(
+                1 for t, _n in closure if t == PRINCIPAL_TYPE_DATABASE_ROLE
+            ) - (1 if role_type == PRINCIPAL_TYPE_DATABASE_ROLE else 0)
+
+            record_id_scope = f"{database_name.lower()}." if database_name else ""
+            records.append({
+                "record_type": SNOWFLAKE_PRIVILEGED_ROLE,
+                "record_id": f"{account_id}/privileged_role/{role_type}/{record_id_scope}{role_name.lower()}",
+                "provider_resource_id": f"privileged_role/{role_type}/{role_name}",
+                "account_id": account_id,
+                "role_name": role_name,
+                "role_type": role_type,
+                "role_category": role_category,
+                "database_name": database_name,
+                "highest_known_privilege_tier": tier,
+                "has_unknown_privilege": tier == PRIVILEGE_TIER_UNKNOWN,
+                "has_manage_grants": effective["has_manage_grants"],
+                "global_privilege_categories": sorted(effective["global_privilege_categories"]),
+                "owns_database_count": effective["owns_database_count"],
+                "owns_schema_count": effective["owns_schema_count"],
+                "owns_managed_access_schema_count": effective["owns_managed_access_schema_count"],
+                "owns_warehouse_count": effective["owns_warehouse_count"],
+                "owns_security_integration_count": effective["owns_security_integration_count"],
+                "owns_storage_integration_count": effective["owns_storage_integration_count"],
+                "owns_external_access_integration_count": effective["owns_external_access_integration_count"],
+                "owns_network_policy_count": effective["owns_network_policy_count"],
+                "owns_authentication_policy_count": effective["owns_authentication_policy_count"],
+                "owns_other_object_count": effective["owns_other_object_count"],
+                "future_grant_count": effective["future_grant_count"],
+                "future_ownership_count": effective["future_ownership_count"],
+                "future_broad_grant_count": effective["future_broad_grant_count"],
+                "inherited_child_role_count": inherited_child_role_count,
+                "inherited_database_role_count": max(inherited_database_role_count, 0),
+                "direct_user_assignment_count": direct_user_assignment_counts.get(key, 0),
+                "privilege_completeness": completeness,
+            })
+        return records
+
+    @classmethod
+    def _derive_privileged_users(
+        cls,
+        account_id: str,
+        *,
+        user_records: list[dict],
+        user_role_grants: list[dict],
+        children_index: dict[tuple[str, str], list[tuple[str, str]]],
+        role_signals: dict[tuple[str, str], dict],
+        closure_memo: dict[tuple[str, str], frozenset],
+        completeness: str,
+    ) -> list[dict]:
+        """One ``snowflake_privileged_user`` per user with >=1 effective
+        admin-tier signal — direct or inherited via the role hierarchy.
+        Pure local join, one record per privileged user (never per role
+        or per object), following the same shape as
+        ``OktaConnector._derive_privileged_identities``."""
+        user_index = {u["user_name"]: u for u in user_records}
+        direct_roles_by_user: dict[str, list[tuple[str, str]]] = {}
+        for g in user_role_grants:
+            direct_roles_by_user.setdefault(g["user_name"], []).append(
+                cls._role_key(g["role_type"], g["role_name"])
+            )
+
+        records: list[dict] = []
+        for user_name in sorted(direct_roles_by_user):
+            direct_keys = sorted(set(direct_roles_by_user[user_name]))
+            full_closure: set = set()
+            for key in direct_keys:
+                full_closure |= cls._role_closure(key, children_index, closure_memo)
+            effective = cls._effective_signals_for_closure(frozenset(full_closure), role_signals)
+            tier = cls._tier_for_closure(frozenset(full_closure), effective)
+
+            has_accountadmin = any(
+                t == PRINCIPAL_TYPE_ACCOUNT_ROLE and categorize_account_role(n) == ROLE_CATEGORY_ACCOUNTADMIN
+                for t, n in full_closure
+            )
+            has_securityadmin = any(
+                t == PRINCIPAL_TYPE_ACCOUNT_ROLE and categorize_account_role(n) == ROLE_CATEGORY_SECURITYADMIN
+                for t, n in full_closure
+            )
+            has_sysadmin = any(
+                t == PRINCIPAL_TYPE_ACCOUNT_ROLE and categorize_account_role(n) == ROLE_CATEGORY_SYSADMIN
+                for t, n in full_closure
+            )
+            has_useradmin = any(
+                t == PRINCIPAL_TYPE_ACCOUNT_ROLE and categorize_account_role(n) == ROLE_CATEGORY_USERADMIN
+                for t, n in full_closure
+            )
+
+            total_owned = (
+                effective["owns_database_count"] + effective["owns_schema_count"]
+                + effective["owns_warehouse_count"] + effective["owns_security_integration_count"]
+                + effective["owns_storage_integration_count"] + effective["owns_external_access_integration_count"]
+                + effective["owns_network_policy_count"] + effective["owns_authentication_policy_count"]
+                + effective["owns_other_object_count"]
+            )
+            significant = (
+                tier in (PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH, PRIVILEGE_TIER_MEDIUM)
+                or effective["has_manage_grants"]
+                or total_owned > 0
+                or has_accountadmin or has_securityadmin or has_sysadmin or has_useradmin
+            )
+            if not significant:
+                continue
+
+            user_record = user_index.get(user_name)
+            database_role_count = sum(1 for t, _n in full_closure if t == PRINCIPAL_TYPE_DATABASE_ROLE)
+            records.append({
+                "record_type": SNOWFLAKE_PRIVILEGED_USER,
+                "record_id": f"{account_id}/privileged_user/{user_name.lower()}",
+                "provider_resource_id": f"privileged_user/{user_name}",
+                "account_id": account_id,
+                "user_name": user_name,
+                "user_type": user_record.get("user_type") if user_record else "unknown",
+                "disabled": user_record.get("disabled") if user_record else "unknown",
+                "highest_known_privilege_tier": tier,
+                "has_unknown_privilege": tier == PRIVILEGE_TIER_UNKNOWN,
+                "has_accountadmin": has_accountadmin,
+                "has_securityadmin": has_securityadmin,
+                "has_sysadmin": has_sysadmin,
+                "has_useradmin": has_useradmin,
+                "has_manage_grants": effective["has_manage_grants"],
+                "direct_role_count": len(direct_keys),
+                "inherited_role_count": max(len(full_closure) - len(direct_keys), 0),
+                "database_role_count": database_role_count,
+                "owned_object_count": total_owned,
+                "owned_database_count": effective["owns_database_count"],
+                "high_risk_future_grant_count": effective["future_ownership_count"] + effective["future_broad_grant_count"],
+                "privilege_completeness": completeness,
+            })
+        return records
+
+    @staticmethod
+    def _derive_public_exposure(
+        account_id: str,
+        *,
+        object_grant_records: list[dict],
+        future_grants_status: str,
+    ) -> dict:
+        """One account-wide ``snowflake_public_exposure`` record.
+
+        SECURITY/WORDING: PUBLIC is Snowflake's automatic pseudo-role,
+        granted to every user and role — it is NEVER "publicly accessible
+        on the internet." This record's ``exposure_category`` is always
+        ``account_wide_user_access``, never anything resembling
+        ``internet_exposure`` — PUBLIC != internet public.
+
+        Completeness gap (documented, not silently hidden): message 2/3
+        deliberately excluded PUBLIC from per-role SHOW GRANTS TO ROLE
+        enumeration (to avoid hierarchy/grant noise from its automatic
+        membership in every principal), so CURRENT object grants held by
+        PUBLIC were never collected — only FUTURE grants to PUBLIC are
+        visible here (SHOW FUTURE GRANTS IN DATABASE is not scoped to a
+        single grantee, so any future grant to PUBLIC that exists is
+        already present in ``snowflake_object_grant``). Message 5's own
+        "zero additional SQL calls" constraint means this gap cannot be
+        closed this message — ``current_public_exposure_count`` is
+        ``None`` (unknown), never a fabricated ``0``.
+        """
+        public_future_grants = [
+            g for g in object_grant_records
+            if g.get("grantee_name", "").strip().upper() == "PUBLIC" and g.get("future_grant")
+        ]
+        future_ownership_count = sum(1 for g in public_future_grants if g.get("ownership"))
+        future_write_count = sum(1 for g in public_future_grants if g.get("privilege_category") == PRIVILEGE_CATEGORY_DATA_WRITE)
+        future_read_count = sum(1 for g in public_future_grants if g.get("privilege_category") == PRIVILEGE_CATEGORY_DATA_READ)
+        future_broad_count = sum(
+            1 for g in public_future_grants if g.get("object_type") in (OBJECT_TYPE_DATABASE, OBJECT_TYPE_SCHEMA)
+        )
+        return {
+            "record_type": SNOWFLAKE_PUBLIC_EXPOSURE,
+            "record_id": f"{account_id}/public_exposure",
+            "provider_resource_id": "public_exposure/account",
+            "account_id": account_id,
+            "exposure_category": PUBLIC_EXPOSURE_CATEGORY_ACCOUNT_WIDE,
+            "scope": PUBLIC_EXPOSURE_SCOPE_ACCOUNT,
+            "current_public_exposure_count": None,
+            "current_public_exposure_data_available": False,
+            "future_public_exposure_count": len(public_future_grants),
+            "future_public_ownership_count": future_ownership_count,
+            "future_public_write_count": future_write_count,
+            "future_public_read_count": future_read_count,
+            "future_public_broad_object_type_count": future_broad_count,
+            "privilege_completeness": (
+                PRIVILEGE_COMPLETENESS_PARTIAL if future_grants_status == FAMILY_COMPLETE
+                else PRIVILEGE_COMPLETENESS_UNKNOWN
+            ),
+        }
+
     # ── Message 2: identity/role collection ──────────────────────────────────
 
     @classmethod
@@ -2257,6 +2793,67 @@ class SnowflakeConnector(BaseConnector):
             family_completeness[COLLECTION_FAMILY_STORAGE_INTEGRATIONS] = storage_integrations_status
             family_completeness[COLLECTION_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS] = external_access_integrations_status
 
+            # ── Message 5: effective privilege derivation. Pure local join
+            #    over everything collected above — zero additional SQL
+            #    calls. See the dedicated method block above fetch() for
+            #    the full architecture rationale.
+            security_integration_names = {
+                r["integration_name"].upper() for r in security_integration_records if r.get("integration_name")
+            }
+            storage_integration_names = {
+                r["integration_name"].upper() for r in storage_integration_records if r.get("integration_name")
+            }
+            external_access_integration_names = {
+                r["integration_name"].upper() for r in external_access_integration_records if r.get("integration_name")
+            }
+            managed_access_schema_fqns = {
+                f"{r['database_name']}.{r['schema_name']}".upper()
+                for r in schema_records
+                if r.get("managed_access") == "true"
+            }
+            children_index = self._build_role_children_index(role_hierarchy_grants)
+            role_signals = self._build_role_signals(
+                object_grant_records,
+                security_integration_names=security_integration_names,
+                storage_integration_names=storage_integration_names,
+                external_access_integration_names=external_access_integration_names,
+                managed_access_schema_fqns=managed_access_schema_fqns,
+            )
+            closure_memo: dict[tuple[str, str], frozenset] = {}
+            privilege_completeness = privilege_completeness_for_families(
+                family_completeness, PRIVILEGE_DERIVATION_INPUT_FAMILIES,
+            )
+            privileged_user_records = self._derive_privileged_users(
+                account_id,
+                user_records=user_records,
+                user_role_grants=user_role_grants,
+                children_index=children_index,
+                role_signals=role_signals,
+                closure_memo=closure_memo,
+                completeness=privilege_completeness,
+            )
+            privileged_role_records = self._derive_privileged_roles(
+                account_id,
+                account_role_records=account_role_records,
+                database_role_records=database_role_records,
+                children_index=children_index,
+                role_signals=role_signals,
+                user_role_grants=user_role_grants,
+                closure_memo=closure_memo,
+                completeness=privilege_completeness,
+            )
+            public_exposure_record = self._derive_public_exposure(
+                account_id,
+                object_grant_records=object_grant_records,
+                future_grants_status=future_grants_status,
+            )
+            if privilege_completeness == PRIVILEGE_COMPLETENESS_COMPLETE:
+                family_completeness[COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE] = FAMILY_COMPLETE
+            elif privilege_completeness == PRIVILEGE_COMPLETENESS_PARTIAL:
+                family_completeness[COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE] = FAMILY_PARTIAL
+            else:
+                family_completeness[COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE] = FAMILY_UNAVAILABLE
+
             account_record = self._normalize_account(
                 account_id,
                 organization_name=organization_name,
@@ -2285,6 +2882,9 @@ class SnowflakeConnector(BaseConnector):
             records.extend(security_integration_records)
             records.extend(storage_integration_records)
             records.extend(external_access_integration_records)
+            records.extend(privileged_user_records)
+            records.extend(privileged_role_records)
+            records.append(public_exposure_record)
 
         # Deterministic ordering — API response ordering must never affect
         # the normalized snapshot or its fingerprint. Dedup is already

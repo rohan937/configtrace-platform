@@ -82,6 +82,9 @@ from app.connectors.snowflake_schema import (
     SNOWFLAKE_NETWORK_POLICY,
     SNOWFLAKE_NETWORK_RULE,
     SNOWFLAKE_OBJECT_GRANT,
+    SNOWFLAKE_PRIVILEGED_ROLE,
+    SNOWFLAKE_PRIVILEGED_USER,
+    SNOWFLAKE_PUBLIC_EXPOSURE,
     SNOWFLAKE_ROLE_HIERARCHY_GRANT,
     SNOWFLAKE_SCHEMA,
     SNOWFLAKE_SECURITY_INTEGRATION,
@@ -91,6 +94,28 @@ from app.connectors.snowflake_schema import (
     SNOWFLAKE_USER_ROLE_GRANT,
     SNOWFLAKE_WAREHOUSE,
 )
+
+# Message 5's own tier vocabulary (distinct from message-2/3's preliminary
+# built-in-role-name shortcuts above, which those earlier record types
+# still use for their own direct-grant/hierarchy-edge classification).
+_PRIVILEGE_TIER_RANK = {
+    "unknown": 0,
+    "read_only": 1,
+    "low": 2,
+    "medium": 3,
+    "high": 4,
+    "critical": 5,
+}
+
+
+def _tier_added_severity(tier: str) -> tuple[str, str]:
+    if tier == "critical":
+        return "critical", "with critical-tier effective privilege"
+    if tier == "high":
+        return "high", "with high-tier effective privilege"
+    if tier == "medium":
+        return "medium", "with medium-tier effective privilege"
+    return "low", "with effective privilege worth tracking"
 
 # Preliminary privileged built-in role tiers used ONLY for message-2/3
 # direct grant/hierarchy severity — message 5 owns the full
@@ -560,6 +585,198 @@ def _classify_external_access_integration_change(change: object) -> tuple[str, s
     return "low", "A Snowflake external access integration's metadata changed."
 
 
+def _classify_privileged_user_change(change: object) -> tuple[str, str]:
+    """Message 5: effective-privilege-aware Change classification for
+    ``snowflake_privileged_user``. Unlike message 2's preliminary direct-
+    grant classifier above, this reflects the FULL role-hierarchy closure
+    (direct + inherited roles, global privileges, ownership) — so a user
+    gaining effective ACCOUNTADMIN via a multi-hop inherited role is
+    classified identically to a direct grant."""
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    user_name = pm.get("user_name") or "A Snowflake user"
+    user_type = pm.get("user_type") or "unknown"
+    tier = pm.get("highest_known_privilege_tier") or "unknown"
+
+    if ct == "added":
+        severity, note = _tier_added_severity(tier)
+        return severity, f"{user_name} ({user_type}) now has meaningful effective Snowflake privilege, {note}."
+    if ct == "removed":
+        return "low", f"{user_name} no longer has meaningful effective Snowflake privilege — a restrictive change."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp == "has_accountadmin":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv and not pv:
+            return "critical", f"{user_name} gained effective ACCOUNTADMIN privilege — the highest tier in Snowflake."
+        if pv and not nv:
+            return "high", f"{user_name} lost effective ACCOUNTADMIN privilege — a reduction, though other privilege may remain."
+        return "low", f"{user_name}'s ACCOUNTADMIN status changed."
+    if fp == "has_securityadmin":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv and not pv:
+            return "high", f"{user_name} gained effective SECURITYADMIN privilege (grant administration)."
+        return "low", f"{user_name}'s SECURITYADMIN status changed, a reduction."
+    if fp == "has_manage_grants":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv and not pv:
+            return "high", f"{user_name} gained effective MANAGE GRANTS — the ability to grant/revoke privileges on objects it does not own."
+        return "low", f"{user_name}'s MANAGE GRANTS status changed, a reduction."
+    if fp == "highest_known_privilege_tier":
+        nv, pv = str(_get(change, "new_value") or "unknown"), str(_get(change, "prev_value") or "unknown")
+        nv_rank, pv_rank = _PRIVILEGE_TIER_RANK.get(nv, 0), _PRIVILEGE_TIER_RANK.get(pv, 0)
+        if nv_rank > pv_rank:
+            severity, _note = _tier_added_severity(nv)
+            return severity, f"{user_name}'s effective Snowflake privilege tier increased from {pv} to {nv}."
+        if nv_rank < pv_rank:
+            return "low", f"{user_name}'s effective Snowflake privilege tier decreased from {pv} to {nv}, a reduction."
+        return "low", f"{user_name}'s effective privilege tier metadata changed."
+    if fp == "disabled":
+        nv, pv = (_get(change, "new_value") or ""), (_get(change, "prev_value") or "")
+        if pv == DISABLED_DISABLED and nv == DISABLED_ENABLED:
+            # A disabled privileged user's entitlement was already tracked
+            # (see fp=="added" above / the record's continued existence
+            # while disabled) — re-enabling restores ACTIVE sign-in access
+            # to that already-known privilege tier, so severity scales
+            # with tier rather than being a flat "user re-enabled" Medium.
+            severity, _note = _tier_added_severity(tier)
+            return (
+                severity,
+                f"A previously disabled Snowflake user with {tier}-tier effective privilege was re-enabled, "
+                "restoring active sign-in access to that privilege (the entitlement was retained while disabled).",
+            )
+        if pv == DISABLED_ENABLED and nv == DISABLED_DISABLED:
+            return (
+                "low",
+                f"A Snowflake user with {tier}-tier effective privilege was disabled — a restrictive change. "
+                "The privilege entitlement is retained (not removed) in case the user is re-enabled.",
+            )
+        return "low", f"{user_name}'s disabled state changed."
+    return "low", f"{user_name}'s effective Snowflake privilege metadata changed."
+
+
+def _classify_privileged_role_change(change: object) -> tuple[str, str]:
+    """Message 5: effective-privilege-aware Change classification for
+    ``snowflake_privileged_role`` (account or database role)."""
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    role_name = pm.get("role_name") or "A Snowflake role"
+    tier = pm.get("highest_known_privilege_tier") or "unknown"
+
+    if ct == "added":
+        severity, note = _tier_added_severity(tier)
+        return severity, f"{role_name} now has meaningful effective Snowflake privilege, {note}."
+    if ct == "removed":
+        return "low", f"{role_name} no longer has meaningful effective Snowflake privilege — a restrictive change."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp == "has_manage_grants":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv and not pv:
+            return "high", f"{role_name} gained MANAGE GRANTS — the ability to grant/revoke privileges on objects it does not own."
+        return "low", f"{role_name}'s MANAGE GRANTS status changed, a reduction."
+    if fp == "highest_known_privilege_tier":
+        nv, pv = str(_get(change, "new_value") or "unknown"), str(_get(change, "prev_value") or "unknown")
+        nv_rank, pv_rank = _PRIVILEGE_TIER_RANK.get(nv, 0), _PRIVILEGE_TIER_RANK.get(pv, 0)
+        if nv_rank > pv_rank:
+            severity, _note = _tier_added_severity(nv)
+            return severity, f"{role_name}'s effective Snowflake privilege tier increased from {pv} to {nv}."
+        if nv_rank < pv_rank:
+            return "low", f"{role_name}'s effective Snowflake privilege tier decreased from {pv} to {nv}, a reduction."
+        return "low", f"{role_name}'s effective privilege tier metadata changed."
+    if fp in ("owns_database_count", "owns_managed_access_schema_count", "owns_security_integration_count"):
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int):
+            if nv > pv:
+                return "high", f"{role_name} gained ownership of a high-scope Snowflake object (database, managed-access schema, or security integration)."
+            if nv < pv:
+                return "low", f"{role_name} lost ownership of a high-scope Snowflake object, a reduction."
+        return "low", f"{role_name}'s high-scope ownership count changed."
+    if fp in ("owns_schema_count", "owns_warehouse_count", "owns_storage_integration_count",
+              "owns_external_access_integration_count", "owns_network_policy_count",
+              "owns_authentication_policy_count", "owns_other_object_count"):
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int):
+            if nv > pv:
+                return "medium", f"{role_name} gained ownership of an additional Snowflake object."
+            if nv < pv:
+                return "low", f"{role_name} lost ownership of a Snowflake object, a reduction."
+        return "low", f"{role_name}'s ownership count changed."
+    if fp == "future_ownership_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return "high", f"{role_name} gained a future OWNERSHIP grant — newly created objects will be owned by this role."
+        return "low", f"{role_name}'s future-ownership grant count changed."
+    if fp == "future_broad_grant_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return "medium", f"{role_name} gained a future grant on an entire database or schema."
+        return "low", f"{role_name}'s future broad-grant count changed."
+    return "low", f"{role_name}'s effective Snowflake privilege metadata changed."
+
+
+def _classify_public_exposure_change(change: object) -> tuple[str, str]:
+    """Message 5: PUBLIC effective-exposure Change classification.
+
+    WORDING (mandatory, see module/schema docstrings): PUBLIC is
+    Snowflake's automatic account-wide pseudo-role, NEVER "publicly
+    accessible on the internet." Every message here says "available to
+    Snowflake users through the PUBLIC role" — never "internet exposure."
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "Snowflake PUBLIC-exposure tracking was added for this account."
+    if ct == "removed":
+        return "low", "Snowflake PUBLIC-exposure tracking is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp == "future_public_ownership_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int):
+            if nv > pv:
+                return (
+                    "critical",
+                    "A future OWNERSHIP grant to PUBLIC was added — every Snowflake user in the account would "
+                    "gain ownership of newly created matching objects through the PUBLIC role.",
+                )
+            if nv < pv:
+                return "low", "A future OWNERSHIP grant to PUBLIC was removed, a restrictive change."
+        return "low", "PUBLIC's future-ownership exposure count changed."
+    if fp == "future_public_write_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return (
+                "high",
+                "A future data-write grant to PUBLIC was added — newly created matching objects would be "
+                "writable by every Snowflake user through the PUBLIC role.",
+            )
+        return "low", "PUBLIC's future data-write exposure count changed."
+    if fp == "future_public_read_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return (
+                "medium",
+                "A future read grant to PUBLIC was added — newly created matching objects would be readable "
+                "by every Snowflake user through the PUBLIC role.",
+            )
+        return "low", "PUBLIC's future read-exposure count changed."
+    if fp == "future_public_exposure_count":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if isinstance(nv, int) and isinstance(pv, int):
+            if nv > pv:
+                return (
+                    "medium",
+                    "A future grant to PUBLIC was added, broadening what is available to every Snowflake user "
+                    "through the PUBLIC role for newly created matching objects.",
+                )
+            if nv < pv:
+                return "low", "A future grant to PUBLIC was removed, a restrictive change."
+        return "low", "PUBLIC's future exposure count changed."
+    return "low", "Snowflake PUBLIC-exposure metadata changed."
+
+
 def classify_snowflake_change(change: object) -> tuple[str, str]:
     """Route a Snowflake Change to its record-type classifier.
 
@@ -608,4 +825,10 @@ def classify_snowflake_change(change: object) -> tuple[str, str]:
         return _classify_storage_integration_change(change)
     if record_type == SNOWFLAKE_EXTERNAL_ACCESS_INTEGRATION:
         return _classify_external_access_integration_change(change)
+    if record_type == SNOWFLAKE_PRIVILEGED_USER:
+        return _classify_privileged_user_change(change)
+    if record_type == SNOWFLAKE_PRIVILEGED_ROLE:
+        return _classify_privileged_role_change(change)
+    if record_type == SNOWFLAKE_PUBLIC_EXPOSURE:
+        return _classify_public_exposure_change(change)
     return "low", "A Snowflake configuration field changed."

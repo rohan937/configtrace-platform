@@ -3969,6 +3969,58 @@ _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "allowed_secret_count",
         "allowed_api_authentication_integration_count",
     ),
+    "snowflake_privileged_user": (
+        "user_type",
+        "disabled",
+        "highest_known_privilege_tier",
+        "has_unknown_privilege",
+        "has_accountadmin",
+        "has_securityadmin",
+        "has_sysadmin",
+        "has_useradmin",
+        "has_manage_grants",
+        "direct_role_count",
+        "inherited_role_count",
+        "database_role_count",
+        "owned_object_count",
+        "owned_database_count",
+        "high_risk_future_grant_count",
+        "privilege_completeness",
+    ),
+    "snowflake_privileged_role": (
+        "role_category",
+        "highest_known_privilege_tier",
+        "has_unknown_privilege",
+        "has_manage_grants",
+        "global_privilege_categories",
+        "owns_database_count",
+        "owns_schema_count",
+        "owns_managed_access_schema_count",
+        "owns_warehouse_count",
+        "owns_security_integration_count",
+        "owns_storage_integration_count",
+        "owns_external_access_integration_count",
+        "owns_network_policy_count",
+        "owns_authentication_policy_count",
+        "owns_other_object_count",
+        "future_grant_count",
+        "future_ownership_count",
+        "future_broad_grant_count",
+        "inherited_child_role_count",
+        "inherited_database_role_count",
+        "direct_user_assignment_count",
+        "privilege_completeness",
+    ),
+    "snowflake_public_exposure": (
+        "current_public_exposure_count",
+        "current_public_exposure_data_available",
+        "future_public_exposure_count",
+        "future_public_ownership_count",
+        "future_public_write_count",
+        "future_public_read_count",
+        "future_public_broad_object_type_count",
+        "privilege_completeness",
+    ),
 }
 
 
@@ -4702,6 +4754,54 @@ def _build_provider_metadata(
             if context_record.get("allowed_network_rule_count") is not None
             else record.get("allowed_network_rule_count")
         )
+
+    # Snowflake message 5: derived effective-privilege records carry tier/
+    # capability context the risk classifier needs to scale escalation
+    # severity (ordinary→medium→high→critical, ACCOUNTADMIN/SECURITYADMIN/
+    # MANAGE GRANTS additions, ownership-scope severity, PUBLIC account-
+    # wide-exposure severity). Uses context_record (the NEW record on a
+    # modified change) for the same reason as every stanza above.
+    if record.get("record_type") == "snowflake_privileged_user":
+        metadata["user_name"] = context_record.get("user_name") or record.get("user_name") or ""
+        metadata["user_type"] = context_record.get("user_type") or record.get("user_type") or ""
+        metadata["disabled"] = context_record.get("disabled") or record.get("disabled") or ""
+        metadata["highest_known_privilege_tier"] = context_record.get("highest_known_privilege_tier") or record.get("highest_known_privilege_tier") or ""
+        metadata["has_accountadmin"] = bool(context_record.get("has_accountadmin") or record.get("has_accountadmin"))
+        metadata["has_securityadmin"] = bool(context_record.get("has_securityadmin") or record.get("has_securityadmin"))
+        metadata["has_manage_grants"] = bool(context_record.get("has_manage_grants") or record.get("has_manage_grants"))
+    if record.get("record_type") == "snowflake_privileged_role":
+        metadata["role_name"] = context_record.get("role_name") or record.get("role_name") or ""
+        metadata["role_type"] = context_record.get("role_type") or record.get("role_type") or ""
+        metadata["role_category"] = context_record.get("role_category") or record.get("role_category") or ""
+        metadata["highest_known_privilege_tier"] = context_record.get("highest_known_privilege_tier") or record.get("highest_known_privilege_tier") or ""
+        metadata["has_manage_grants"] = bool(context_record.get("has_manage_grants") or record.get("has_manage_grants"))
+        metadata["owns_database_count"] = (
+            context_record.get("owns_database_count")
+            if context_record.get("owns_database_count") is not None
+            else record.get("owns_database_count")
+        )
+        metadata["owns_managed_access_schema_count"] = (
+            context_record.get("owns_managed_access_schema_count")
+            if context_record.get("owns_managed_access_schema_count") is not None
+            else record.get("owns_managed_access_schema_count")
+        )
+        metadata["owns_security_integration_count"] = (
+            context_record.get("owns_security_integration_count")
+            if context_record.get("owns_security_integration_count") is not None
+            else record.get("owns_security_integration_count")
+        )
+    if record.get("record_type") == "snowflake_public_exposure":
+        metadata["future_public_exposure_count"] = (
+            context_record.get("future_public_exposure_count")
+            if context_record.get("future_public_exposure_count") is not None
+            else record.get("future_public_exposure_count")
+        )
+        metadata["future_public_ownership_count"] = (
+            context_record.get("future_public_ownership_count")
+            if context_record.get("future_public_ownership_count") is not None
+            else record.get("future_public_ownership_count")
+        )
+        metadata["exposure_category"] = context_record.get("exposure_category") or record.get("exposure_category") or ""
 
     if record.get("record_type") == "okta_application":
         metadata["tenant_id"] = context_record.get("tenant_id") or record.get("tenant_id") or ""
