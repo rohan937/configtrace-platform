@@ -368,6 +368,12 @@ def sync_integration(
 
                 connector = EntraConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "snowflake":
+                # SECURITY: programmatic_access_token is NEVER logged.
+                from app.connectors.snowflake import SnowflakeConnector
+
+                connector = SnowflakeConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

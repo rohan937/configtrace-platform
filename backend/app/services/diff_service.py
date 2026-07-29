@@ -3839,6 +3839,24 @@ _ENTRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# ── Snowflake (Snowflake message 1 of 8 — foundation) ───────────────────────
+#
+# Only durable identity/security metadata is tracked. account_identifier
+# (the user-supplied credential value) and family_completeness (informal
+# capability-probe context, mirrored via dedicated snowflake_api_capability
+# records) are intentionally NOT tracked here.
+_SNOWFLAKE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "snowflake_account": (
+        "organization_name",
+        "account_name",
+        "account_locator",
+        "monitoring_role",
+    ),
+    "snowflake_api_capability": (
+        "status",
+    ),
+}
+
 
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
@@ -3937,6 +3955,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _OKTA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("entra_"):
         return _ENTRA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("snowflake_"):
+        return _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Unknown cloudflare_* subtypes return () (empty), matching every

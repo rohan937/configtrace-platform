@@ -303,13 +303,24 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── Snowflake message 1 — provider foundation ─────────────────────────────
+    elif provider == "snowflake":
+        return _create_snowflake_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
             "'twilio', 'sendgrid', 'auth0', 'datadog', 'clerk', 'pagerduty', "
-            "'linear', 'jira', 'kubernetes', 'okta', 'entra'."
+            "'linear', 'jira', 'kubernetes', 'okta', 'entra', 'snowflake'."
         )
 
 
@@ -1797,6 +1808,86 @@ def _create_entra_integration(
         display_name=f"{display_name} ({tenant_id})" if tenant_id else display_name,
         resource_metadata={
             "tenant_id": tenant_id or None,
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_snowflake_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Snowflake integration + account resource (Snowflake
+    message 1 of 8).
+
+    SECURITY: credentials["programmatic_access_token"] is NEVER logged,
+    NEVER returned, NEVER stored in plaintext outside the encrypted
+    credentials column, and NEVER copied into resource_metadata. Only the
+    user-supplied display name and the non-secret account_identifier are
+    used for resource identity.
+
+    Live API validation (acquiring the account identity via the SQL API's
+    ``CURRENT_ORGANIZATION_NAME()``/``CURRENT_ACCOUNT_NAME()`` query) is
+    deferred to the first sync, matching the established pattern for the
+    majority of ConfigTrace providers at their OWN message 1 (Okta, Entra,
+    Auth0, GitLab, Jira, etc.) — this avoids leaking account-reachability
+    details through a synchronous create-time error message. Synchronous
+    create-time validation is a message-8 (public launch) concern, not a
+    foundation concern.
+
+    Snowflake is registered internally (dispatch, schema, capability
+    matrix) but is NOT publicly connectable — it is excluded from the
+    frontend's PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Snowflake
+    message 8.
+    """
+    from app.connectors.snowflake_schema import validate_account_identifier
+
+    account_identifier = validate_account_identifier(credentials.get("account_identifier"))
+
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="snowflake",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ─────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the non-secret
+    # account_identifier the user supplied. programmatic_access_token is
+    # NEVER copied here — the real stable account identity is computed by
+    # the connector from CURRENT_ORGANIZATION_NAME()/CURRENT_ACCOUNT_NAME()
+    # during fetch(), not at creation time.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="snowflake_account",
+        provider_resource_id=str(integration.id),
+        display_name=f"{display_name} ({account_identifier})" if account_identifier else display_name,
+        resource_metadata={
+            "account_identifier": account_identifier or None,
         },
         is_active=True,
     )

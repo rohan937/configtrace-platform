@@ -48,7 +48,11 @@ export type ProviderId =
   // ── Microsoft Entra ID message 1 — provider architecture foundation (not
   //    yet user-connectable; intentionally excluded from PROVIDER_IDS and
   //    CONNECTABLE_PROVIDER_IDS until Entra message 8) ─────────────────────
-  | "entra";
+  | "entra"
+  // ── Snowflake message 1 — provider architecture foundation (not yet
+  //    user-connectable; intentionally excluded from PROVIDER_IDS and
+  //    CONNECTABLE_PROVIDER_IDS until a later Snowflake message) ───────────
+  | "snowflake";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
 export type ProviderCategory =
@@ -628,6 +632,29 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#0078D4",
     bgColor: "rgba(0,120,212,0.10)",
     borderColor: "rgba(0,120,212,0.25)",
+  },
+
+  // ── Snowflake message 1 — provider architecture foundation (not yet
+  //    user-connectable; excluded from PROVIDER_IDS and
+  //    CONNECTABLE_PROVIDER_IDS until a later Snowflake message) ────────────
+  snowflake: {
+    id: "snowflake",
+    label: "Snowflake",
+    shortLabel: "Snowflake",
+    category: "backend",
+    description:
+      "Connect a Snowflake account with a read-only, non-interactive service user. ConfigTrace is building configuration drift and security monitoring for account identity, users, roles, warehouses, databases, network and authentication policies, and privileged-role posture. Not yet available to connect.",
+    monitoredSurfaces: [
+      "Account identity (organization name, account name, account locator) — planned",
+      "Users, account roles, and role hierarchy — planned",
+      "Databases, schemas, warehouses, and shares — planned",
+      "Network policies, authentication policies, and security integrations — planned",
+    ],
+    trustNote:
+      "Snowflake support is in early foundation development and is not yet connectable. ConfigTrace will use a dedicated service user's Programmatic Access Token, restricted to a specific monitoring role, to read configuration metadata only via read-only SQL statements. It will never store the token value, and will never run CREATE, ALTER, DROP, GRANT, REVOKE, or any other mutating SQL statement.",
+    color: "#29B5E8",
+    bgColor: "rgba(41,181,232,0.10)",
+    borderColor: "rgba(41,181,232,0.25)",
   },
 };
 

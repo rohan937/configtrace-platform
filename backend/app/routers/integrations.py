@@ -280,6 +280,16 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "client_id": body.entra_client_id,
             "client_secret": body.entra_client_secret,
         }
+    # ── Snowflake provider (message 1 — provider foundation) ─────────────────
+    elif body.provider == "snowflake":
+        # SECURITY: snowflake_programmatic_access_token is NEVER logged here
+        # or in the service.
+        return {
+            "account_identifier": body.snowflake_account_identifier,
+            "username": body.snowflake_username,
+            "programmatic_access_token": body.snowflake_programmatic_access_token,
+            "role": body.snowflake_role,
+        }
     return {}
 
 

@@ -94,6 +94,8 @@ class IntegrationCreateRequest(BaseModel):
         "okta",
         # Microsoft Entra ID message 1 — provider architecture foundation.
         "entra",
+        # Snowflake message 1 — provider architecture foundation.
+        "snowflake",
     ] = Field(
         ...,
         description=(
@@ -654,6 +656,40 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Snowflake fields (message 1 — provider foundation) ─────────────────────
+    snowflake_account_identifier: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='snowflake'. "
+            "Snowflake account identifier, preferred 'orgname-accountname' form "
+            "(or the legacy account-locator form). Used only to construct the "
+            "request hostname — never a full URL."
+        ),
+    )
+    snowflake_username: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='snowflake'. "
+            "The dedicated service user's Snowflake login name."
+        ),
+    )
+    snowflake_programmatic_access_token: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='snowflake'. "
+            "Snowflake Programmatic Access Token (PAT) for the service user. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+    snowflake_role: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='snowflake'. "
+            "Explicit least-privileged monitoring role. ConfigTrace never "
+            "defaults to ACCOUNTADMIN or SECURITYADMIN."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -883,6 +919,24 @@ class IntegrationCreateRequest(BaseModel):
             if not self.entra_client_secret:
                 raise ValueError(
                     "entra_client_secret is required for Microsoft Entra ID integrations."
+                )
+        # ── Snowflake message 1 — provider foundation ─────────────────────────
+        elif self.provider == "snowflake":
+            if not self.snowflake_account_identifier:
+                raise ValueError(
+                    "snowflake_account_identifier is required for Snowflake integrations."
+                )
+            if not self.snowflake_username:
+                raise ValueError(
+                    "snowflake_username is required for Snowflake integrations."
+                )
+            if not self.snowflake_programmatic_access_token:
+                raise ValueError(
+                    "snowflake_programmatic_access_token is required for Snowflake integrations."
+                )
+            if not self.snowflake_role:
+                raise ValueError(
+                    "snowflake_role is required for Snowflake integrations."
                 )
         return self
 

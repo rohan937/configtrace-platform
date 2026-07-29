@@ -1648,6 +1648,49 @@ _ENTRA = ProviderCapability(
 PROVIDER_CAPABILITIES.append(_ENTRA)
 
 
+_SNOWFLAKE = ProviderCapability(
+    provider="snowflake",
+    label="Snowflake",
+    category="database_backend",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=True,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="planned",
+    notes=(
+        "Snowflake provider foundation (message 1 of 8): Programmatic Access Token "
+        "authentication over the Snowflake SQL API (HTTPS), read-only "
+        "SELECT/SHOW/DESCRIBE session discipline, account identifier validation, "
+        "and stable account identity derived from CURRENT_ORGANIZATION_NAME() / "
+        "CURRENT_ACCOUNT_NAME() (never the user-supplied account identifier "
+        "string). Drift snapshots cover account identity metadata "
+        "(organization name, account name, account locator, monitoring role) and "
+        "read-access capability probes across 13 future record families (users, "
+        "roles, role grants, object grants, databases, schemas, warehouses, "
+        "shares, network policies, authentication policies, security "
+        "integrations, storage integrations, external access integrations) — "
+        "no family is fully collected yet, only probed for availability. No "
+        "Security Findings, activity ingestion, or privilege-graph analysis "
+        "exist yet — those are later messages (2-8) in the Snowflake roadmap. "
+        "Internal registration only: not connectable, not exposed on the public "
+        "integrations list, not Live."
+    ),
+)
+
+
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
@@ -1661,6 +1704,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
+    _SNOWFLAKE,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

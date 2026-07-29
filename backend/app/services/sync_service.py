@@ -272,6 +272,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "kubernetes",
         "okta",
         "entra",
+        "snowflake",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

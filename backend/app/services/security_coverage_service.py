@@ -55,6 +55,7 @@ PROVIDERS = [
     "kubernetes",
     "okta",
     "entra",
+    "snowflake",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
