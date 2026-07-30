@@ -182,6 +182,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.snowflake import classify_snowflake_change
         return classify_snowflake_change(change)
 
+    if record_type.startswith("sentry_"):
+        from app.services.risk_rules.sentry import classify_sentry_change
+        return classify_sentry_change(change)
+
     if record_type == "cloudflare_ruleset":
         from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change
         return classify_cloudflare_ruleset_change(change)

@@ -290,6 +290,13 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "programmatic_access_token": body.snowflake_programmatic_access_token,
             "role": body.snowflake_role,
         }
+    # ── Sentry provider (message 1 — provider foundation) ─────────────────────
+    elif body.provider == "sentry":
+        # SECURITY: sentry_auth_token is NEVER logged here or in the service.
+        return {
+            "organization_slug": body.sentry_organization_slug,
+            "auth_token": body.sentry_auth_token,
+        }
     return {}
 
 

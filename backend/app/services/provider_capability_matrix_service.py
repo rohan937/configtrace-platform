@@ -1712,6 +1712,53 @@ _SNOWFLAKE = ProviderCapability(
 PROVIDER_CAPABILITIES.append(_SNOWFLAKE)
 
 
+_SENTRY = ProviderCapability(
+    provider="sentry",
+    label="Sentry",
+    category="observability",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=True,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="planned",
+    notes=(
+        "Sentry provider foundation (message 1 of 8): organization auth token "
+        "(bearer) authentication over the Sentry SaaS REST API (fixed "
+        "https://sentry.io/api/0 origin — self-hosted Sentry is not "
+        "supported), read-only GET-only session discipline, organization "
+        "slug validation, and stable organization identity derived from the "
+        "organization detail response's immutable id field (never the "
+        "user-supplied, renameable organization_slug string). Drift "
+        "snapshots cover organization identity metadata (slug, name, status "
+        "category) and read-access capability probes across 10 future "
+        "record families (projects, teams, members, issue alert rules, "
+        "metric alert rules, integrations, webhooks, repositories, "
+        "ownership rules, releases) — no family is fully collected yet, "
+        "only probed for availability (three of the ten are structurally "
+        "unsupported this message because they are project-scoped and no "
+        "project inventory exists until message 2). No Security Findings, "
+        "activity ingestion, or privileged-access analysis exist yet — "
+        "those are later messages (2-8) in the Sentry roadmap. Sentry is "
+        "the final planned provider before the provider-expansion freeze. "
+        "Internal registration only: not connectable, not exposed on the "
+        "public integrations list, not Live."
+    ),
+)
+
+
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
@@ -1725,6 +1772,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
+    _SENTRY,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

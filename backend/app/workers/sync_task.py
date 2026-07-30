@@ -374,6 +374,12 @@ def sync_integration(
 
                 connector = SnowflakeConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "sentry":
+                # SECURITY: auth_token is NEVER logged.
+                from app.connectors.sentry import SentryConnector
+
+                connector = SentryConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

@@ -96,6 +96,8 @@ class IntegrationCreateRequest(BaseModel):
         "entra",
         # Snowflake message 1 — provider architecture foundation.
         "snowflake",
+        # Sentry message 1 — provider architecture foundation.
+        "sentry",
     ] = Field(
         ...,
         description=(
@@ -690,6 +692,25 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Sentry fields (message 1 — provider foundation) ─────────────────────────
+    sentry_organization_slug: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='sentry'. "
+            "Sentry organization slug (e.g. 'my-organization'). Used only as a "
+            "path segment on the fixed https://sentry.io API origin — never a "
+            "full URL."
+        ),
+    )
+    sentry_auth_token: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='sentry'. "
+            "Sentry organization auth token. Stored encrypted — NEVER "
+            "returned in API responses or logged."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -937,6 +958,16 @@ class IntegrationCreateRequest(BaseModel):
             if not self.snowflake_role:
                 raise ValueError(
                     "snowflake_role is required for Snowflake integrations."
+                )
+        # ── Sentry message 1 — provider foundation ────────────────────────────
+        elif self.provider == "sentry":
+            if not self.sentry_organization_slug:
+                raise ValueError(
+                    "sentry_organization_slug is required for Sentry integrations."
+                )
+            if not self.sentry_auth_token:
+                raise ValueError(
+                    "sentry_auth_token is required for Sentry integrations."
                 )
         return self
 

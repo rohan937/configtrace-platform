@@ -314,13 +314,24 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── Sentry message 1 — provider foundation ────────────────────────────────
+    elif provider == "sentry":
+        return _create_sentry_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
             "'twilio', 'sendgrid', 'auth0', 'datadog', 'clerk', 'pagerduty', "
-            "'linear', 'jira', 'kubernetes', 'okta', 'entra', 'snowflake'."
+            "'linear', 'jira', 'kubernetes', 'okta', 'entra', 'snowflake', 'sentry'."
         )
 
 
@@ -1902,6 +1913,84 @@ def _create_snowflake_integration(
             "session_role": coverage_result["session_role"],
             "coverage": coverage_result["coverage"],
             "diagnostics": coverage_result["diagnostics"],
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_sentry_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Sentry integration + organization resource (Sentry
+    message 1 of 8).
+
+    SECURITY: credentials["auth_token"] is NEVER logged, NEVER returned,
+    NEVER stored in plaintext outside the encrypted credentials column,
+    and NEVER copied into resource_metadata. Only the user-supplied
+    display name and the non-secret organization_slug are used for
+    resource identity.
+
+    Live API validation (acquiring the organization identity via
+    ``GET /organizations/{slug}/``) is deferred to the first sync,
+    matching the established pattern for every ConfigTrace provider at
+    their OWN message 1 (Okta, Entra, Snowflake, etc.) — this avoids
+    leaking organization-reachability details through a synchronous
+    create-time error message. Synchronous create-time validation is a
+    message-8 (public launch) concern, not a foundation concern.
+
+    Sentry is registered internally (dispatch, schema, capability matrix)
+    but is NOT publicly connectable — it is excluded from the frontend's
+    PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Sentry message 8.
+    """
+    from app.connectors.sentry_schema import validate_organization_slug
+
+    organization_slug = validate_organization_slug(credentials.get("organization_slug"))
+
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="sentry",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ─────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the non-secret
+    # organization_slug the user supplied. auth_token is NEVER copied
+    # here — the real stable organization identity is computed by the
+    # connector from the organization detail response's immutable ``id``
+    # field during fetch(), not at creation time.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="sentry_organization",
+        provider_resource_id=str(integration.id),
+        display_name=f"{display_name} ({organization_slug})" if organization_slug else display_name,
+        resource_metadata={
+            "organization_slug": organization_slug or None,
         },
         is_active=True,
     )

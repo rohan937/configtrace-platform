@@ -50,7 +50,11 @@ export type ProviderId =
   //    CONNECTABLE_PROVIDER_IDS until Entra message 8) ─────────────────────
   | "entra"
   // ── Snowflake message 8 — public launch (fully connectable) ───────────────
-  | "snowflake";
+  | "snowflake"
+  // ── Sentry message 1 — provider architecture foundation (not yet
+  //    user-connectable; intentionally excluded from PROVIDER_IDS and
+  //    CONNECTABLE_PROVIDER_IDS until Sentry message 8) ─────────────────────
+  | "sentry";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
 export type ProviderCategory =
@@ -651,6 +655,29 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#29B5E8",
     bgColor: "rgba(41,181,232,0.10)",
     borderColor: "rgba(41,181,232,0.25)",
+  },
+
+  // ── Sentry message 1 — provider architecture foundation (not yet
+  //    user-connectable; excluded from PROVIDER_IDS and
+  //    CONNECTABLE_PROVIDER_IDS until a later Sentry message) ───────────────
+  sentry: {
+    id: "sentry",
+    label: "Sentry",
+    shortLabel: "Sentry",
+    category: "observability",
+    description:
+      "Connect a Sentry organization with a dedicated organization auth token. ConfigTrace is building configuration drift and security monitoring for organization access, alerting, integrations, notification routing, and project configuration. Not yet available to connect.",
+    monitoredSurfaces: [
+      "Organization identity (slug, name, status) — planned",
+      "Projects, teams, and members — planned",
+      "Issue and metric alert rules, notification routing — planned",
+      "Integrations, webhooks, repositories, and release configuration — planned",
+    ],
+    trustNote:
+      "Sentry support is in early foundation development and is not yet connectable. ConfigTrace will use a dedicated organization auth token, scoped to the narrowest practical read-only permissions, to read configuration metadata only via read-only GET requests. It will never store the token value, and will never ingest error events, stack traces, issue contents, or any other event data.",
+    color: "#362D59",
+    bgColor: "rgba(54,45,89,0.10)",
+    borderColor: "rgba(54,45,89,0.25)",
   },
 };
 

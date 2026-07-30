@@ -273,6 +273,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "okta",
         "entra",
         "snowflake",
+        "sentry",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

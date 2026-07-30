@@ -4025,6 +4025,24 @@ _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# ── Sentry (Sentry message 1 of 8 — foundation) ─────────────────────────────
+#
+# Only durable identity/security metadata is tracked. slug (the mutable,
+# renameable display value — see the connector module docstring) and
+# family_completeness (informal capability-probe context, mirrored via
+# dedicated sentry_api_capability records) are intentionally NOT tracked
+# here.
+_SENTRY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "sentry_organization": (
+        "slug",
+        "name",
+        "status_category",
+    ),
+    "sentry_api_capability": (
+        "status",
+    ),
+}
+
 
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
@@ -4125,6 +4143,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _ENTRA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("snowflake_"):
         return _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("sentry_"):
+        return _SENTRY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Unknown cloudflare_* subtypes return () (empty), matching every
