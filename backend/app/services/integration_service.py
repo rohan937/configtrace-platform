@@ -1830,7 +1830,7 @@ def _create_snowflake_integration(
     db: Session,
 ) -> Integration:
     """Create a Snowflake integration + account resource (Snowflake
-    message 1 of 8).
+    message 8 of 8 — public launch).
 
     SECURITY: credentials["programmatic_access_token"] is NEVER logged,
     NEVER returned, NEVER stored in plaintext outside the encrypted
@@ -1838,23 +1838,34 @@ def _create_snowflake_integration(
     user-supplied display name and the non-secret account_identifier are
     used for resource identity.
 
-    Live API validation (acquiring the account identity via the SQL API's
-    ``CURRENT_ORGANIZATION_NAME()``/``CURRENT_ACCOUNT_NAME()`` query) is
-    deferred to the first sync, matching the established pattern for the
-    majority of ConfigTrace providers at their OWN message 1 (Okta, Entra,
-    Auth0, GitLab, Jira, etc.) — this avoids leaking account-reachability
-    details through a synchronous create-time error message. Synchronous
-    create-time validation is a message-8 (public launch) concern, not a
-    foundation concern.
-
-    Snowflake is registered internally (dispatch, schema, capability
-    matrix) but is NOT publicly connectable — it is excluded from the
-    frontend's PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Snowflake
-    message 8.
+    Message 8 validates synchronously before anything is written —
+    ``SnowflakeConnector.probe_coverage()`` runs the account-identity
+    query plus the 13 bounded capability probes (never a full account
+    inventory) and computes Full/Partial/Invalid coverage. Invalid
+    (malformed credentials, rejected PAT, unreachable account, or zero
+    meaningful monitored families reachable) is rejected here instead of
+    silently creating a seemingly healthy integration — this matches the
+    Okta/Entra message-8 launch precedent. Partial coverage (some
+    optional/elevated-visibility family denied) is accepted; useful
+    monitoring still results.
     """
-    from app.connectors.snowflake_schema import validate_account_identifier
+    from app.connectors.snowflake import SnowflakeConnector
+    from app.connectors.snowflake_schema import COVERAGE_INVALID, validate_account_identifier
 
     account_identifier = validate_account_identifier(credentials.get("account_identifier"))
+
+    # Raises AuthenticationError / NetworkError / ConnectorError — caught by
+    # the router and returned as a 400/502, matching every other provider.
+    coverage_result = SnowflakeConnector().probe_coverage(credentials)
+    if coverage_result["coverage"] == COVERAGE_INVALID:
+        raise ConnectorError(
+            "ConfigTrace connected to Snowflake, but the monitoring role "
+            "cannot read any of the core families (users, roles, grants, "
+            "databases, schemas, warehouses, shares). Grant the monitoring "
+            "role at least read access to these before connecting."
+        )
+
+    account_id = coverage_result["account_id"]
 
     # ── 1. Encrypt credentials ────────────────────────────────────────────────
     ciphertext, iv = encrypt_credentials(credentials)
@@ -1875,19 +1886,22 @@ def _create_snowflake_integration(
     db.flush()
 
     # ── 3. Create Resource row ─────────────────────────────────────────────────
-    # SECURITY: resource_metadata stores ONLY the non-secret
-    # account_identifier the user supplied. programmatic_access_token is
-    # NEVER copied here — the real stable account identity is computed by
-    # the connector from CURRENT_ORGANIZATION_NAME()/CURRENT_ACCOUNT_NAME()
-    # during fetch(), not at creation time.
+    # SECURITY: resource_metadata stores ONLY non-secret fields —
+    # account_identifier (user-supplied), the stable account_id (derived
+    # from Snowflake's own immutable org/account pair), session_role, and
+    # coverage/diagnostics. programmatic_access_token is NEVER copied here.
     resource = Resource(
         integration_id=integration.id,
         user_id=user_id,
         provider_resource_type="snowflake_account",
-        provider_resource_id=str(integration.id),
+        provider_resource_id=f"account/{account_id}",
         display_name=f"{display_name} ({account_identifier})" if account_identifier else display_name,
         resource_metadata={
             "account_identifier": account_identifier or None,
+            "account_id": account_id,
+            "session_role": coverage_result["session_role"],
+            "coverage": coverage_result["coverage"],
+            "diagnostics": coverage_result["diagnostics"],
         },
         is_active=True,
     )
@@ -2796,6 +2810,138 @@ def reconnect_credentials_shopify(
     # ``needs_reconnect`` status when a valid set of credentials lands.
     if integration.status in ("error", "needs_reconnect"):
         integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_snowflake(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_account_identifier: str | None,
+    new_username: str | None,
+    new_programmatic_access_token: str,
+    new_role: str | None,
+    db: Session,
+) -> Integration:
+    """Replace the PAT (and optionally the username/role) for an existing
+    Snowflake integration (Snowflake message 8 of 8 — public launch).
+
+    The new credentials are validated (account-identity query + bounded
+    capability probes) before the database row is updated. If they
+    resolve to a genuinely DIFFERENT Snowflake account (different stable
+    ``account_id``, derived from Snowflake's own immutable
+    organization/account pair — never the raw ``account_identifier``
+    string a caller could alias) than the one this integration is
+    connected to, the update is rejected — a rotated PAT, a new service
+    user, or a new monitoring role for the SAME account is always
+    accepted (after validation); pointing this integration at a different
+    account is not. This mirrors the Okta/Entra reconnect precedent.
+
+    SECURITY: the PAT is stored encrypted only. It is NEVER logged or
+    returned. The old PAT is discarded (overwritten) and never reused —
+    a fresh ``SnowflakeConnector()``/``httpx.Client`` is built from the
+    new credentials only, so no prior session/account/role state leaks
+    into the new connection.
+    """
+    from app.connectors.snowflake import SnowflakeConnector
+    from app.connectors.snowflake_schema import (
+        COVERAGE_INVALID,
+        validate_account_identifier,
+        validate_role,
+        validate_username,
+    )
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # Fields may be omitted for a token-only rotation — fall back to the
+    # existing encrypted credentials so the same account/user/role is reused.
+    existing_creds = decrypt_credentials(
+        integration.encrypted_credentials,
+        integration.credential_iv,
+    )
+    account_identifier = validate_account_identifier(
+        new_account_identifier or existing_creds.get("account_identifier")
+    )
+    username = validate_username(new_username or existing_creds.get("username"))
+    role = validate_role(new_role or existing_creds.get("role"))
+
+    new_creds = {
+        "account_identifier": account_identifier,
+        "username": username,
+        "programmatic_access_token": new_programmatic_access_token,
+        "role": role,
+    }
+
+    # Fresh connector instance bound only to the new credentials — no
+    # connector/session state is reused from any prior connection.
+    # Raises AuthenticationError/NetworkError/ConnectorError on failure.
+    coverage_result = SnowflakeConnector().probe_coverage(new_creds)
+    if coverage_result["coverage"] == COVERAGE_INVALID:
+        raise ConnectorError(
+            "ConfigTrace connected to Snowflake, but the monitoring role "
+            "cannot read any of the core families (users, roles, grants, "
+            "databases, schemas, warehouses, shares). Grant the monitoring "
+            "role at least read access to these before reconnecting."
+        )
+    new_account_id = coverage_result["account_id"]
+
+    existing_account_resource = (
+        db.query(Resource)
+        .filter(
+            Resource.integration_id == integration_id,
+            Resource.provider_resource_type == "snowflake_account",
+        )
+        .first()
+    )
+    existing_resource_id = (
+        existing_account_resource.provider_resource_id if existing_account_resource is not None else None
+    )
+    existing_account_id = (
+        existing_resource_id[len("account/"):]
+        if isinstance(existing_resource_id, str) and existing_resource_id.startswith("account/")
+        else None
+    )
+
+    # existing_account_id uses the SAME compute_account_id() derivation as
+    # new_account_id — both are the stable id:<org>-<account> form, so
+    # textual aliases of the raw account_identifier credential (e.g.
+    # legacy locator vs orgname-accountname form) never cause a false
+    # mismatch here; only a genuinely different underlying account does.
+    if existing_account_id and existing_account_id != new_account_id:
+        raise ConnectorError(
+            "These credentials point to a different Snowflake account than "
+            "the one this integration is connected to. To monitor a "
+            "different Snowflake account, create a new integration instead "
+            "of replacing this one's credentials."
+        )
+
+    # Encrypt and store. Old PAT is overwritten, never retained or reused.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
+    if integration.status in ("error", "needs_reconnect"):
+        integration.status = "active"
+
+    if existing_account_resource is not None:
+        existing_account_resource.provider_resource_id = f"account/{new_account_id}"
+        existing_account_resource.resource_metadata = {
+            **(existing_account_resource.resource_metadata or {}),
+            "account_identifier": account_identifier or None,
+            "account_id": new_account_id,
+            "session_role": coverage_result["session_role"],
+            "coverage": coverage_result["coverage"],
+            "diagnostics": coverage_result["diagnostics"],
+        }
 
     db.commit()
     db.refresh(integration)

@@ -111,6 +111,100 @@ CAPABILITY_FAMILIES: tuple[str, ...] = (
     CAPABILITY_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS,
 )
 
+# ── Core vs extended coverage (Snowflake message 8 of 8) ────────────────────
+#
+# Core: the identity/data-object surfaces every dedicated read-only
+# monitoring role can reach without any elevated metadata-visibility
+# grant beyond basic USAGE — the minimum needed for meaningful monitoring.
+# Extended: surfaces that may require additional visibility grants
+# (SECURITYADMIN-owned network/authentication policies, integration
+# ownership/USAGE, or full GRANTS_TO_ROLES visibility for privilege
+# derivation) — a monitoring role legitimately may not have these, and
+# that alone must not make the integration Invalid.
+CORE_CAPABILITY_FAMILIES: tuple[str, ...] = (
+    CAPABILITY_FAMILY_USERS,
+    CAPABILITY_FAMILY_ROLES,
+    CAPABILITY_FAMILY_ROLE_GRANTS,
+    CAPABILITY_FAMILY_DATABASES,
+    CAPABILITY_FAMILY_SCHEMAS,
+    CAPABILITY_FAMILY_WAREHOUSES,
+    CAPABILITY_FAMILY_SHARES,
+)
+EXTENDED_CAPABILITY_FAMILIES: tuple[str, ...] = (
+    CAPABILITY_FAMILY_OBJECT_GRANTS,
+    CAPABILITY_FAMILY_NETWORK_POLICIES,
+    CAPABILITY_FAMILY_AUTHENTICATION_POLICIES,
+    CAPABILITY_FAMILY_SECURITY_INTEGRATIONS,
+    CAPABILITY_FAMILY_STORAGE_INTEGRATIONS,
+    CAPABILITY_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS,
+)
+assert set(CORE_CAPABILITY_FAMILIES) | set(EXTENDED_CAPABILITY_FAMILIES) == set(CAPABILITY_FAMILIES)
+assert not (set(CORE_CAPABILITY_FAMILIES) & set(EXTENDED_CAPABILITY_FAMILIES))
+
+# ── Coverage state taxonomy ──────────────────────────────────────────────────
+
+COVERAGE_FULL = "full"
+COVERAGE_PARTIAL = "partial"
+COVERAGE_INVALID = "invalid"
+
+# Grouped, human-readable diagnostic labels. Multiple probe families
+# collapse into one UI group so the integration-creation/detail response
+# never lists all 13 low-level statements — only 5 safe groups.
+_FAMILY_DIAGNOSTIC_GROUP: dict[str, str] = {
+    CAPABILITY_FAMILY_USERS: "Identity and roles",
+    CAPABILITY_FAMILY_ROLES: "Identity and roles",
+    CAPABILITY_FAMILY_ROLE_GRANTS: "Identity and roles",
+    CAPABILITY_FAMILY_OBJECT_GRANTS: "Data objects and grants",
+    CAPABILITY_FAMILY_DATABASES: "Data objects and grants",
+    CAPABILITY_FAMILY_SCHEMAS: "Data objects and grants",
+    CAPABILITY_FAMILY_WAREHOUSES: "Warehouses and shares",
+    CAPABILITY_FAMILY_SHARES: "Warehouses and shares",
+    CAPABILITY_FAMILY_NETWORK_POLICIES: "Network policies",
+    CAPABILITY_FAMILY_AUTHENTICATION_POLICIES: "Authentication policies",
+    CAPABILITY_FAMILY_SECURITY_INTEGRATIONS: "Security integrations",
+    CAPABILITY_FAMILY_STORAGE_INTEGRATIONS: "Storage integrations",
+    CAPABILITY_FAMILY_EXTERNAL_ACCESS_INTEGRATIONS: "External access integrations",
+}
+assert set(_FAMILY_DIAGNOSTIC_GROUP) == set(CAPABILITY_FAMILIES)
+
+
+def compute_coverage_state(family_status: dict) -> str:
+    """Return ``COVERAGE_INVALID``/``COVERAGE_PARTIAL``/``COVERAGE_FULL``
+    from a ``{family: CAPABILITY_*}`` map.
+
+    Invalid: zero core families are readable — no meaningful monitoring
+    would result from creating this integration. Full: every probed
+    family (core and extended) is readable. Partial: at least one core
+    family is readable, but something (core or extended) is not — the
+    integration is still useful and must NOT be rejected merely because
+    an optional/elevated-visibility family is denied.
+    """
+    core_available = sum(
+        1 for family in CORE_CAPABILITY_FAMILIES if family_status.get(family) == CAPABILITY_AVAILABLE
+    )
+    if core_available == 0:
+        return COVERAGE_INVALID
+    all_available = all(family_status.get(family) == CAPABILITY_AVAILABLE for family in CAPABILITY_FAMILIES)
+    return COVERAGE_FULL if all_available else COVERAGE_PARTIAL
+
+
+def format_capability_diagnostics(family_status: dict) -> dict:
+    """Collapse per-family capability statuses into grouped, safe,
+    human-readable diagnostics (never raw SQL, never a low-level status
+    code) — e.g. ``{"Identity and roles": "Available", "Network
+    policies": "Permission denied"}``. A group is "Available" only if
+    every family mapped into it is available."""
+    groups: dict[str, str] = {}
+    for family in CAPABILITY_FAMILIES:
+        label = _FAMILY_DIAGNOSTIC_GROUP[family]
+        status = family_status.get(family)
+        available = status == CAPABILITY_AVAILABLE
+        if label not in groups:
+            groups[label] = "Available"
+        if not available and groups[label] == "Available":
+            groups[label] = "Permission denied" if status == CAPABILITY_DENIED else "Unavailable"
+    return groups
+
 
 # ── Credential validators ───────────────────────────────────────────────────
 

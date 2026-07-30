@@ -72,15 +72,16 @@ EXPECTED_LABELS = {
 }
 
 # All providers in the matrix, including Kubernetes, Okta, and Microsoft
-# Entra ID (all maturity "partial" — drift + Security Findings only, no
-# activity ingestion/demo/case-report stack, so all three are intentionally
-# excluded from EXPECTED_PROVIDERS above).
-ALL_MATRIX_PROVIDERS = EXPECTED_PROVIDERS | {"kubernetes", "okta", "entra"}
+# Entra ID / Snowflake (all maturity "partial" — drift + Security Findings
+# only, no activity ingestion/demo/case-report stack, so all four are
+# intentionally excluded from EXPECTED_PROVIDERS above).
+ALL_MATRIX_PROVIDERS = EXPECTED_PROVIDERS | {"kubernetes", "okta", "entra", "snowflake"}
 ALL_MATRIX_LABELS = {
     **EXPECTED_LABELS,
     "kubernetes": "Kubernetes",
     "okta": "Okta",
     "entra": "Microsoft Entra ID",
+    "snowflake": "Snowflake",
 }
 
 
@@ -107,8 +108,8 @@ def _read_fe(rel: str) -> str:
 # ════════════════════════════════════════════════════════════════════════════
 
 
-def test_matrix_has_exactly_eleven_providers():
-    assert len(svc.PROVIDER_CAPABILITIES) == 11
+def test_matrix_has_exactly_twelve_providers():
+    assert len(svc.PROVIDER_CAPABILITIES) == 12
     keys = {p.provider for p in svc.PROVIDER_CAPABILITIES}
     assert keys == ALL_MATRIX_PROVIDERS
 
@@ -188,15 +189,18 @@ def test_drift_remediation_preview_is_honest():
 def test_summary_counts_are_correct():
     matrix = svc.get_matrix()
     summary = matrix["summary"]
-    assert summary["total_providers"] == 11
+    assert summary["total_providers"] == 12
     # The 8 dual-stack-complete providers have every security capability;
-    # Kubernetes/Okta/Entra (security_rules only, no activity ingestion) do not.
+    # Kubernetes/Okta/Entra/Snowflake (security_rules only, no activity
+    # ingestion) do not.
     assert summary["security_complete_count"] == 8
-    # 10 have snapshot + diff + risk_classification + review_workflow; Entra
-    # has drift_review_workflow=False (not yet built for this provider).
-    assert summary["drift_complete_count"] == 10
-    # 8 have maturity == "complete"; Kubernetes/Okta/Entra are "partial"
-    # (drift + security rules only, no activity ingestion/signals/correlations).
+    # 11 have snapshot + diff + risk_classification + review_workflow; Entra
+    # has drift_review_workflow=False (not yet built for this provider) —
+    # Kubernetes/Okta/Snowflake all have it True (generic review UI).
+    assert summary["drift_complete_count"] == 11
+    # 8 have maturity == "complete"; Kubernetes/Okta/Entra/Snowflake are
+    # "partial" (drift + security rules only, no activity ingestion/
+    # signals/correlations).
     assert summary["dual_stack_complete_count"] == 8
     # M76 template note is present.
     assert "M76" in summary["planned_next_stage"]
@@ -205,7 +209,7 @@ def test_summary_counts_are_correct():
 def test_get_matrix_structure():
     matrix = svc.get_matrix()
     assert "providers" in matrix and "summary" in matrix
-    assert len(matrix["providers"]) == 11
+    assert len(matrix["providers"]) == 12
     # Each provider dict has the expected keys.
     for pdict in matrix["providers"]:
         for key in ("provider", "label", "category", "drift", "security", "maturity", "notes"):
@@ -255,7 +259,7 @@ def test_endpoint_returns_matrix(client):
     assert r.status_code == 200
     body = r.json()
     assert "providers" in body and "summary" in body
-    assert body["summary"]["total_providers"] == 11
+    assert body["summary"]["total_providers"] == 12
     # All expected providers present.
     returned = {p["provider"] for p in body["providers"]}
     assert returned == ALL_MATRIX_PROVIDERS

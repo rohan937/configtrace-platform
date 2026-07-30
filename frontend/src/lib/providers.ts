@@ -49,9 +49,7 @@ export type ProviderId =
   //    yet user-connectable; intentionally excluded from PROVIDER_IDS and
   //    CONNECTABLE_PROVIDER_IDS until Entra message 8) ─────────────────────
   | "entra"
-  // ── Snowflake message 1 — provider architecture foundation (not yet
-  //    user-connectable; intentionally excluded from PROVIDER_IDS and
-  //    CONNECTABLE_PROVIDER_IDS until a later Snowflake message) ───────────
+  // ── Snowflake message 8 — public launch (fully connectable) ───────────────
   | "snowflake";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
@@ -634,24 +632,22 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     borderColor: "rgba(0,120,212,0.25)",
   },
 
-  // ── Snowflake message 1 — provider architecture foundation (not yet
-  //    user-connectable; excluded from PROVIDER_IDS and
-  //    CONNECTABLE_PROVIDER_IDS until a later Snowflake message) ────────────
+  // ── Snowflake message 8 — public launch ─────────────────────────────────
   snowflake: {
     id: "snowflake",
     label: "Snowflake",
     shortLabel: "Snowflake",
     category: "backend",
     description:
-      "Connect a Snowflake account with a read-only, non-interactive service user. ConfigTrace is building configuration drift and security monitoring for account identity, users, roles, warehouses, databases, network and authentication policies, and privileged-role posture. Not yet available to connect.",
+      "Connect a Snowflake account with a dedicated service user's Programmatic Access Token, restricted to a read-only monitoring role. ConfigTrace tracks configuration drift and flags security risk across users, roles, grants, data access, authentication policy, network policy, integrations, and effective privilege.",
     monitoredSurfaces: [
-      "Account identity (organization name, account name, account locator) — planned",
-      "Users, account roles, and role hierarchy — planned",
-      "Databases, schemas, warehouses, and shares — planned",
-      "Network policies, authentication policies, and security integrations — planned",
+      "Users, account roles, database roles, and role hierarchy",
+      "Databases, schemas, warehouses, shares, and object/future grants (including PUBLIC-role exposure)",
+      "Network policies, authentication policies, and SAML/OAuth/SCIM/storage/external-access integrations",
+      "Effective privilege derivation — ACCOUNTADMIN/SECURITYADMIN posture, MANAGE GRANTS, ownership, and privileged service identities",
     ],
     trustNote:
-      "Snowflake support is in early foundation development and is not yet connectable. ConfigTrace will use a dedicated service user's Programmatic Access Token, restricted to a specific monitoring role, to read configuration metadata only via read-only SQL statements. It will never store the token value, and will never run CREATE, ALTER, DROP, GRANT, REVOKE, or any other mutating SQL statement.",
+      "ConfigTrace stores your Snowflake Programmatic Access Token encrypted and uses it only to read configuration metadata via the Snowflake SQL API's read-only SHOW/DESCRIBE/SELECT statements — it never runs CREATE, ALTER, DROP, GRANT, REVOKE, or any other mutating statement. The token value is never included in snapshots, Findings, Changes, or logs. A dedicated read-only monitoring role is recommended — ConfigTrace does not require ACCOUNTADMIN or SECURITYADMIN for normal operation, though some metadata families (network policies, authentication policies, security/storage/external-access integrations, and full grant visibility) may require additional visibility grants and will show as Partial coverage if unavailable, which does not block the connection. ConfigTrace does not ingest table/view row data, query history, login history, or runtime session activity, and does not perform sensitive-data discovery or classification.",
     color: "#29B5E8",
     bgColor: "rgba(41,181,232,0.10)",
     borderColor: "rgba(41,181,232,0.25)",
@@ -694,6 +690,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "okta",
   // ── Microsoft Entra ID message 8 — public launch ─────────────────────────
   "entra",
+  // ── Snowflake message 8 — public launch ──────────────────────────────────
+  "snowflake",
 ];
 
 /**
@@ -738,6 +736,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "okta",
   // ── Microsoft Entra ID message 8 — public launch ─────────────────────────
   "entra",
+  // ── Snowflake message 8 — public launch ──────────────────────────────────
+  "snowflake",
 ];
 
 /**

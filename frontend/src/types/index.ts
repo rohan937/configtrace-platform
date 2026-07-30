@@ -190,7 +190,9 @@ export interface IntegrationCreateRequest {
     // ── Okta message 8 — public launch ─────────────────────────────────────────
     | "okta"
     // ── Microsoft Entra ID message 8 — public launch ────────────────────────────
-    | "entra";
+    | "entra"
+    // ── Snowflake message 8 — public launch ─────────────────────────────────────
+    | "snowflake";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -441,6 +443,23 @@ export interface IntegrationCreateRequest {
    * returned in API responses.
    */
   entra_client_secret?: string;
+  // ── Snowflake fields (message 8 — public launch) ────────────────────────────
+  /**
+   * Snowflake account identifier, e.g. "myorg-myaccount" (preferred) or a
+   * legacy account-locator form. Required for the snowflake provider.
+   */
+  snowflake_account_identifier?: string;
+  /** Snowflake username for the dedicated monitoring service user. Required for snowflake. */
+  snowflake_username?: string;
+  /**
+   * Snowflake Programmatic Access Token, restricted to the monitoring
+   * role below. Sent to backend once; never stored in frontend state
+   * after submission, never logged, never echoed back. Stored encrypted
+   * server-side — NEVER returned in API responses.
+   */
+  snowflake_programmatic_access_token?: string;
+  /** Dedicated read-only monitoring role. Required for snowflake. */
+  snowflake_role?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

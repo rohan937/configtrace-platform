@@ -1156,6 +1156,48 @@ class IntegrationReconnectRequest(BaseModel):
             "rejected. Stored encrypted — never returned in API responses."
         ),
     )
+    snowflake_account_identifier: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Optional new Snowflake account identifier. Snowflake "
+            "integrations only. Only needed when rotating to a different "
+            "identifier string for the SAME underlying account — a PAT "
+            "rotation with no identifier change may omit this field. An "
+            "identifier that resolves to a genuinely different Snowflake "
+            "account is rejected."
+        ),
+    )
+    snowflake_username: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Optional new Snowflake username. Snowflake integrations only. "
+            "Only needed when rotating to a new service user for the SAME "
+            "account — a PAT rotation with no username change may omit "
+            "this field."
+        ),
+    )
+    snowflake_programmatic_access_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Snowflake Programmatic Access Token. Required for "
+            "Snowflake integrations. A rotated PAT for the SAME account is "
+            "accepted; credentials resolving to a different account are "
+            "rejected. Stored encrypted — never returned in API responses."
+        ),
+    )
+    snowflake_role: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Optional new Snowflake monitoring role. Snowflake integrations "
+            "only. Only needed when rotating to a different role for the "
+            "SAME account — accepted after validation; coverage "
+            "diagnostics are recomputed against the new role."
+        ),
+    )
 
 
 class IntegrationResponse(BaseModel):

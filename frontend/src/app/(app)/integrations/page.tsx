@@ -42,6 +42,7 @@ import TerraformCloudIntegrationForm from "@/components/integrations/TerraformCl
 import KubernetesIntegrationForm from "@/components/integrations/KubernetesIntegrationForm";
 import OktaIntegrationForm from "@/components/integrations/OktaIntegrationForm";
 import EntraIntegrationForm from "@/components/integrations/EntraIntegrationForm";
+import SnowflakeIntegrationForm from "@/components/integrations/SnowflakeIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -1354,6 +1355,10 @@ export default function IntegrationsPage() {
     // ── Microsoft Entra ID message 8 — public launch ──────────────────────────────
     if (selectedProvider === "entra") {
       return <EntraIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── Snowflake message 8 — public launch ───────────────────────────────────────
+    if (selectedProvider === "snowflake") {
+      return <SnowflakeIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

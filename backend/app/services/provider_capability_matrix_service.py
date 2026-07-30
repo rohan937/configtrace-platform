@@ -1656,7 +1656,7 @@ _SNOWFLAKE = ProviderCapability(
         drift_snapshots=True,
         drift_diff=True,
         drift_risk_classification=True,
-        drift_review_workflow=False,
+        drift_review_workflow=True,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
@@ -1669,27 +1669,47 @@ _SNOWFLAKE = ProviderCapability(
         evidence_timeline=False,
         evidence_graph=False,
     ),
-    maturity="planned",
+    maturity="partial",
     notes=(
-        "Snowflake provider through message 6 of 8: PAT authentication over the "
-        "Snowflake SQL API, full users/roles/hierarchy/database-role coverage, "
-        "databases/schemas/warehouses/shares/object+future grants, network/"
-        "authentication policies, SAML/OAuth/SCIM/storage/external-access "
-        "integrations, transitive effective-privilege derivation (ACCOUNTADMIN/"
-        "SECURITYADMIN/MANAGE GRANTS/ownership/PUBLIC exposure), and 31 static "
-        "Security Findings covering privileged users/roles/service identities, "
-        "grant administration, managed-access-schema and integration ownership, "
-        "PUBLIC future-grant exposure, network anywhere-access, MFA posture, "
-        "and SCIM run-as role privilege context. Security Findings are "
-        "metadata-only, current-state posture checks — never a confirmed-"
-        "compromise claim. Activity ingestion, signals, risk x activity "
-        "correlations, demo/QA seeding, and case reporting are not built for "
-        "this provider (same dual-stack scope as Okta/Kubernetes/Entra: drift + "
-        "Security Findings only). Internal registration only: not connectable, "
-        "not exposed on the public integrations list, not Live — public launch "
-        "is message 8."
+        "Snowflake provider expansion complete (messages 1-8 of 8): PAT "
+        "authentication over the Snowflake SQL API, full users/roles/"
+        "hierarchy/database-role coverage, databases/schemas/warehouses/"
+        "shares/object+future grants, network/authentication policies, "
+        "SAML/OAuth/SCIM/storage/external-access integrations, transitive "
+        "effective-privilege derivation (ACCOUNTADMIN/SECURITYADMIN/MANAGE "
+        "GRANTS/ownership/PUBLIC exposure), and 31 static Security Findings "
+        "covering privileged users/roles/service identities, grant "
+        "administration, managed-access-schema and integration ownership, "
+        "PUBLIC future-grant exposure, network anywhere-access, MFA "
+        "posture, and SCIM run-as role privilege context — see "
+        "backend/tests/reports/snowflake_security_findings_matrix.md. "
+        "Message 7 completed exhaustive Change-classification QA, "
+        "family/per-database/per-role/derived-record false-removal "
+        "suppression, and SQL API reliability hardening — see "
+        "backend/tests/reports/snowflake_reliability_certification.md. "
+        "Message 8 completed public launch certification: the credential "
+        "path (account_identifier + username + PAT + role) is wired "
+        "end-to-end through the standard integration creation and "
+        "reconnect flow, creation now runs synchronous validation "
+        "(account-identity query + 13 bounded capability probes), "
+        "Full/Partial/Invalid coverage diagnostics are computed via "
+        "SnowflakeConnector.probe_coverage(), reconnect rejects PAT/user/"
+        "role rotations that resolve to a genuinely different account, "
+        "and the integration card and setup form are live — see "
+        "backend/tests/reports/snowflake_provider_certification.md. "
+        "Security Findings are metadata-only, current-state posture "
+        "checks — never a confirmed-compromise claim. Activity ingestion, "
+        "signals, risk x activity correlations, demo/QA seeding, and case "
+        "reporting are not built for this provider — Snowflake's security "
+        "stack is drift + Security Findings only, the same dual-stack "
+        "scope as Okta/Entra/Kubernetes. No table/view row data, query "
+        "history, login history, or runtime session activity is ingested. "
+        "Snowflake provider expansion is complete."
     ),
 )
+
+
+PROVIDER_CAPABILITIES.append(_SNOWFLAKE)
 
 
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
@@ -1705,7 +1725,6 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
-    _SNOWFLAKE,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

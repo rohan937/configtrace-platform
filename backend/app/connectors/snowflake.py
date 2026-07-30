@@ -210,6 +210,11 @@ from app.connectors.snowflake_schema import (
     CAPABILITY_UNAVAILABLE,
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
+    COVERAGE_FULL,
+    COVERAGE_INVALID,
+    COVERAGE_PARTIAL,
+    compute_coverage_state,
+    format_capability_diagnostics,
     COLLECTION_FAMILY_ACCOUNT_ROLES,
     COLLECTION_FAMILY_AUTHENTICATION_POLICIES,
     COLLECTION_FAMILY_DATABASE_ROLES,
@@ -2729,6 +2734,61 @@ class SnowflakeConnector(BaseConnector):
             outcome = call_sql_api(client, _ACCOUNT_IDENTITY_STATEMENT, role=role)
             _raise_for_outcome(outcome, context="account identity query")
         return True
+
+    def probe_coverage(self, credentials: dict) -> dict:
+        """Synchronous, bounded credential validation + coverage diagnosis
+        (Snowflake message 8 of 8).
+
+        Runs exactly two things against the live account: the account-
+        identity query (message 1) and the 13 bounded, single-row
+        capability probes (message 1's ``_CAPABILITY_PROBES`` — never the
+        full account inventory). This is intentionally the SAME bounded
+        probe sweep already used to seed ``family_completeness`` during a
+        real ``fetch()`` — never a separate, heavier surface.
+
+        Returns a dict:
+            {
+                "coverage": COVERAGE_FULL | COVERAGE_PARTIAL | COVERAGE_INVALID,
+                "account_id": str,
+                "session_role": Optional[str],
+                "family_status": {family: CAPABILITY_*},
+                "diagnostics": {group_label: "Available" | "Permission denied" | "Unavailable"},
+            }
+
+        Raises AuthenticationError/ConnectorError/NetworkError if the
+        account-identity query itself fails — a family-probe failure
+        never raises, it only affects ``coverage``/``diagnostics``.
+        """
+        account_identifier, _username, token, role = self._credentials(credentials)
+        with self._make_client(account_identifier, token) as client:
+            outcome = call_sql_api(client, _ACCOUNT_IDENTITY_STATEMENT, role=role)
+            rows = _raise_for_outcome(outcome, context="account identity query")
+
+            if not isinstance(rows, list) or not rows or not isinstance(rows[0], list):
+                raise ConnectorError("snowflake: account identity query returned no usable row")
+            row = rows[0]
+            organization_name = row[0] if len(row) > 0 else None
+            account_name = row[1] if len(row) > 1 else None
+            session_role = row[3] if len(row) > 3 else None
+
+            account_id = self.compute_account_id(organization_name, account_name)
+            if account_id is None:
+                raise ConnectorError(
+                    "snowflake: could not establish a stable account identity — "
+                    "CURRENT_ORGANIZATION_NAME()/CURRENT_ACCOUNT_NAME() returned no usable value"
+                )
+
+            capability_records = self._probe_capabilities(client, account_id, role=role)
+            family_status = {r["family"]: r["status"] for r in capability_records}
+
+        coverage = compute_coverage_state(family_status)
+        return {
+            "coverage": coverage,
+            "account_id": account_id,
+            "session_role": session_role if isinstance(session_role, str) and session_role.strip() else None,
+            "family_status": family_status,
+            "diagnostics": format_capability_diagnostics(family_status),
+        }
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
         """Fetch the Snowflake account identity, API capability inventory,

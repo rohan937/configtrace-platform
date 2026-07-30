@@ -51,6 +51,10 @@ class TestProviderDispatchWiring:
     def test_create_integration_creates_row_without_leaking_secret(
         self, test_user, db_session,
     ):
+        from unittest.mock import patch
+
+        from app.connectors.snowflake import SnowflakeConnector
+        from app.connectors.snowflake_schema import COVERAGE_FULL
         from app.models.resource import Resource
         from app.schemas.integration import IntegrationResponse
         from app.services import integration_service
@@ -61,13 +65,21 @@ class TestProviderDispatchWiring:
             "programmatic_access_token": _TOKEN,
             "role": _ROLE,
         }
-        integration = integration_service.create_integration(
-            user_id=test_user.id,
-            provider="snowflake",
-            display_name="snowflake-test",
-            credentials=credentials,
-            db=db_session,
-        )
+        coverage_result = {
+            "coverage": COVERAGE_FULL,
+            "account_id": "id:myorg-myaccount",
+            "session_role": _ROLE,
+            "family_status": {},
+            "diagnostics": {},
+        }
+        with patch.object(SnowflakeConnector, "probe_coverage", return_value=coverage_result):
+            integration = integration_service.create_integration(
+                user_id=test_user.id,
+                provider="snowflake",
+                display_name="snowflake-test",
+                credentials=credentials,
+                db=db_session,
+            )
         try:
             assert integration.provider == "snowflake"
             assert integration.encrypted_credentials is not None
@@ -108,12 +120,15 @@ class TestProviderDispatchWiring:
                 db=db_session,
             )
 
-    def test_create_integration_does_not_contact_snowflake(self, test_user, db_session):
-        """Message 1 defers credential validation to first sync — creating
-        the integration must never make an outbound HTTP call."""
+    def test_create_integration_contacts_snowflake_synchronously(self, test_user, db_session):
+        """Message 8 (public launch): creating the integration now runs
+        synchronous credential validation via ``probe_coverage()`` — this
+        supersedes message 1's deferred-to-first-sync behavior, matching
+        the Okta/Entra launch precedent."""
         from unittest.mock import patch
 
         from app.connectors.snowflake import SnowflakeConnector
+        from app.connectors.snowflake_schema import COVERAGE_FULL
         from app.services import integration_service
 
         credentials = {
@@ -122,15 +137,22 @@ class TestProviderDispatchWiring:
             "programmatic_access_token": _TOKEN,
             "role": _ROLE,
         }
-        with patch.object(SnowflakeConnector, "validate_credentials") as mock_validate:
+        coverage_result = {
+            "coverage": COVERAGE_FULL,
+            "account_id": "id:myorg-myaccount",
+            "session_role": _ROLE,
+            "family_status": {},
+            "diagnostics": {},
+        }
+        with patch.object(SnowflakeConnector, "probe_coverage", return_value=coverage_result) as mock_probe:
             integration = integration_service.create_integration(
                 user_id=test_user.id,
                 provider="snowflake",
-                display_name="snowflake-no-contact",
+                display_name="snowflake-contact",
                 credentials=credentials,
                 db=db_session,
             )
-            mock_validate.assert_not_called()
+            mock_probe.assert_called_once()
         db_session.delete(integration)
         db_session.commit()
 
@@ -295,17 +317,18 @@ class TestDiffRiskDispatch:
 
 
 class TestCapabilityMatrix:
-    def test_snowflake_registered_in_partial_list_not_complete_list(self):
-        """Message 1: Snowflake is foundation-only — it must appear in the
-        PROVIDER_CAPABILITIES_PARTIAL staging list, not the canonical
-        PROVIDER_CAPABILITIES list."""
+    def test_snowflake_registered_in_complete_list_not_partial_list(self):
+        """Message 8 (public launch): Snowflake has graduated from the
+        PROVIDER_CAPABILITIES_PARTIAL staging list into the canonical
+        PROVIDER_CAPABILITIES list — same transition Okta/Entra made at
+        their own message 8."""
         from app.services.provider_capability_matrix_service import (
             PROVIDER_CAPABILITIES,
             PROVIDER_CAPABILITIES_PARTIAL,
         )
 
-        assert "snowflake" in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
-        assert "snowflake" not in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "snowflake" in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "snowflake" not in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
 
     def test_snowflake_drift_true_security_rules_true(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -315,7 +338,9 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_snapshots is True
         assert cap.drift.drift_diff is True
         assert cap.drift.drift_risk_classification is True
-        assert cap.drift.drift_review_workflow is False
+        # Message 8: drift_review_workflow flips True (generic review UI,
+        # no Snowflake-specific code) — same as Okta's own message-8 flip.
+        assert cap.drift.drift_review_workflow is True
         # Security Findings landed in Snowflake message 6; activity/case/
         # evidence-graph capabilities remain out of scope for this provider.
         assert cap.security.security_rules is True
@@ -343,16 +368,17 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("snowflake")
         assert cap.maturity in MATURITY_LEVELS
 
-    def test_get_matrix_excludes_snowflake_until_complete(self):
-        """get_matrix() only ever surfaces PROVIDER_CAPABILITIES (the
-        canonical complete list) — same as GitLab/Terraform Cloud at their
-        own message 1, Snowflake is staged in PARTIAL and must not appear
-        in the public matrix endpoint's provider list yet."""
+    def test_get_matrix_includes_snowflake_now_launched(self):
+        """Message 8: get_matrix() surfaces PROVIDER_CAPABILITIES (the
+        canonical complete list) — Snowflake has graduated out of the
+        PARTIAL staging list and now appears in the public matrix
+        endpoint's provider list, same as Okta/Entra at their own
+        message 8."""
         from app.services.provider_capability_matrix_service import get_matrix
 
         matrix = get_matrix()
         provider_ids = {p["provider"] for p in matrix["providers"]}
-        assert "snowflake" not in provider_ids
+        assert "snowflake" in provider_ids
 
     def test_snowflake_in_security_coverage_providers(self):
         from app.services.security_coverage_service import PROVIDERS
@@ -364,8 +390,8 @@ class TestCapabilityMatrix:
 
 
 class TestFrontendCatalogState:
-    """Source-scan checks (no TS execution) confirming Snowflake is present
-    internally but NOT yet user-connectable (message 1 of 8)."""
+    """Source-scan checks (no TS execution) confirming Snowflake is now
+    publicly connectable and Live (message 8 of 8 — public launch)."""
 
     def _providers_ts_text(self) -> str:
         from pathlib import Path
@@ -386,26 +412,28 @@ class TestFrontendCatalogState:
         text = self._providers_ts_text()
         assert "snowflake: {" in text
 
-    def test_snowflake_not_in_connectable_provider_ids(self):
+    def test_snowflake_in_connectable_provider_ids(self):
         text = self._providers_ts_text()
         start = text.index("export const CONNECTABLE_PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"snowflake"' not in block
+        assert '"snowflake"' in block
 
-    def test_snowflake_not_in_provider_ids_display_order(self):
+    def test_snowflake_in_provider_ids_display_order(self):
         text = self._providers_ts_text()
         start = text.index("export const PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"snowflake"' not in block
+        assert '"snowflake"' in block
 
-    def test_snowflake_card_copy_is_truthful_about_not_yet_connectable(self):
+    def test_snowflake_card_copy_no_longer_says_not_yet_connectable(self):
         text = self._providers_ts_text()
         start = text.index("snowflake: {")
         end = text.index("\n  },", start)
         block = text[start:end].lower()
-        assert "not yet" in block or "not yet connectable" in block or "planned" in block
+        assert "not yet" not in block
+        assert "not yet connectable" not in block
+        assert "early foundation" not in block
 
     def test_snowflake_card_copy_does_not_claim_credential_storage(self):
         text = self._providers_ts_text()
