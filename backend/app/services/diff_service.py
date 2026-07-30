@@ -4071,6 +4071,55 @@ _SENTRY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     # A project-team assignment's own existence (create/delete) is what
     # matters; there is no further mutable field on the edge itself.
     "sentry_project_team_assignment": (),
+    # Sentry message 3 of 8 — metric/issue alert rules and notification
+    # actions. Never tracks ``has_query``/raw query content (presence-only
+    # signal, not meaningful drift) or ``trigger_count``/``action_count``
+    # alone changing due to an already-tracked child record's own add/
+    # remove (that add/remove is its own Change) — but ``action_count``
+    # IS tracked because "actions dropped to zero" is exactly the
+    # rule-becomes-unrouted signal the risk classifier needs, and a
+    # single scalar field is far cheaper than diffing the full action set
+    # here (the classifier reads the real per-action records for detail).
+    "sentry_metric_alert_rule": (
+        "name",
+        "status_category",
+        "project_id",
+        "environment_category",
+        "dataset_category",
+        "aggregate_category",
+        "threshold_type_category",
+        "resolve_threshold",
+        "time_window_minutes",
+        "trigger_count",
+        "action_count",
+        "owner_type_category",
+        "owner_id",
+    ),
+    "sentry_metric_alert_trigger": (
+        "label_category",
+        "alert_threshold",
+        "action_count",
+    ),
+    "sentry_issue_alert_rule": (
+        "name",
+        "status_category",
+        "project_id",
+        "environment_category",
+        "action_match_category",
+        "filter_match_category",
+        "frequency_minutes",
+        "condition_count",
+        "filter_count",
+        "action_count",
+        "owner_type_category",
+        "owner_id",
+    ),
+    "sentry_alert_action": (
+        "action_category",
+        "target_type_category",
+        "target_id",
+        "integration_id",
+    ),
 }
 
 
@@ -4961,6 +5010,42 @@ def _build_provider_metadata(
     if record.get("record_type") == "sentry_project_team_assignment":
         metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
         metadata["team_id"] = context_record.get("team_id") or record.get("team_id") or ""
+
+    # Sentry metric/issue alert rules and notification actions (message 3
+    # of 8) — never includes raw query strings, condition/filter
+    # payloads, or action target identifiers that could be an email
+    # address/webhook URL/integration secret.
+    if record.get("record_type") == "sentry_metric_alert_rule":
+        metadata["rule_id"] = context_record.get("rule_id") or record.get("rule_id") or ""
+        metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
+        metadata["status_category"] = context_record.get("status_category") or record.get("status_category") or ""
+        metadata["threshold_type_category"] = (
+            context_record.get("threshold_type_category") or record.get("threshold_type_category") or ""
+        )
+        metadata["action_count"] = context_record.get("action_count")
+        if metadata["action_count"] is None:
+            metadata["action_count"] = record.get("action_count")
+    if record.get("record_type") == "sentry_metric_alert_trigger":
+        metadata["rule_id"] = context_record.get("rule_id") or record.get("rule_id") or ""
+        metadata["trigger_id"] = context_record.get("trigger_id") or record.get("trigger_id") or ""
+        metadata["label_category"] = context_record.get("label_category") or record.get("label_category") or ""
+        metadata["threshold_type_category"] = (
+            context_record.get("threshold_type_category") or record.get("threshold_type_category") or ""
+        )
+    if record.get("record_type") == "sentry_issue_alert_rule":
+        metadata["rule_id"] = context_record.get("rule_id") or record.get("rule_id") or ""
+        metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
+        metadata["status_category"] = context_record.get("status_category") or record.get("status_category") or ""
+        metadata["action_count"] = context_record.get("action_count")
+        if metadata["action_count"] is None:
+            metadata["action_count"] = record.get("action_count")
+    if record.get("record_type") == "sentry_alert_action":
+        metadata["rule_type"] = context_record.get("rule_type") or record.get("rule_type") or ""
+        metadata["rule_id"] = context_record.get("rule_id") or record.get("rule_id") or ""
+        metadata["action_category"] = context_record.get("action_category") or record.get("action_category") or ""
+        metadata["target_type_category"] = (
+            context_record.get("target_type_category") or record.get("target_type_category") or ""
+        )
 
     return metadata
 

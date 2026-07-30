@@ -196,7 +196,10 @@ from app.connectors.sentry_schema import (
     CAPABILITY_UNAVAILABLE,
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
+    COLLECTION_FAMILY_ALERT_ACTIONS,
+    COLLECTION_FAMILY_ISSUE_ALERT_RULES,
     COLLECTION_FAMILY_MEMBERS,
+    COLLECTION_FAMILY_METRIC_ALERT_RULES,
     COLLECTION_FAMILY_PROJECT_TEAM_ASSIGNMENTS,
     COLLECTION_FAMILY_PROJECTS,
     COLLECTION_FAMILY_TEAM_MEMBERSHIPS,
@@ -205,19 +208,36 @@ from app.connectors.sentry_schema import (
     FAMILY_DENIED,
     FAMILY_PARTIAL,
     FAMILY_UNAVAILABLE,
+    SENTRY_ALERT_ACTION,
     SENTRY_API_CAPABILITY,
+    SENTRY_ISSUE_ALERT_RULE,
     SENTRY_MEMBER,
+    SENTRY_METRIC_ALERT_RULE,
+    SENTRY_METRIC_ALERT_TRIGGER,
     SENTRY_ORGANIZATION,
     SENTRY_PROJECT,
     SENTRY_PROJECT_TEAM_ASSIGNMENT,
     SENTRY_TEAM,
     SENTRY_TEAM_MEMBERSHIP,
     STRUCTURALLY_UNSUPPORTED_FAMILIES,
+    categorize_aggregate,
+    categorize_dataset,
+    categorize_detection_type,
+    categorize_environment,
+    categorize_issue_action_id,
+    categorize_issue_alert_status,
+    categorize_match_type,
     categorize_member_status,
+    categorize_metric_action_type,
+    categorize_metric_alert_status,
     categorize_org_role,
+    categorize_owner,
     categorize_platform,
     categorize_project_status,
+    categorize_target_type,
     categorize_team_role,
+    categorize_threshold_type,
+    categorize_trigger_label,
     validate_auth_token,
     validate_organization_slug,
 )
@@ -251,6 +271,14 @@ _MAX_TEAMS_FOR_MEMBERSHIP_ENUMERATION = 10_000
 _MAX_MEMBERS_PER_TEAM_WALK = 5_000
 _MAX_TOTAL_TEAM_MEMBERSHIPS = 500_000
 _PAGE_SIZE_PARAMS = {"per_page": "100"}
+
+# Bounded collection caps (Sentry message 3 of 8) — same conventions as
+# message 2's caps above.
+_MAX_METRIC_ALERT_RULES = 25_000
+_MAX_ISSUE_ALERT_RULES_PER_PROJECT = 1_000
+_MAX_PROJECTS_FOR_ISSUE_ALERT_ENUMERATION = 20_000
+_MAX_TOTAL_ISSUE_ALERT_RULES = 50_000
+_MAX_TOTAL_ALERT_ACTIONS = 100_000
 
 # 429/5xx retry bounds — bounded exponential backoff with jitter, mirroring
 # the Okta/Entra/Snowflake reliability pattern.
@@ -1174,6 +1202,363 @@ class SentryConnector(BaseConnector):
         records.sort(key=lambda r: r["record_id"])
         return records, completeness, status_by_team
 
+    # ── Record normalizers (Sentry message 3 of 8) ───────────────────────
+    #
+    # Alert rules never persist raw query strings, condition/filter
+    # payloads, or action target identifiers that could be an email
+    # address, webhook URL, or integration secret — see the module
+    # docstring's sensitive-data boundary.
+
+    @classmethod
+    def _normalize_metric_alert_rule(cls, organization_id: str, raw: dict, *, project_id: Optional[str]) -> Optional[dict]:
+        rule_id = cls._stable_entity_id(raw.get("id"))
+        if rule_id is None:
+            return None
+
+        name = raw.get("name")
+        raw_query = raw.get("query")
+        raw_time_window = raw.get("timeWindow")
+        raw_resolve_threshold = raw.get("resolveThreshold")
+        raw_comparison_delta = raw.get("comparisonDelta")
+        owner_type, owner_id = categorize_owner(raw.get("owner"))
+        raw_triggers = raw.get("triggers")
+        date_created = raw.get("dateCreated")
+
+        return {
+            "record_type": SENTRY_METRIC_ALERT_RULE,
+            "record_id": f"{organization_id}/metric_alert_rule/{rule_id}",
+            "provider_resource_id": f"alert-rules/{rule_id}",
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "rule_id": rule_id,
+            "name": name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None,
+            "status_category": categorize_metric_alert_status(raw.get("status")),
+            "dataset_category": categorize_dataset(raw.get("dataset")),
+            "aggregate_category": categorize_aggregate(raw.get("aggregate")),
+            "has_query": bool(isinstance(raw_query, str) and raw_query.strip()),
+            "time_window_minutes": raw_time_window if isinstance(raw_time_window, int) and not isinstance(raw_time_window, bool) else None,
+            "environment_category": categorize_environment(raw.get("environment")),
+            "threshold_type_category": categorize_threshold_type(raw.get("thresholdType")),
+            "resolve_threshold": (
+                float(raw_resolve_threshold)
+                if isinstance(raw_resolve_threshold, (int, float)) and not isinstance(raw_resolve_threshold, bool)
+                else None
+            ),
+            "detection_type_category": categorize_detection_type(raw.get("detectionType")),
+            "comparison_delta_minutes": (
+                raw_comparison_delta if isinstance(raw_comparison_delta, int) and not isinstance(raw_comparison_delta, bool) else None
+            ),
+            "owner_type_category": owner_type,
+            "owner_id": owner_id,
+            "trigger_count": len(raw_triggers) if isinstance(raw_triggers, list) else None,
+            "action_count": None,  # filled in by _collect_metric_alert_rules once actions are counted
+            "date_created": date_created if isinstance(date_created, str) else None,
+        }
+
+    @classmethod
+    def _normalize_metric_alert_trigger(
+        cls, organization_id: str, rule_id: str, raw: dict, *, threshold_type_category: str,
+    ) -> Optional[dict]:
+        trigger_id = cls._stable_entity_id(raw.get("id"))
+        if trigger_id is None:
+            return None
+
+        raw_threshold = raw.get("alertThreshold")
+        raw_actions = raw.get("actions")
+
+        return {
+            "record_type": SENTRY_METRIC_ALERT_TRIGGER,
+            "record_id": f"{organization_id}/metric_alert_trigger/{rule_id}/{trigger_id}",
+            "provider_resource_id": f"alert-rule-triggers/{trigger_id}",
+            "organization_id": organization_id,
+            "rule_id": rule_id,
+            "trigger_id": trigger_id,
+            "label_category": categorize_trigger_label(raw.get("label")),
+            "alert_threshold": (
+                float(raw_threshold) if isinstance(raw_threshold, (int, float)) and not isinstance(raw_threshold, bool) else None
+            ),
+            "action_count": len(raw_actions) if isinstance(raw_actions, list) else None,
+            # Informational only, copied from the owning rule — NOT
+            # diff-tracked on this record type (the rule's own
+            # threshold_type_category change is what's tracked); exists
+            # so the risk classifier can determine threshold-weakening
+            # direction for a trigger-level alert_threshold change
+            # without a second lookup.
+            "threshold_type_category": threshold_type_category,
+        }
+
+    @classmethod
+    def _normalize_issue_alert_rule(cls, organization_id: str, project_id: str, raw: dict) -> Optional[dict]:
+        rule_id = cls._stable_entity_id(raw.get("id"))
+        if rule_id is None:
+            return None
+
+        name = raw.get("name")
+        raw_conditions = raw.get("conditions")
+        raw_filters = raw.get("filters")
+        raw_actions = raw.get("actions")
+        raw_frequency = raw.get("frequency")
+        owner_type, owner_id = categorize_owner(raw.get("owner"))
+        date_created = raw.get("dateCreated")
+
+        return {
+            "record_type": SENTRY_ISSUE_ALERT_RULE,
+            "record_id": f"{organization_id}/issue_alert_rule/{rule_id}",
+            "provider_resource_id": f"rules/{rule_id}",
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "rule_id": rule_id,
+            "name": name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None,
+            "status_category": categorize_issue_alert_status(raw.get("status")),
+            "environment_category": categorize_environment(raw.get("environment")),
+            "action_match_category": categorize_match_type(raw.get("actionMatch")),
+            "filter_match_category": categorize_match_type(raw.get("filterMatch")),
+            "frequency_minutes": raw_frequency if isinstance(raw_frequency, int) and not isinstance(raw_frequency, bool) else None,
+            "condition_count": len(raw_conditions) if isinstance(raw_conditions, list) else None,
+            "filter_count": len(raw_filters) if isinstance(raw_filters, list) else None,
+            "action_count": len(raw_actions) if isinstance(raw_actions, list) else None,
+            "owner_type_category": owner_type,
+            "owner_id": owner_id,
+            "date_created": date_created if isinstance(date_created, str) else None,
+        }
+
+    @classmethod
+    def _normalize_metric_alert_action(cls, organization_id: str, rule_id: str, trigger_id: str, raw: dict) -> Optional[dict]:
+        action_id = cls._stable_entity_id(raw.get("id"))
+        if action_id is None:
+            return None
+        return cls._build_alert_action_record(
+            organization_id, rule_type="metric", rule_id=rule_id, trigger_id=trigger_id,
+            action_key=action_id, action_category=categorize_metric_action_type(raw.get("type")), raw=raw,
+        )
+
+    @classmethod
+    def _normalize_issue_alert_action(cls, organization_id: str, rule_id: str, index: int, raw: dict) -> Optional[dict]:
+        # Issue-alert actions have no independent stable identity in
+        # Sentry's own data model — they are embedded JSON on the Rule's
+        # own ``data`` field, not separate database rows (unlike metric-
+        # alert-trigger actions, which ARE real AlertRuleTriggerAction
+        # rows with their own numeric ``id``). Position within the rule's
+        # own actions array is the only available identity signal; this
+        # is a documented limitation (a same-content action changing
+        # position alone could produce a spurious remove+add Change), not
+        # a fabricated stable ID.
+        return cls._build_alert_action_record(
+            organization_id, rule_type="issue", rule_id=rule_id, trigger_id=None,
+            action_key=str(index), action_category=categorize_issue_action_id(raw.get("id")), raw=raw,
+        )
+
+    @staticmethod
+    def _build_alert_action_record(
+        organization_id: str, *, rule_type: str, rule_id: str, trigger_id: Optional[str],
+        action_key: str, action_category: str, raw: dict,
+    ) -> dict:
+        target_type_category = categorize_target_type(raw.get("targetType"))
+        raw_target_identifier = raw.get("targetIdentifier")
+        # SECURITY: only a team/user target's identifier is stored (an
+        # already-known message-2 stable ID) — a "specific"/issue_owners/
+        # sentry_app target's identifier may be a raw email address,
+        # Slack channel ID, or other external reference and is NEVER
+        # persisted.
+        target_id = (
+            str(raw_target_identifier).strip()[:100]
+            if target_type_category in ("team", "user")
+            and isinstance(raw_target_identifier, (str, int))
+            and str(raw_target_identifier).strip()
+            else None
+        )
+        raw_integration_id = raw.get("integrationId") if raw.get("integrationId") is not None else raw.get("integration")
+        integration_id = (
+            str(raw_integration_id).strip()[:100]
+            if isinstance(raw_integration_id, (str, int)) and str(raw_integration_id).strip()
+            else None
+        )
+
+        scope = f"{trigger_id}" if rule_type == "metric" else f"{rule_id}"
+        return {
+            "record_type": SENTRY_ALERT_ACTION,
+            "record_id": f"{organization_id}/alert_action/{rule_type}/{scope}/{action_key}",
+            "provider_resource_id": f"alert-actions/{rule_type}/{scope}/{action_key}",
+            "organization_id": organization_id,
+            "rule_type": rule_type,
+            "rule_id": rule_id,
+            "trigger_id": trigger_id,
+            "action_category": action_category,
+            "target_type_category": target_type_category,
+            "target_id": target_id,
+            "integration_id": integration_id,
+        }
+
+    # ── Family collection (Sentry message 3 of 8) ────────────────────────
+
+    @classmethod
+    def _collect_metric_alert_rules(
+        cls, client: httpx.Client, slug: str, organization_id: str, project_id_by_slug: dict,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], list[dict], list[dict], str]:
+        """Collect metric alert rules (one organization-scoped paginated
+        call) plus their embedded triggers/actions — no extra calls are
+        needed since Sentry's list-alert-rules response nests full
+        trigger/action detail per rule.
+
+        Returns ``(rule_records, trigger_records, action_records, completeness)``.
+        """
+        raw_items, completeness = cls._collect_family(
+            client, f"/organizations/{slug}/alert-rules/",
+            params=_PAGE_SIZE_PARAMS, cap=_MAX_METRIC_ALERT_RULES, _sleep_fn=_sleep_fn,
+        )
+
+        rule_records: list[dict] = []
+        trigger_records: list[dict] = []
+        action_records: list[dict] = []
+        seen_rule_ids: set = set()
+        seen_trigger_ids: set = set()
+        seen_action_ids: set = set()
+
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            raw_projects = raw.get("projects")
+            project_slug = (
+                raw_projects[0] if isinstance(raw_projects, list) and raw_projects and isinstance(raw_projects[0], str) else None
+            )
+            project_id = project_id_by_slug.get(project_slug) if project_slug else None
+
+            rule_rec = cls._normalize_metric_alert_rule(organization_id, raw, project_id=project_id)
+            if rule_rec is None or rule_rec["rule_id"] in seen_rule_ids:
+                continue
+            seen_rule_ids.add(rule_rec["rule_id"])
+
+            rule_action_count = 0
+            raw_triggers = raw.get("triggers")
+            if isinstance(raw_triggers, list):
+                for raw_trigger in raw_triggers:
+                    if not isinstance(raw_trigger, dict):
+                        continue
+                    trigger_rec = cls._normalize_metric_alert_trigger(
+                        organization_id, rule_rec["rule_id"], raw_trigger,
+                        threshold_type_category=rule_rec["threshold_type_category"],
+                    )
+                    if trigger_rec is None or trigger_rec["trigger_id"] in seen_trigger_ids:
+                        continue
+                    seen_trigger_ids.add(trigger_rec["trigger_id"])
+                    trigger_records.append(trigger_rec)
+
+                    raw_actions = raw_trigger.get("actions")
+                    if isinstance(raw_actions, list):
+                        for raw_action in raw_actions:
+                            if not isinstance(raw_action, dict):
+                                continue
+                            action_rec = cls._normalize_metric_alert_action(
+                                organization_id, rule_rec["rule_id"], trigger_rec["trigger_id"], raw_action,
+                            )
+                            if action_rec is None or action_rec["record_id"] in seen_action_ids:
+                                continue
+                            seen_action_ids.add(action_rec["record_id"])
+                            action_records.append(action_rec)
+                            rule_action_count += 1
+
+            rule_rec["action_count"] = rule_action_count
+            rule_records.append(rule_rec)
+
+        rule_records.sort(key=lambda r: r["rule_id"])
+        trigger_records.sort(key=lambda r: r["record_id"])
+        action_records.sort(key=lambda r: r["record_id"])
+        return rule_records, trigger_records, action_records, completeness
+
+    @classmethod
+    def _collect_issue_alert_rules(
+        cls, client: httpx.Client, slug: str, organization_id: str, project_records: list[dict],
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], list[dict], str, dict]:
+        """Collect issue alert rules via a bounded per-PROJECT walk (no
+        organization-scoped bulk endpoint exists for issue alert rules —
+        see the module docstring's documentation-verification log),
+        directly mirroring message 2's per-team membership walk.
+
+        Returns ``(rule_records, action_records, completeness, status_by_project_id)``.
+        """
+        if not project_records:
+            return [], [], FAMILY_COMPLETE, {}
+
+        projects_to_walk = project_records[:_MAX_PROJECTS_FOR_ISSUE_ALERT_ENUMERATION]
+        truncated_project_list = len(project_records) > len(projects_to_walk)
+
+        rule_records: list[dict] = []
+        action_records: list[dict] = []
+        status_by_project: dict = {}
+        seen_rule_ids: set = set()
+        seen_action_ids: set = set()
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for project_rec in projects_to_walk:
+            project_id = project_rec["project_id"]
+            project_slug = project_rec.get("slug")
+            if not isinstance(project_slug, str) or not project_slug.strip():
+                status_by_project[project_id] = FAMILY_UNAVAILABLE
+                other_failed += 1
+                continue
+
+            raw_rules, project_completeness = cls._collect_family(
+                client, f"/projects/{slug}/{project_slug}/rules/",
+                params=_PAGE_SIZE_PARAMS, cap=_MAX_ISSUE_ALERT_RULES_PER_PROJECT, _sleep_fn=_sleep_fn,
+            )
+            status_by_project[project_id] = project_completeness
+            if project_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if project_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if project_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            for raw_rule in raw_rules:
+                if not isinstance(raw_rule, dict):
+                    continue
+                rule_rec = cls._normalize_issue_alert_rule(organization_id, project_id, raw_rule)
+                if rule_rec is None or rule_rec["rule_id"] in seen_rule_ids:
+                    continue
+                seen_rule_ids.add(rule_rec["rule_id"])
+                if len(rule_records) >= _MAX_TOTAL_ISSUE_ALERT_RULES:
+                    cap_hit = True
+                    break
+                rule_records.append(rule_rec)
+
+                raw_actions = raw_rule.get("actions")
+                if isinstance(raw_actions, list):
+                    for index, raw_action in enumerate(raw_actions):
+                        if not isinstance(raw_action, dict):
+                            continue
+                        action_rec = cls._normalize_issue_alert_action(organization_id, rule_rec["rule_id"], index, raw_action)
+                        if action_rec is None or action_rec["record_id"] in seen_action_ids:
+                            continue
+                        seen_action_ids.add(action_rec["record_id"])
+                        if len(action_records) >= _MAX_TOTAL_ALERT_ACTIONS:
+                            cap_hit = True
+                            break
+                        action_records.append(action_rec)
+            if len(rule_records) >= _MAX_TOTAL_ISSUE_ALERT_RULES or len(action_records) >= _MAX_TOTAL_ALERT_ACTIONS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_project_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        rule_records.sort(key=lambda r: r["record_id"])
+        action_records.sort(key=lambda r: r["record_id"])
+        return rule_records, action_records, completeness, status_by_project
+
     # ── Capability probes ────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET against page 1 only
@@ -1244,12 +1629,13 @@ class SentryConnector(BaseConnector):
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
         """Fetch the Sentry organization identity, API capability
-        inventory, and project/team/member/access-edge collection
-        (Sentry messages 1-2 of 8).
+        inventory, project/team/member/access-edge collection, and
+        metric/issue alert-rule + notification-action collection
+        (Sentry messages 1-3 of 8).
 
-        Does NOT collect alert rules (issue or metric)/integrations/
-        webhooks/repositories/ownership rules/releases yet — see the
-        module docstring for the full roadmap and sensitive-data boundary.
+        Does NOT collect integrations/webhooks/repositories/ownership
+        rules/releases yet — see the module docstring for the full
+        roadmap and sensitive-data boundary.
 
         SECURITY: auth_token is used only within this method's scope,
         never logged, never persisted beyond the local ``httpx.Client``
@@ -1304,8 +1690,24 @@ class SentryConnector(BaseConnector):
                 client, slug, organization_id, team_records, _sleep_fn=_sleep_fn,
             )
 
-            # Message-2 collection completeness is the ground truth for
-            # these five families — it must never be overridden by a stale
+            project_id_by_slug = {
+                r["slug"]: r["project_id"] for r in project_records if r.get("slug")
+            }
+            metric_rule_records, metric_trigger_records, metric_action_records, metric_completeness = (
+                self._collect_metric_alert_rules(client, slug, organization_id, project_id_by_slug, _sleep_fn=_sleep_fn)
+            )
+            issue_rule_records, issue_action_records, issue_completeness, _status_by_project = (
+                self._collect_issue_alert_rules(client, slug, organization_id, project_records, _sleep_fn=_sleep_fn)
+            )
+            # Both metric-trigger actions and issue-rule actions share one
+            # family key — combined completeness matches both sources only
+            # when they agree; any disagreement (including one complete/
+            # one denied) is reported as partial rather than guessing
+            # which source's status should win.
+            action_completeness = metric_completeness if metric_completeness == issue_completeness else FAMILY_PARTIAL
+
+            # Message-2/3 collection completeness is the ground truth for
+            # these families — it must never be overridden by a stale
             # message-1 capability-probe success. If a capability probe
             # said "available" but the real collection failed, the
             # snapshot completeness reported here reflects the collection
@@ -1315,6 +1717,9 @@ class SentryConnector(BaseConnector):
             family_completeness[COLLECTION_FAMILY_MEMBERS] = member_completeness
             family_completeness[COLLECTION_FAMILY_TEAM_MEMBERSHIPS] = membership_completeness
             family_completeness[COLLECTION_FAMILY_PROJECT_TEAM_ASSIGNMENTS] = team_completeness
+            family_completeness[COLLECTION_FAMILY_METRIC_ALERT_RULES] = metric_completeness
+            family_completeness[COLLECTION_FAMILY_ISSUE_ALERT_RULES] = issue_completeness
+            family_completeness[COLLECTION_FAMILY_ALERT_ACTIONS] = action_completeness
 
             organization_record = self._normalize_organization(
                 organization_id,
@@ -1329,5 +1734,10 @@ class SentryConnector(BaseConnector):
             records.extend(member_records)
             records.extend(membership_records)
             records.extend(assignment_records)
+            records.extend(metric_rule_records)
+            records.extend(metric_trigger_records)
+            records.extend(issue_rule_records)
+            records.extend(metric_action_records)
+            records.extend(issue_action_records)
 
         return records

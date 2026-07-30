@@ -1,4 +1,4 @@
-"""Sentry risk classification rules (Sentry messages 1-2 of 8).
+"""Sentry risk classification rules (Sentry messages 1-3 of 8).
 
 This module exists to give every ``sentry_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -26,13 +26,22 @@ Classification here is deliberately structural, not incident-level:
 - Team membership and project-team assignment edges default to Low: they
   describe routing/organizational structure, not privileged organization-
   wide access — message 5 owns effective-access analysis.
+- Alert rules (message 3): a rule being disabled, removed, or losing its
+  last notification action (action_count > 0 -> 0 while still enabled) is
+  the clearest "monitoring coverage silently disappeared" signal this
+  message can observe — these are Medium/High. Routine rule/trigger/
+  action creation, rename, or a resolve-threshold tweak is Low. Threshold
+  weakening (a higher above-threshold or lower below-threshold, or a
+  longer time window) is Medium only when the comparison direction is
+  deterministically known; an unknown direction is Low/diagnostic rather
+  than guessed.
 
-Future messages (3-7) will add classifiers for alert rules, integrations,
-webhooks, repositories, releases, and privileged-access posture as those
-record types are introduced — this module's dispatcher already fails
-safely into a generic low-severity message for any ``sentry_*`` record
-type that does not have a classifier yet, so this module continues to
-work unmodified as an incremental target for those insertions.
+Future messages (4-7) will add classifiers for integrations, webhooks,
+repositories, releases, and privileged-access posture as those record
+types are introduced — this module's dispatcher already fails safely
+into a generic low-severity message for any ``sentry_*`` record type
+that does not have a classifier yet, so this module continues to work
+unmodified as an incremental target for those insertions.
 """
 
 from __future__ import annotations
@@ -44,13 +53,19 @@ from app.connectors.sentry_schema import (
     ORG_ROLE_ADMIN,
     ORG_ROLE_MANAGER,
     ORG_ROLE_OWNER,
+    SENTRY_ALERT_ACTION,
     SENTRY_API_CAPABILITY,
+    SENTRY_ISSUE_ALERT_RULE,
     SENTRY_MEMBER,
+    SENTRY_METRIC_ALERT_RULE,
+    SENTRY_METRIC_ALERT_TRIGGER,
     SENTRY_ORGANIZATION,
     SENTRY_PROJECT,
     SENTRY_PROJECT_TEAM_ASSIGNMENT,
     SENTRY_TEAM,
     SENTRY_TEAM_MEMBERSHIP,
+    THRESHOLD_TYPE_ABOVE,
+    THRESHOLD_TYPE_BELOW,
 )
 
 _PRIVILEGED_ORG_ROLES = frozenset({ORG_ROLE_OWNER, ORG_ROLE_MANAGER, ORG_ROLE_ADMIN})
@@ -202,6 +217,164 @@ def _classify_project_team_assignment_change(change: object) -> tuple[str, str]:
     return "low", "A Sentry project-team assignment changed."
 
 
+def _classify_metric_alert_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    status_category = pm.get("status_category")
+    action_count = pm.get("action_count")
+
+    if ct == "added":
+        if status_category == "enabled" and action_count == 0:
+            return (
+                "medium",
+                "A new Sentry metric alert rule was added enabled with zero notification actions "
+                "— it will not notify anyone if it fires.",
+            )
+        return "low", "A new Sentry metric alert rule was added."
+    if ct == "removed":
+        return "medium", "A Sentry metric alert rule is no longer visible to ConfigTrace — monitoring coverage may have been lost."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status_category":
+        nv = _get(change, "new_value")
+        if nv == "disabled":
+            return "medium", "A Sentry metric alert rule was disabled."
+        if nv == "enabled":
+            return "low", "A Sentry metric alert rule was re-enabled."
+        return "low", "A Sentry metric alert rule's status could no longer be determined."
+    if fp == "action_count":
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int):
+            if pv > 0 and nv == 0:
+                if status_category == "enabled":
+                    return (
+                        "high",
+                        "An enabled Sentry metric alert rule lost its last notification action "
+                        "— it will no longer notify anyone when it fires.",
+                    )
+                return "medium", "A Sentry metric alert rule lost its last notification action."
+            if nv > pv:
+                return "low", "A Sentry metric alert rule gained a notification action."
+            if nv < pv:
+                return "medium", "A Sentry metric alert rule lost one or more notification actions."
+        return "low", "A Sentry metric alert rule's action count changed."
+    if fp == "resolve_threshold":
+        return "low", "A Sentry metric alert rule's resolve threshold changed."
+    if fp in ("threshold_type_category", "environment_category", "dataset_category", "aggregate_category", "time_window_minutes"):
+        return "low", "A Sentry metric alert rule's detection configuration changed — verify sensitivity was not unintentionally reduced."
+    if fp in ("owner_type_category", "owner_id"):
+        return "medium", "A Sentry metric alert rule's owner changed."
+    return "low", "A Sentry metric alert rule configuration field changed."
+
+
+def _classify_metric_alert_trigger_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry metric alert trigger was added."
+    if ct == "removed":
+        return "medium", "A Sentry metric alert trigger is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "alert_threshold":
+        raw_pm = _get(change, "provider_metadata")
+        pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+        direction = pm.get("threshold_type_category")
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        if isinstance(pv, (int, float)) and isinstance(nv, (int, float)) and direction in (THRESHOLD_TYPE_ABOVE, THRESHOLD_TYPE_BELOW):
+            if direction == THRESHOLD_TYPE_ABOVE:
+                if nv > pv:
+                    return "medium", "A Sentry metric alert trigger's above-threshold was weakened (raised), reducing detection sensitivity."
+                if nv < pv:
+                    return "low", "A Sentry metric alert trigger's above-threshold was strengthened (lowered)."
+            else:  # BELOW
+                if nv < pv:
+                    return "medium", "A Sentry metric alert trigger's below-threshold was weakened (lowered), reducing detection sensitivity."
+                if nv > pv:
+                    return "low", "A Sentry metric alert trigger's below-threshold was strengthened (raised)."
+        return "low", "A Sentry metric alert trigger's threshold changed (comparison direction unknown — verify sensitivity manually)."
+    if fp == "action_count":
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and pv > 0 and nv == 0:
+            return "medium", "A Sentry metric alert trigger lost its last notification action."
+        return "low", "A Sentry metric alert trigger's action count changed."
+    if fp == "label_category":
+        return "low", "A Sentry metric alert trigger's label changed."
+    return "low", "A Sentry metric alert trigger configuration field changed."
+
+
+def _classify_issue_alert_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    status_category = pm.get("status_category")
+    action_count = pm.get("action_count")
+
+    if ct == "added":
+        if status_category == "enabled" and action_count == 0:
+            return (
+                "medium",
+                "A new Sentry issue alert rule was added enabled with zero notification actions "
+                "— it will not notify anyone when it fires.",
+            )
+        return "low", "A new Sentry issue alert rule was added."
+    if ct == "removed":
+        return "medium", "A Sentry issue alert rule is no longer visible to ConfigTrace — monitoring coverage may have been lost."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status_category":
+        nv = _get(change, "new_value")
+        if nv == "disabled":
+            return "medium", "A Sentry issue alert rule was disabled."
+        if nv == "enabled":
+            return "low", "A Sentry issue alert rule was re-enabled."
+        return "low", "A Sentry issue alert rule's status could no longer be determined."
+    if fp == "action_count":
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int):
+            if pv > 0 and nv == 0:
+                if status_category == "enabled":
+                    return (
+                        "high",
+                        "An enabled Sentry issue alert rule lost its last notification action "
+                        "— it will no longer notify anyone when it fires.",
+                    )
+                return "medium", "A Sentry issue alert rule lost its last notification action."
+            if nv > pv:
+                return "low", "A Sentry issue alert rule gained a notification action."
+            if nv < pv:
+                return "medium", "A Sentry issue alert rule lost one or more notification actions."
+        return "low", "A Sentry issue alert rule's action count changed."
+    if fp in ("action_match_category", "filter_match_category", "condition_count", "filter_count", "frequency_minutes"):
+        return "low", "A Sentry issue alert rule's condition/filter/frequency configuration changed."
+    if fp == "environment_category":
+        return "low", "A Sentry issue alert rule's environment scope changed."
+    if fp in ("owner_type_category", "owner_id"):
+        return "medium", "A Sentry issue alert rule's owner changed."
+    return "low", "A Sentry issue alert rule configuration field changed."
+
+
+def _classify_alert_action_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry alert notification action was added."
+    if ct == "removed":
+        return "medium", "A Sentry alert notification action was removed — verify the owning rule still notifies someone."
+
+    fp = (_get(change, "field_path") or "")
+    if fp in ("target_type_category", "target_id"):
+        return "medium", "A Sentry alert notification action's target changed."
+    if fp == "integration_id":
+        return "medium", "A Sentry alert notification action's integration target changed."
+    if fp == "action_category":
+        return "medium", "A Sentry alert notification action's delivery channel changed."
+    return "low", "A Sentry alert notification action configuration field changed."
+
+
 def classify_sentry_change(change: object) -> tuple[str, str]:
     """Route a Sentry Change to its record-type classifier.
 
@@ -228,4 +401,12 @@ def classify_sentry_change(change: object) -> tuple[str, str]:
         return _classify_team_membership_change(change)
     if record_type == SENTRY_PROJECT_TEAM_ASSIGNMENT:
         return _classify_project_team_assignment_change(change)
+    if record_type == SENTRY_METRIC_ALERT_RULE:
+        return _classify_metric_alert_rule_change(change)
+    if record_type == SENTRY_METRIC_ALERT_TRIGGER:
+        return _classify_metric_alert_trigger_change(change)
+    if record_type == SENTRY_ISSUE_ALERT_RULE:
+        return _classify_issue_alert_rule_change(change)
+    if record_type == SENTRY_ALERT_ACTION:
+        return _classify_alert_action_change(change)
     return "low", "A Sentry configuration field changed."
