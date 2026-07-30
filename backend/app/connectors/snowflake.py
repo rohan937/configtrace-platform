@@ -523,6 +523,14 @@ def _classify_response(resp: httpx.Response) -> tuple[str, str]:
         return CATEGORY_AUTH_FAILED, "HTTP 401: Snowflake rejected the supplied token."
     if status == 403:
         return CATEGORY_PERMISSION_DENIED, "HTTP 403: permission denied for this resource."
+    if status == 408:
+        # Confirmed via current official Snowflake SQL API docs (message 7):
+        # 408 means the statement's execution timeout was reached and the
+        # statement was cancelled server-side — never retried as a generic
+        # transient server error (retrying the identical statement would
+        # very likely time out again), and never conflated with this
+        # connector's own bounded async-polling timeout path.
+        return CATEGORY_TIMEOUT, "HTTP 408: the Snowflake statement exceeded its execution timeout and was cancelled."
     if status == 404:
         return CATEGORY_NOT_FOUND, "HTTP 404: resource or endpoint not found."
     if status == 429:
@@ -2198,11 +2206,16 @@ class SnowflakeConnector(BaseConnector):
     @classmethod
     def _collect_database_roles(
         cls, client: httpx.Client, account_id: str, database_names: list[str], *, role: str, _sleep_fn=None,
-    ) -> tuple[list[dict], str, list[tuple[str, str]]]:
+    ) -> tuple[list[dict], str, list[tuple[str, str]], dict[str, str]]:
         """Returns (database role records, family status, [(database, role_name), ...]
-        non-PUBLIC pairs to enumerate grants/hierarchy for)."""
+        non-PUBLIC pairs to enumerate grants/hierarchy for, per-database
+        status dict). The per-database dict (message 7) lets a single
+        database's SHOW DATABASE ROLES failure be localized to THAT
+        database's false-removal suppression — a sibling database whose
+        query succeeded is never treated as incomplete."""
+        per_database_status: dict[str, str] = {}
         if not database_names:
-            return [], FAMILY_UNAVAILABLE, []
+            return [], FAMILY_UNAVAILABLE, [], per_database_status
         seen: dict[str, dict] = {}
         pairs: list[tuple[str, str]] = []
         any_ok = False
@@ -2211,8 +2224,10 @@ class SnowflakeConnector(BaseConnector):
             outcome = call_sql_api(client, _database_roles_statement(db_name), role=role, _sleep_fn=_sleep_fn)
             if not outcome.ok:
                 any_failed = True
+                per_database_status[db_name] = _family_status_for_outcome(outcome)
                 continue
             any_ok = True
+            per_database_status[db_name] = FAMILY_COMPLETE
             rows = _rows_as_dicts(outcome.columns, outcome.rows)
             for row in rows:
                 record = cls._normalize_database_role(account_id, db_name, row)
@@ -2227,7 +2242,7 @@ class SnowflakeConnector(BaseConnector):
             status = FAMILY_PARTIAL
         else:
             status = FAMILY_UNAVAILABLE
-        return list(seen.values()), status, pairs
+        return list(seen.values()), status, pairs, per_database_status
 
     @classmethod
     def _collect_grants(
@@ -2240,16 +2255,23 @@ class SnowflakeConnector(BaseConnector):
         default_roles_by_user: dict[str, str],
         role: str,
         _sleep_fn=None,
-    ) -> tuple[list[dict], list[dict], str, str]:
+    ) -> tuple[list[dict], list[dict], str, str, dict[str, str]]:
         """Enumerate SHOW GRANTS OF ROLE / SHOW GRANTS OF DATABASE ROLE for
         every non-PUBLIC account/database role, classifying each returned
         row by its ``granted_to`` principal type into either a
         ``snowflake_user_role_grant`` (principal type USER) or a
         ``snowflake_role_hierarchy_grant`` (principal type ROLE/
         DATABASE_ROLE). Returns (user_role_grants, role_hierarchy_grants,
-        user_grants_family_status, role_hierarchy_family_status)."""
+        user_grants_family_status, role_hierarchy_family_status,
+        per_role_status). ``per_role_status`` (message 7) is keyed
+        ``"account_role:NAME"`` / ``"database_role:DB.NAME"`` so a single
+        role's SHOW GRANTS OF ROLE failure only suppresses false removals
+        derived from THAT role — Snowflake's per-role O(n) walk means one
+        role failing (permission scoped down mid-role-list, throttled)
+        must never blank out every other role's hierarchy/grant edges."""
         user_grants: dict[str, dict] = {}
         hierarchy_grants: dict[str, dict] = {}
+        per_role_status: dict[str, str] = {}
         any_ok = False
         any_failed = False
 
@@ -2290,16 +2312,20 @@ class SnowflakeConnector(BaseConnector):
             outcome = call_sql_api(client, _grants_of_account_role_statement(role_name), role=role, _sleep_fn=_sleep_fn)
             if not outcome.ok:
                 any_failed = True
+                per_role_status[f"account_role:{role_name}"] = _family_status_for_outcome(outcome)
                 continue
             any_ok = True
+            per_role_status[f"account_role:{role_name}"] = FAMILY_COMPLETE
             _process_rows(_rows_as_dicts(outcome.columns, outcome.rows), role_name, PRINCIPAL_TYPE_ACCOUNT_ROLE)
 
         for db_name, role_name in database_role_pairs:
             outcome = call_sql_api(client, _grants_of_database_role_statement(db_name, role_name), role=role, _sleep_fn=_sleep_fn)
             if not outcome.ok:
                 any_failed = True
+                per_role_status[f"database_role:{db_name}.{role_name}"] = _family_status_for_outcome(outcome)
                 continue
             any_ok = True
+            per_role_status[f"database_role:{db_name}.{role_name}"] = FAMILY_COMPLETE
             _process_rows(_rows_as_dicts(outcome.columns, outcome.rows), role_name, PRINCIPAL_TYPE_DATABASE_ROLE)
 
         if not account_role_names and not database_role_pairs:
@@ -2310,21 +2336,24 @@ class SnowflakeConnector(BaseConnector):
             status = FAMILY_PARTIAL
         else:
             status = FAMILY_UNAVAILABLE
-        return list(user_grants.values()), list(hierarchy_grants.values()), status, status
+        return list(user_grants.values()), list(hierarchy_grants.values()), status, status, per_role_status
 
     # ── Message 3: data-object collection ────────────────────────────────────
 
     @classmethod
     def _collect_schemas(
         cls, client: httpx.Client, account_id: str, database_names: list[str], *, role: str, _sleep_fn=None,
-    ) -> tuple[list[dict], str]:
+    ) -> tuple[list[dict], str, dict[str, str]]:
         """One SHOW SCHEMAS IN DATABASE call per database. A single
         database's schema collection failing (denied/unavailable) never
         wipes out schemas already collected from other databases — same
         per-parent completeness shape as message 2's database-role
-        collection."""
+        collection. The per-database status dict (message 7) lets
+        false-removal suppression localize to THAT database's schema
+        subtree only."""
+        per_database_status: dict[str, str] = {}
         if not database_names:
-            return [], FAMILY_UNAVAILABLE
+            return [], FAMILY_UNAVAILABLE, per_database_status
         seen: dict[str, dict] = {}
         any_ok = False
         any_failed = False
@@ -2332,8 +2361,10 @@ class SnowflakeConnector(BaseConnector):
             outcome = call_sql_api(client, _schemas_statement(db_name), role=role, _sleep_fn=_sleep_fn)
             if not outcome.ok:
                 any_failed = True
+                per_database_status[db_name] = _family_status_for_outcome(outcome)
                 continue
             any_ok = True
+            per_database_status[db_name] = FAMILY_COMPLETE
             rows = _rows_as_dicts(outcome.columns, outcome.rows)
             for row in rows:
                 record = cls._normalize_schema(account_id, db_name, row)
@@ -2346,7 +2377,7 @@ class SnowflakeConnector(BaseConnector):
             status = FAMILY_PARTIAL
         else:
             status = FAMILY_UNAVAILABLE
-        return list(seen.values()), status
+        return list(seen.values()), status, per_database_status
 
     @classmethod
     def _collect_warehouses(cls, client: httpx.Client, account_id: str, *, role: str, _sleep_fn=None) -> tuple[list[dict], str]:
@@ -2387,7 +2418,7 @@ class SnowflakeConnector(BaseConnector):
         database_names: list[str],
         role: str,
         _sleep_fn=None,
-    ) -> tuple[list[dict], str, str]:
+    ) -> tuple[list[dict], str, str, dict[str, str], dict[str, str]]:
         """Reuses the SAME account-role and database-role name lists
         message 2 already discovered (via SHOW GRANTS TO ROLE / SHOW
         GRANTS TO DATABASE ROLE per role) for current object grants, and
@@ -2406,9 +2437,14 @@ class SnowflakeConnector(BaseConnector):
         walk remains the sole hierarchy source).
 
         Returns (object_grant_records, object_grants_family_status,
-        future_grants_family_status).
-        """
+        future_grants_family_status, per_role_status,
+        per_database_future_status). The two per-parent dicts (message 7)
+        let a single role's/database's SHOW GRANTS TO ROLE / SHOW FUTURE
+        GRANTS failure localize false-removal suppression to just that
+        role's object grants or that database's future grants."""
         grants: dict[str, dict] = {}
+        per_role_status: dict[str, str] = {}
+        per_database_future_status: dict[str, str] = {}
         any_ok = False
         any_failed = False
 
@@ -2427,16 +2463,20 @@ class SnowflakeConnector(BaseConnector):
             outcome = call_sql_api(client, _grants_to_account_role_statement(role_name), role=role, _sleep_fn=_sleep_fn)
             if not outcome.ok:
                 any_failed = True
+                per_role_status[f"account_role:{role_name}"] = _family_status_for_outcome(outcome)
                 continue
             any_ok = True
+            per_role_status[f"account_role:{role_name}"] = FAMILY_COMPLETE
             _process_current_rows(_rows_as_dicts(outcome.columns, outcome.rows), role_name, PRINCIPAL_TYPE_ACCOUNT_ROLE)
 
         for db_name, role_name in database_role_pairs:
             outcome = call_sql_api(client, _grants_to_database_role_statement(db_name, role_name), role=role, _sleep_fn=_sleep_fn)
             if not outcome.ok:
                 any_failed = True
+                per_role_status[f"database_role:{db_name}.{role_name}"] = _family_status_for_outcome(outcome)
                 continue
             any_ok = True
+            per_role_status[f"database_role:{db_name}.{role_name}"] = FAMILY_COMPLETE
             _process_current_rows(_rows_as_dicts(outcome.columns, outcome.rows), role_name, PRINCIPAL_TYPE_DATABASE_ROLE)
 
         if not account_role_names and not database_role_pairs:
@@ -2454,8 +2494,10 @@ class SnowflakeConnector(BaseConnector):
             outcome = call_sql_api(client, _future_grants_in_database_statement(db_name), role=role, _sleep_fn=_sleep_fn)
             if not outcome.ok:
                 future_any_failed = True
+                per_database_future_status[db_name] = _family_status_for_outcome(outcome)
                 continue
             future_any_ok = True
+            per_database_future_status[db_name] = FAMILY_COMPLETE
             rows = _rows_as_dicts(outcome.columns, outcome.rows)
             for row in rows:
                 grantee_name = row.get("GRANTEE_NAME")
@@ -2484,7 +2526,7 @@ class SnowflakeConnector(BaseConnector):
         else:
             future_grants_status = FAMILY_UNAVAILABLE
 
-        return list(grants.values()), object_grants_status, future_grants_status
+        return list(grants.values()), object_grants_status, future_grants_status, per_role_status, per_database_future_status
 
     # ── Message 4: network/authentication policy + integration collection ───
 
@@ -2757,10 +2799,10 @@ class SnowflakeConnector(BaseConnector):
             database_names, db_discovery_status, database_rows = self._discover_database_names(
                 client, role=role, _sleep_fn=_sleep_fn,
             )
-            database_role_records, database_roles_status, database_role_pairs = self._collect_database_roles(
+            database_role_records, database_roles_status, database_role_pairs, per_database_role_status = self._collect_database_roles(
                 client, account_id, database_names, role=role, _sleep_fn=_sleep_fn,
             )
-            user_role_grants, role_hierarchy_grants, user_grants_status, role_hierarchy_status = self._collect_grants(
+            user_role_grants, role_hierarchy_grants, user_grants_status, role_hierarchy_status, per_role_hierarchy_status = self._collect_grants(
                 client,
                 account_id,
                 account_role_names=grantable_account_role_names,
@@ -2779,7 +2821,7 @@ class SnowflakeConnector(BaseConnector):
                     database_records[db_record["record_id"]] = db_record
             databases_status = db_discovery_status
 
-            schema_records, schemas_status = self._collect_schemas(
+            schema_records, schemas_status, per_database_schema_status = self._collect_schemas(
                 client, account_id, database_names, role=role, _sleep_fn=_sleep_fn,
             )
             warehouse_records, warehouses_status = self._collect_warehouses(
@@ -2788,7 +2830,7 @@ class SnowflakeConnector(BaseConnector):
             share_records, shares_status = self._collect_shares(
                 client, account_id, role=role, _sleep_fn=_sleep_fn,
             )
-            object_grant_records, object_grants_status, future_grants_status = self._collect_object_and_future_grants(
+            object_grant_records, object_grants_status, future_grants_status, per_role_object_grant_status, per_database_future_status = self._collect_object_and_future_grants(
                 client,
                 account_id,
                 account_role_names=grantable_account_role_names,
@@ -2797,6 +2839,25 @@ class SnowflakeConnector(BaseConnector):
                 role=role,
                 _sleep_fn=_sleep_fn,
             )
+
+            # ── Message 7: attach per-parent completeness (see the
+            #    dedicated collection-method docstrings above for the
+            #    false-removal-suppression rationale). Additive fields
+            #    only — never rewrites any existing identity/posture
+            #    field on these records.
+            for db_record in database_records.values():
+                db_name = db_record.get("database_name")
+                db_record["schema_collection_status"] = per_database_schema_status.get(db_name, FAMILY_UNAVAILABLE)
+                db_record["database_role_collection_status"] = per_database_role_status.get(db_name, FAMILY_UNAVAILABLE)
+                db_record["future_grant_collection_status"] = per_database_future_status.get(db_name, FAMILY_UNAVAILABLE)
+            for account_role_record in account_role_records:
+                key = f"account_role:{account_role_record.get('role_name')}"
+                account_role_record["role_hierarchy_collection_status"] = per_role_hierarchy_status.get(key, FAMILY_UNAVAILABLE)
+                account_role_record["object_grant_collection_status"] = per_role_object_grant_status.get(key, FAMILY_UNAVAILABLE)
+            for database_role_record in database_role_records:
+                key = f"database_role:{database_role_record.get('database_name')}.{database_role_record.get('role_name')}"
+                database_role_record["role_hierarchy_collection_status"] = per_role_hierarchy_status.get(key, FAMILY_UNAVAILABLE)
+                database_role_record["object_grant_collection_status"] = per_role_object_grant_status.get(key, FAMILY_UNAVAILABLE)
 
             # ── Message 4: network/authentication policies + security/
             #    storage/external-access integrations.

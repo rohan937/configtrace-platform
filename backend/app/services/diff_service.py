@@ -5216,6 +5216,200 @@ def _entra_removal_suppressed(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Snowflake false-removal prevention (Snowflake message 7 of 8)
+#
+# Snowflake's SQL API surface is many independent families (users, account
+# roles, database roles per-database, user-role grants/role-hierarchy edges
+# per-role, databases, schemas per-database, warehouses, shares, object/
+# future grants per-role/per-database, network policies, network rules,
+# authentication policies, security/storage/external-access integrations)
+# plus 3 derived rollups (privileged user/role, PUBLIC exposure) — any ONE
+# family (or, for the per-role/per-database families, any ONE role/database
+# within it) can fail (permission scoped down, throttled to exhaustion) while
+# every other family/parent collects normally. Naively diffing two
+# consecutive snapshots would then report every previously-known record in
+# the failed family/parent as "removed" — a false drift signal, not a real
+# deletion.
+#
+# The Snowflake connector (app/connectors/snowflake.py) reports:
+#   - account-wide completeness via `snowflake_account.family_completeness`
+#     (the single always-present account record, keyed by account_id — never
+#     a synthetic resource of its own);
+#   - PER-DATABASE completeness for the three genuinely per-database
+#     families, so a single failed database doesn't suppress removals for
+#     every OTHER database's schemas/database-roles/future-grants:
+#       snowflake_database.schema_collection_status
+#       snowflake_database.database_role_collection_status
+#       snowflake_database.future_grant_collection_status
+#   - PER-ROLE completeness for the two genuinely per-role (O(n) role walk)
+#     families, so a single failed role doesn't suppress removals for every
+#     OTHER role's hierarchy edges/object grants:
+#       snowflake_account_role.role_hierarchy_collection_status
+#       snowflake_account_role.object_grant_collection_status
+#       snowflake_database_role.role_hierarchy_collection_status
+#       snowflake_database_role.object_grant_collection_status
+#   - PER-RECORD detail completeness for network/authentication policies and
+#     security/storage/external-access integrations via
+#     `detail_collection_status` — but a per-record DESCRIBE failure never
+#     removes the record itself (the SHOW-level identity/count fields are
+#     preserved regardless), so no removal-suppression lookup is needed for
+#     that case; only a whole-family SHOW failure can make one of these
+#     records disappear from a snapshot.
+#
+# This function consults those signals to decide whether an absent-from-the
+# -new-snapshot Snowflake record should be suppressed rather than reported
+# removed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SNOWFLAKE_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE: dict[str, str] = {
+    "snowflake_user": "users",
+    "snowflake_account_role": "account_roles",
+    "snowflake_database": "databases",
+    "snowflake_warehouse": "warehouses",
+    "snowflake_share": "shares",
+    "snowflake_network_policy": "network_policies",
+    "snowflake_network_rule": "network_rules",
+    "snowflake_authentication_policy": "authentication_policies",
+    "snowflake_security_integration": "security_integrations",
+    "snowflake_storage_integration": "storage_integrations",
+    "snowflake_external_access_integration": "external_access_integrations",
+}
+
+
+def _snowflake_removal_suppressed(
+    prev_record: dict, new_index: dict[str, dict]
+) -> Optional[str]:
+    """Return a short reason string if *prev_record*'s absence from the new
+    snapshot must NOT be reported as a "removed" Change, or ``None`` if the
+    normal removal path should proceed.
+
+    Only ever inspects Snowflake records — every other provider's removal
+    behavior is completely unaffected (returns ``None`` immediately for
+    any non-``snowflake_*`` record).
+    """
+    record_type = prev_record.get("record_type")
+    if not isinstance(record_type, str) or not record_type.startswith("snowflake_"):
+        return None
+    # The account record's own disappearance is a real signal (integration
+    # lost all access / account reconfigured) — never suppressed.
+    if record_type == "snowflake_account":
+        return None
+
+    account_id = prev_record.get("account_id")
+    account_record = new_index.get(account_id) if account_id else None
+    family_completeness = (
+        account_record.get("family_completeness") if isinstance(account_record, dict) else None
+    )
+    if not isinstance(family_completeness, dict):
+        # No account record (or a malformed one) in the new snapshot to
+        # consult at all — fall back to the normal (unsuppressed) removal
+        # path rather than guessing about completeness.
+        family_completeness = {}
+
+    def _incomplete(key: str) -> bool:
+        status = family_completeness.get(key)
+        return isinstance(status, str) and status != "complete"
+
+    def _role_key_for(role_type: object, role_name: object, database_name: object = None) -> Optional[str]:
+        if role_type == "database_role" and database_name and role_name:
+            return f"{account_id}/database_role/{str(database_name).lower()}.{str(role_name).lower()}"
+        if role_type == "account_role" and role_name:
+            return f"{account_id}/account_role/{str(role_name).lower()}"
+        return None
+
+    # ── Per-database completeness (nested families) ─────────────────────────
+    if record_type == "snowflake_schema":
+        parent = new_index.get(f"{account_id}/database/{str(prev_record.get('database_name') or '').lower()}")
+        if isinstance(parent, dict):
+            status = parent.get("schema_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:databases_or_schemas" if (_incomplete("databases") or _incomplete("schemas")) else None
+
+    if record_type == "snowflake_database_role":
+        parent = new_index.get(f"{account_id}/database/{str(prev_record.get('database_name') or '').lower()}")
+        if isinstance(parent, dict):
+            status = parent.get("database_role_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:databases_or_database_roles" if (_incomplete("databases") or _incomplete("database_roles")) else None
+
+    # ── Per-role completeness (O(n) role-walk families) ─────────────────────
+    if record_type == "snowflake_role_hierarchy_grant":
+        # The enumerated role in the "OF ROLE" walk is the CHILD (message 2:
+        # "child role granted to parent role" — SHOW GRANTS OF ROLE <child>
+        # is what surfaces the parent as GRANTEE_NAME).
+        role_key = _role_key_for(prev_record.get("child_role_type"), prev_record.get("child_role_name"))
+        parent = new_index.get(role_key) if role_key else None
+        if isinstance(parent, dict):
+            status = parent.get("role_hierarchy_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:role_hierarchy" if _incomplete("role_hierarchy") else None
+
+    if record_type == "snowflake_user_role_grant":
+        role_key = _role_key_for(prev_record.get("role_type"), prev_record.get("role_name"))
+        parent = new_index.get(role_key) if role_key else None
+        if isinstance(parent, dict):
+            status = parent.get("role_hierarchy_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:user_role_grants" if _incomplete("user_role_grants") else None
+
+    if record_type == "snowflake_object_grant":
+        if prev_record.get("future_grant") is True:
+            db_name = prev_record.get("database_name")
+            parent = new_index.get(f"{account_id}/database/{str(db_name or '').lower()}") if db_name else None
+            if isinstance(parent, dict):
+                status = parent.get("future_grant_collection_status")
+                return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+            return "family_incomplete:future_grants" if _incomplete("future_grants") else None
+        # NOTE: precise per-role localization only works for account-role
+        # grantees here — `_role_key_for` needs a database qualifier to
+        # build a `database_role:DB.NAME` key, and `snowflake_object_grant`
+        # only ever stores the grantee's bare role NAME (never its parent
+        # database), so a database-role grantee always falls through to
+        # the coarser account-wide `object_grants` family check below.
+        # This is deliberately safe rather than precise: the family status
+        # is always set to `partial` whenever ANY one role's SHOW GRANTS TO
+        # ROLE call fails (`_collect_object_and_future_grants`), so a
+        # database role's own failure is still correctly suppressed —
+        # just without excluding unrelated roles' object grants from that
+        # same widened suppression window.
+        if prev_record.get("grantee_type") == "account_role":
+            role_key = _role_key_for("account_role", prev_record.get("grantee_name"))
+            parent = new_index.get(role_key) if role_key else None
+            if isinstance(parent, dict):
+                status = parent.get("object_grant_collection_status")
+                return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:object_grants" if _incomplete("object_grants") else None
+
+    # ── Derived records (privileged user/role, PUBLIC exposure — message 5)
+    #    — each derivation depends on multiple upstream families; ANY of
+    #    them being incomplete can make the derivation incomplete, so the
+    #    current record's own absence must not be reported as a real
+    #    privilege-loss "removed" Change. ────────────────────────────────────
+    if record_type == "snowflake_privileged_user":
+        return "family_incomplete:privilege_derivation_inputs" if (
+            _incomplete("users") or _incomplete("account_roles") or _incomplete("database_roles")
+            or _incomplete("user_role_grants") or _incomplete("role_hierarchy")
+            or _incomplete("object_grants") or _incomplete("future_grants")
+        ) else None
+    if record_type == "snowflake_privileged_role":
+        return "family_incomplete:privilege_derivation_inputs" if (
+            _incomplete("account_roles") or _incomplete("database_roles") or _incomplete("role_hierarchy")
+            or _incomplete("object_grants") or _incomplete("future_grants")
+        ) else None
+    if record_type == "snowflake_public_exposure":
+        return "family_incomplete:object_grants_or_future_grants" if (
+            _incomplete("object_grants") or _incomplete("future_grants")
+        ) else None
+
+    # ── Flat, account-wide families ──────────────────────────────────────────
+    key = _SNOWFLAKE_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE.get(record_type)
+    if key and _incomplete(key):
+        return f"family_incomplete:{key}"
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Diff computation — pure, no DB
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -5285,6 +5479,7 @@ def compute_diff(
                 _kubernetes_removal_suppressed(prev_record, new_index)
                 or _okta_removal_suppressed(prev_record, new_index)
                 or _entra_removal_suppressed(prev_record, new_index)
+                or _snowflake_removal_suppressed(prev_record, new_index)
             )
             if suppress_reason is not None:
                 logger.info(

@@ -213,6 +213,18 @@ def _classify_user_change(change: object) -> tuple[str, str]:
                 "Full effective-privilege context is evaluated in a later message.",
             )
         return "low", "A Snowflake user's default role changed."
+    if fp == "user_type":
+        nv = (_get(change, "new_value") or "")
+        pv = (_get(change, "prev_value") or "")
+        if nv == "legacy_service" and pv != "legacy_service":
+            return (
+                "medium",
+                "A Snowflake user was switched to the LEGACY_SERVICE type, a transitional, "
+                "password-capable authentication model that current Snowflake documentation is deprecating.",
+            )
+        if pv == "legacy_service" and nv != "legacy_service":
+            return "low", "A Snowflake user was migrated off the LEGACY_SERVICE type, a restrictive change."
+        return "low", "A Snowflake user's type changed."
     return "low", "A Snowflake user's metadata changed."
 
 
@@ -530,6 +542,24 @@ def _classify_security_integration_change(change: object) -> tuple[str, str]:
         return "low", "A Snowflake security integration's enabled state changed."
     if fp == "scim_run_as_role":
         return "medium", "A Snowflake SCIM integration's run-as role changed. Full privilege context is evaluated in a later message."
+    if fp == "scim_run_as_role_tier":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        # Matches the message-6 snowflake_scim_critical_privilege_run_as /
+        # snowflake_scim_high_privilege_run_as Finding severities exactly —
+        # a Change transitioning INTO either tier must never classify
+        # below the corresponding static Finding (message-7 parity fix).
+        if nv == "critical":
+            return "critical", "A Snowflake SCIM integration's run-as role now resolves to critical effective privilege."
+        if nv == "high":
+            return "high", "A Snowflake SCIM integration's run-as role now resolves to high effective privilege."
+        if pv in ("critical", "high") and nv not in ("critical", "high"):
+            return "low", "A Snowflake SCIM integration's run-as role privilege tier decreased, a restrictive change."
+        return "low", "A Snowflake SCIM integration's run-as role privilege tier changed."
+    if fp == "scim_run_as_role_has_manage_grants":
+        nv, pv = _get(change, "new_value"), _get(change, "prev_value")
+        if nv is True and not pv:
+            return "high", "A Snowflake SCIM integration's run-as role gained MANAGE GRANTS."
+        return "low", "A Snowflake SCIM integration's run-as role MANAGE GRANTS status changed, a reduction."
     return "low", "A Snowflake security integration's metadata changed."
 
 
@@ -756,8 +786,12 @@ def _classify_public_exposure_change(change: object) -> tuple[str, str]:
     if fp == "future_public_read_count":
         nv, pv = _get(change, "new_value"), _get(change, "prev_value")
         if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            # High, not Medium (message 7 parity fix): matches the
+            # snowflake_public_future_data_access Finding's own severity —
+            # a Change transitioning INTO a risky state must never
+            # classify below the corresponding static Finding.
             return (
-                "medium",
+                "high",
                 "A future read grant to PUBLIC was added — newly created matching objects would be readable "
                 "by every Snowflake user through the PUBLIC role.",
             )

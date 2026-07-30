@@ -721,7 +721,17 @@ def _eval_public_exposure(record: dict[str, Any]) -> list[FindingCandidate]:
             },
             record_id=record_id,
         ))
-    accounted = (future_ownership or 0) + (future_write or 0) + (future_read or 0)
+    # These three counts are always real ints by construction (message 5's
+    # `_derive_public_exposure` never leaves them ``None``) — explicit
+    # `isinstance` checks are used anyway rather than `x or 0`, so a future
+    # change that ever left one of them ``None`` would make this residual
+    # comparison fail closed (never fire) instead of silently coercing an
+    # unknown count to a safe-looking zero.
+    accounted = (
+        (future_ownership if isinstance(future_ownership, int) else 0)
+        + (future_write if isinstance(future_write, int) else 0)
+        + (future_read if isinstance(future_read, int) else 0)
+    )
     if isinstance(future_total, int) and future_total > accounted:
         out.append(FindingCandidate(
             provider="snowflake",
