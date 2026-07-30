@@ -1,4 +1,4 @@
-"""Sentry risk classification rules — foundation (Sentry message 1 of 8).
+"""Sentry risk classification rules (Sentry messages 1-2 of 8).
 
 This module exists to give every ``sentry_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -14,14 +14,25 @@ Classification here is deliberately structural, not incident-level:
   "security incident" — permission changes are common and expected (e.g.
   the monitoring token's scopes being intentionally re-scoped), not proof
   of compromise. Regaining access is Low.
+- Project/team creation, rename, or platform/status change (message 2) is
+  Low/Medium informational noise, never overclassified as a security
+  event on its own — final privilege-aware severity belongs to message 5.
+- An organization-role escalation to owner/manager/admin (a new privileged
+  member, or an existing member promoted into one of those roles) is HIGH
+  — this is the clearest privilege-escalation signal message 2 can
+  observe. The reverse (demotion away from a privileged role, or an
+  active member being disabled/removed) is Low — reducing access is not a
+  security incident.
+- Team membership and project-team assignment edges default to Low: they
+  describe routing/organizational structure, not privileged organization-
+  wide access — message 5 owns effective-access analysis.
 
-Future messages (2-7) will add classifiers for projects, teams, members,
-alert rules, integrations, webhooks, repositories, and privileged-access
-posture as those record types are introduced — this module's dispatcher
-already fails safely into a generic low-severity message for any
-``sentry_*`` record type that does not have a classifier yet, so this
-module continues to work unmodified as an incremental target for those
-insertions.
+Future messages (3-7) will add classifiers for alert rules, integrations,
+webhooks, repositories, releases, and privileged-access posture as those
+record types are introduced — this module's dispatcher already fails
+safely into a generic low-severity message for any ``sentry_*`` record
+type that does not have a classifier yet, so this module continues to
+work unmodified as an incremental target for those insertions.
 """
 
 from __future__ import annotations
@@ -30,9 +41,19 @@ from typing import Any
 
 from app.connectors.sentry_schema import (
     CAPABILITY_AVAILABLE,
+    ORG_ROLE_ADMIN,
+    ORG_ROLE_MANAGER,
+    ORG_ROLE_OWNER,
     SENTRY_API_CAPABILITY,
+    SENTRY_MEMBER,
     SENTRY_ORGANIZATION,
+    SENTRY_PROJECT,
+    SENTRY_PROJECT_TEAM_ASSIGNMENT,
+    SENTRY_TEAM,
+    SENTRY_TEAM_MEMBERSHIP,
 )
+
+_PRIVILEGED_ORG_ROLES = frozenset({ORG_ROLE_OWNER, ORG_ROLE_MANAGER, ORG_ROLE_ADMIN})
 
 
 def _get(obj: Any, field: str) -> Any:
@@ -82,6 +103,105 @@ def _classify_api_capability_change(change: object) -> tuple[str, str]:
     return "low", "A Sentry API capability record changed."
 
 
+def _classify_project_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry project was added to monitoring."
+    if ct == "removed":
+        return (
+            "medium",
+            "A Sentry project is no longer visible to ConfigTrace. Verify "
+            "it was intentionally deleted/renamed rather than access being lost.",
+        )
+
+    fp = (_get(change, "field_path") or "").lower()
+    if fp in ("slug", "name", "platform_category"):
+        return "low", "A Sentry project's identifying metadata changed."
+    if fp == "status_category":
+        nv = (_get(change, "new_value") or "").lower() if isinstance(_get(change, "new_value"), str) else ""
+        if nv in ("disabled", "pending_deletion", "deletion_in_progress"):
+            return "medium", "A Sentry project is being disabled or deleted."
+        return "low", "A Sentry project's status changed."
+    return "low", "A Sentry project configuration field changed."
+
+
+def _classify_team_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry team was added."
+    if ct == "removed":
+        return "medium", "A Sentry team is no longer visible to ConfigTrace."
+
+    return "low", "A Sentry team's identifying metadata changed."
+
+
+def _classify_member_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    org_role = (pm.get("org_role_category") or "").lower()
+
+    if ct == "added":
+        if org_role in _PRIVILEGED_ORG_ROLES:
+            return (
+                "high",
+                f"A new Sentry organization member was added with a privileged "
+                f"organization role ({org_role}). Verify this was intentional.",
+            )
+        return "low", "A new Sentry organization member was added."
+    if ct == "removed":
+        return "low", "A Sentry organization member is no longer visible (disabled or removed)."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "org_role_category":
+        pv = (_get(change, "prev_value") or "").lower() if isinstance(_get(change, "prev_value"), str) else ""
+        nv = (_get(change, "new_value") or "").lower() if isinstance(_get(change, "new_value"), str) else ""
+        if nv in _PRIVILEGED_ORG_ROLES and pv not in _PRIVILEGED_ORG_ROLES:
+            return (
+                "high",
+                f"A Sentry organization member was promoted to a privileged "
+                f"organization role ({nv}). Verify this was intentional.",
+            )
+        if pv in _PRIVILEGED_ORG_ROLES and nv not in _PRIVILEGED_ORG_ROLES:
+            return "low", "A Sentry organization member's privileged role was removed."
+        return "low", "A Sentry organization member's organization role changed."
+    if fp == "member_status_category":
+        nv = _get(change, "new_value")
+        if nv == "unknown":
+            return (
+                "medium",
+                "A Sentry organization member's pending/active status could no "
+                "longer be determined.",
+            )
+        return "low", "A Sentry organization member's pending/active status changed."
+    return "low", "A Sentry organization member's record changed."
+
+
+def _classify_team_membership_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A Sentry organization member was added to a team."
+    if ct == "removed":
+        return "low", "A Sentry organization member was removed from a team."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "team_role_category":
+        nv = (_get(change, "new_value") or "").lower() if isinstance(_get(change, "new_value"), str) else ""
+        if nv == "admin":
+            return "medium", "A Sentry team member was promoted to team admin."
+        return "low", "A Sentry team member's team-level role changed."
+    return "low", "A Sentry team membership record changed."
+
+
+def _classify_project_team_assignment_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A Sentry team was granted access to a project."
+    if ct == "removed":
+        return "low", "A Sentry team's access to a project was revoked."
+    return "low", "A Sentry project-team assignment changed."
+
+
 def classify_sentry_change(change: object) -> tuple[str, str]:
     """Route a Sentry Change to its record-type classifier.
 
@@ -98,4 +218,14 @@ def classify_sentry_change(change: object) -> tuple[str, str]:
         return _classify_organization_change(change)
     if record_type == SENTRY_API_CAPABILITY:
         return _classify_api_capability_change(change)
+    if record_type == SENTRY_PROJECT:
+        return _classify_project_change(change)
+    if record_type == SENTRY_TEAM:
+        return _classify_team_change(change)
+    if record_type == SENTRY_MEMBER:
+        return _classify_member_change(change)
+    if record_type == SENTRY_TEAM_MEMBERSHIP:
+        return _classify_team_membership_change(change)
+    if record_type == SENTRY_PROJECT_TEAM_ASSIGNMENT:
+        return _classify_project_team_assignment_change(change)
     return "low", "A Sentry configuration field changed."

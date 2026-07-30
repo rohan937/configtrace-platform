@@ -1,21 +1,23 @@
-"""Sentry provider foundation connector (Sentry message 1 of 8).
+"""Sentry provider connector (Sentry messages 1-2 of 8).
 
 Establishes a secure, read-only connection to a Sentry SaaS organization
 using a bearer auth token over Sentry's REST API, resolves a stable
-organization identity, and probes (never collects) the future record
-families (projects, teams, members, issue/metric alert rules,
-integrations, webhooks, repositories, ownership rules, releases) that
-later messages will build.
+organization identity, probes (msg 1) the future record families this
+connector doesn't collect yet, and collects (msg 2) projects, teams,
+organization members, team memberships, and project-team assignments.
 
-This connector intentionally does NOT collect projects, teams, members,
-alert rules, integrations, webhooks, repositories, or releases yet. The
-connector is registered internally (dispatch, schema, capability matrix)
-but is NOT publicly connectable — it is excluded from the frontend's
-PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Sentry message 8.
+This connector intentionally does NOT yet collect alert rules (issue or
+metric), integrations, webhooks, repositories, ownership rules, or
+releases. The connector is registered internally (dispatch, schema,
+capability matrix) but is NOT publicly connectable — it is excluded from
+the frontend's PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Sentry
+message 8.
 
-Roadmap (this message owns foundation ONLY — do not begin later messages):
-  msg 1 (this message) — foundation, authentication, organization identity, connector.
-  msg 2 — projects, teams, members, organization access, project ownership.
+Roadmap (message 2 owns projects/teams/members/access ONLY — do not begin
+later messages):
+  msg 1 — foundation, authentication, organization identity, connector.
+  msg 2 (this message) — projects, teams, members, organization access,
+          team membership, project-team assignment.
   msg 3 — alert rules (issue + metric), notification routing.
   msg 4 — integrations, webhooks, repositories, ownership rules, releases/
           deployment settings.
@@ -194,9 +196,28 @@ from app.connectors.sentry_schema import (
     CAPABILITY_UNAVAILABLE,
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
+    COLLECTION_FAMILY_MEMBERS,
+    COLLECTION_FAMILY_PROJECT_TEAM_ASSIGNMENTS,
+    COLLECTION_FAMILY_PROJECTS,
+    COLLECTION_FAMILY_TEAM_MEMBERSHIPS,
+    COLLECTION_FAMILY_TEAMS,
+    FAMILY_COMPLETE,
+    FAMILY_DENIED,
+    FAMILY_PARTIAL,
+    FAMILY_UNAVAILABLE,
     SENTRY_API_CAPABILITY,
+    SENTRY_MEMBER,
     SENTRY_ORGANIZATION,
+    SENTRY_PROJECT,
+    SENTRY_PROJECT_TEAM_ASSIGNMENT,
+    SENTRY_TEAM,
+    SENTRY_TEAM_MEMBERSHIP,
     STRUCTURALLY_UNSUPPORTED_FAMILIES,
+    categorize_member_status,
+    categorize_org_role,
+    categorize_platform,
+    categorize_project_status,
+    categorize_team_role,
     validate_auth_token,
     validate_organization_slug,
 )
@@ -218,6 +239,18 @@ _TRUSTED_ORIGIN = "https://sentry.io"
 # Bounded pagination (production-ready for later messages' collection —
 # message 1's own probes never paginate beyond a single page).
 _MAX_PAGES = 200
+
+# Bounded collection caps (Sentry message 2 of 8) — mirror the Okta
+# connector's naming/value conventions (``_MAX_USERS``, ``_MAX_GROUPS``,
+# ``_MAX_GROUPS_FOR_MEMBERSHIP_ENUMERATION``). Hitting a cap is reported as
+# FAMILY_PARTIAL, never silently truncated as if complete.
+_MAX_PROJECTS = 20_000
+_MAX_TEAMS = 10_000
+_MAX_MEMBERS = 100_000
+_MAX_TEAMS_FOR_MEMBERSHIP_ENUMERATION = 10_000
+_MAX_MEMBERS_PER_TEAM_WALK = 5_000
+_MAX_TOTAL_TEAM_MEMBERSHIPS = 500_000
+_PAGE_SIZE_PARAMS = {"per_page": "100"}
 
 # 429/5xx retry bounds — bounded exponential backoff with jitter, mirroring
 # the Okta/Entra/Snowflake reliability pattern.
@@ -774,6 +807,373 @@ class SentryConnector(BaseConnector):
             "status": status,
         }
 
+    # ── Stable identity (Sentry message 2 of 8) ──────────────────────────
+    #
+    # Every project/team/member/edge below uses Sentry's own immutable
+    # numeric/string ``id`` field — never ``slug``/``name``/``email`` —
+    # exactly like ``compute_organization_id`` above. A rename must never
+    # change identity.
+
+    @staticmethod
+    def _stable_entity_id(raw_id: object) -> Optional[str]:
+        if isinstance(raw_id, str) and raw_id.strip():
+            return raw_id.strip()[:100]
+        if isinstance(raw_id, int):
+            return str(raw_id)
+        return None
+
+    # ── Record normalizers (Sentry message 2 of 8) ───────────────────────
+
+    @classmethod
+    def _normalize_project(cls, organization_id: str, raw: dict) -> Optional[dict]:
+        """Normalize a Sentry project. Never stores DSNs, client keys, or
+        any event/issue data — see the module docstring's sensitive-data
+        boundary."""
+        project_id = cls._stable_entity_id(raw.get("id"))
+        if project_id is None:
+            return None
+
+        slug = raw.get("slug")
+        name = raw.get("name")
+        date_created = raw.get("dateCreated")
+
+        return {
+            "record_type": SENTRY_PROJECT,
+            "record_id": f"{organization_id}/project/{project_id}",
+            "provider_resource_id": f"projects/{project_id}",
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "slug": slug.strip().lower()[:_MAX_STR_LEN] if isinstance(slug, str) and slug.strip() else None,
+            "name": name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None,
+            "platform_category": categorize_platform(raw.get("platform")),
+            "status_category": categorize_project_status(raw.get("status")),
+            "date_created": date_created if isinstance(date_created, str) else None,
+        }
+
+    @classmethod
+    def _normalize_team(cls, organization_id: str, raw: dict) -> Optional[dict]:
+        team_id = cls._stable_entity_id(raw.get("id"))
+        if team_id is None:
+            return None
+
+        slug = raw.get("slug")
+        name = raw.get("name")
+        member_count = raw.get("memberCount")
+        date_created = raw.get("dateCreated")
+
+        return {
+            "record_type": SENTRY_TEAM,
+            "record_id": f"{organization_id}/team/{team_id}",
+            "provider_resource_id": f"teams/{team_id}",
+            "organization_id": organization_id,
+            "team_id": team_id,
+            "slug": slug.strip().lower()[:_MAX_STR_LEN] if isinstance(slug, str) and slug.strip() else None,
+            "name": name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None,
+            "member_count": member_count if isinstance(member_count, int) else None,
+            "date_created": date_created if isinstance(date_created, str) else None,
+        }
+
+    @classmethod
+    def _normalize_member(cls, organization_id: str, raw: dict) -> Optional[dict]:
+        """Normalize an organization member.
+
+        SECURITY: deliberately never stores email address, phone number,
+        IP address, last login, avatar URL, user preferences, or auth
+        material — the member's own immutable ``id`` field (the
+        OrganizationMember record ID, confirmed stable independent of
+        ``slug``/``name``/``email``) is the only identity stored.
+        """
+        member_id = cls._stable_entity_id(raw.get("id"))
+        if member_id is None:
+            return None
+
+        raw_role = raw.get("orgRole") if isinstance(raw.get("orgRole"), str) else raw.get("role")
+        raw_pending = raw.get("pending")
+        raw_expired = raw.get("expired")
+        date_created = raw.get("dateCreated")
+
+        return {
+            "record_type": SENTRY_MEMBER,
+            "record_id": f"{organization_id}/member/{member_id}",
+            "provider_resource_id": f"members/{member_id}",
+            "organization_id": organization_id,
+            "member_id": member_id,
+            "org_role_category": categorize_org_role(raw_role),
+            "member_status_category": categorize_member_status(raw_pending, raw_expired),
+            "date_created": date_created if isinstance(date_created, str) else None,
+        }
+
+    @staticmethod
+    def _normalize_team_membership(
+        organization_id: str, *, team_id: str, member_id: str, team_role_category: str,
+    ) -> dict:
+        return {
+            "record_type": SENTRY_TEAM_MEMBERSHIP,
+            "record_id": f"{organization_id}/team_membership/{team_id}/{member_id}",
+            "provider_resource_id": f"teams/{team_id}/members/{member_id}",
+            "organization_id": organization_id,
+            "team_id": team_id,
+            "member_id": member_id,
+            "team_role_category": team_role_category,
+        }
+
+    @staticmethod
+    def _normalize_project_team_assignment(
+        organization_id: str, *, project_id: str, team_id: str,
+    ) -> dict:
+        # Direction preserved explicitly via named ``project_id``/
+        # ``team_id`` fields (team -> project, per Sentry's own nested
+        # teams-list -> projects shape) rather than a single combined key.
+        return {
+            "record_type": SENTRY_PROJECT_TEAM_ASSIGNMENT,
+            "record_id": f"{organization_id}/project_team_assignment/{project_id}/{team_id}",
+            "provider_resource_id": f"projects/{project_id}/teams/{team_id}",
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "team_id": team_id,
+        }
+
+    # ── Family collection (Sentry message 2 of 8) ────────────────────────
+
+    @staticmethod
+    def _collect_family(
+        client: httpx.Client,
+        path: str,
+        *,
+        params: Optional[dict],
+        cap: int,
+        _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        """Paginate a whole family and report what actually happened,
+        rather than raising and aborting the whole fetch.
+
+        Mirrors ``okta.py``'s ``_collect_family`` exactly (same
+        exception-to-completeness mapping), reusing this connector's own
+        ``paginate_sentry`` helper instead of re-implementing pagination.
+        Hitting ``cap`` OR ``paginate_sentry``'s ``truncated`` flag is
+        always FAMILY_PARTIAL — never silently reported as complete.
+        """
+        try:
+            items, truncated = paginate_sentry(
+                client, path, params=params, max_pages=_MAX_PAGES, _sleep_fn=_sleep_fn,
+            )
+        except AuthenticationError:
+            return [], FAMILY_DENIED
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) == 403:
+                return [], FAMILY_DENIED
+            return [], FAMILY_UNAVAILABLE
+        except (NetworkError, RateLimitError):
+            return [], FAMILY_UNAVAILABLE
+
+        if len(items) >= cap:
+            return items[:cap], FAMILY_PARTIAL
+        if truncated:
+            return items, FAMILY_PARTIAL
+        return items, FAMILY_COMPLETE
+
+    @classmethod
+    def _collect_projects(
+        cls, client: httpx.Client, slug: str, organization_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, f"/organizations/{slug}/projects/",
+            params=_PAGE_SIZE_PARAMS, cap=_MAX_PROJECTS, _sleep_fn=_sleep_fn,
+        )
+        records: list[dict] = []
+        seen_ids: set = set()
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_project(organization_id, raw)
+            if rec is None or rec["project_id"] in seen_ids:
+                continue
+            seen_ids.add(rec["project_id"])
+            records.append(rec)
+        records.sort(key=lambda r: r["project_id"])
+        return records, completeness
+
+    @classmethod
+    def _collect_teams(
+        cls, client: httpx.Client, slug: str, organization_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], list[dict], str]:
+        """Collect teams AND project-team assignments from the SAME
+        response — Sentry's list-teams endpoint nests each team's
+        assigned ``projects`` array by default, so no separate per-team
+        or per-project call is needed for the assignment edge (see
+        ``sentry_schema.COLLECTION_FAMILY_PROJECT_TEAM_ASSIGNMENTS``).
+
+        Returns ``(team_records, assignment_records, completeness)`` —
+        both record lists share the single teams-list completeness.
+        """
+        raw_items, completeness = cls._collect_family(
+            client, f"/organizations/{slug}/teams/",
+            params=_PAGE_SIZE_PARAMS, cap=_MAX_TEAMS, _sleep_fn=_sleep_fn,
+        )
+        team_records: list[dict] = []
+        assignment_records: list[dict] = []
+        seen_team_ids: set = set()
+        seen_assignment_ids: set = set()
+
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            team_rec = cls._normalize_team(organization_id, raw)
+            if team_rec is None or team_rec["team_id"] in seen_team_ids:
+                continue
+            seen_team_ids.add(team_rec["team_id"])
+            team_records.append(team_rec)
+
+            nested_projects = raw.get("projects")
+            if isinstance(nested_projects, list):
+                for raw_project in nested_projects:
+                    if not isinstance(raw_project, dict):
+                        continue
+                    project_id = cls._stable_entity_id(raw_project.get("id"))
+                    if project_id is None:
+                        continue
+                    assignment_rec = cls._normalize_project_team_assignment(
+                        organization_id, project_id=project_id, team_id=team_rec["team_id"],
+                    )
+                    if assignment_rec["record_id"] in seen_assignment_ids:
+                        continue
+                    seen_assignment_ids.add(assignment_rec["record_id"])
+                    assignment_records.append(assignment_rec)
+
+        team_records.sort(key=lambda r: r["team_id"])
+        assignment_records.sort(key=lambda r: r["record_id"])
+        return team_records, assignment_records, completeness
+
+    @classmethod
+    def _collect_members(
+        cls, client: httpx.Client, slug: str, organization_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, f"/organizations/{slug}/members/",
+            params=_PAGE_SIZE_PARAMS, cap=_MAX_MEMBERS, _sleep_fn=_sleep_fn,
+        )
+        records: list[dict] = []
+        seen_ids: set = set()
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_member(organization_id, raw)
+            if rec is None or rec["member_id"] in seen_ids:
+                continue
+            seen_ids.add(rec["member_id"])
+            records.append(rec)
+        records.sort(key=lambda r: r["member_id"])
+        return records, completeness
+
+    @classmethod
+    def _collect_team_memberships(
+        cls, client: httpx.Client, slug: str, organization_id: str, team_records: list[dict],
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict]:
+        """Collect member<->team edges.
+
+        Call-complexity design: Sentry has no single "list all team
+        memberships across the organization" endpoint — membership is
+        only enumerable per-TEAM (``GET
+        /teams/{org}/{team_slug}/members/``) or per-member detail (``GET
+        /organizations/{org}/members/{id}/``, which returns
+        ``teams``/``teamRoles`` for ONE member at a time). This connector
+        walks per-TEAM, directly mirroring Okta's own documented
+        per-group-not-per-user precedent (``okta.py``'s
+        ``_fetch_memberships``) — a real organization has far fewer teams
+        than members. Bounded at
+        ``_MAX_TEAMS_FOR_MEMBERSHIP_ENUMERATION`` teams; message 7 owns
+        full partial-sync/scale hardening.
+
+        Per current official docs, the per-team members endpoint excludes
+        pending-invite members — a walked team's membership list reflects
+        active team members only. This is a documented limitation, not a
+        bug: organization-level pending/expired status is still preserved
+        on ``sentry_member.member_status_category``.
+
+        Returns ``(records, completeness, status_by_team_id)`` —
+        ``status_by_team_id`` (Sentry message 7) lets diff-time
+        false-removal suppression scope itself to just the teams whose
+        walk actually failed.
+        """
+        if not team_records:
+            return [], FAMILY_COMPLETE, {}
+
+        teams_to_walk = team_records[:_MAX_TEAMS_FOR_MEMBERSHIP_ENUMERATION]
+        truncated_team_list = len(team_records) > len(teams_to_walk)
+
+        records: list[dict] = []
+        status_by_team: dict = {}
+        seen_edge_ids: set = set()
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        cap_hit = False
+
+        for team_rec in teams_to_walk:
+            team_id = team_rec["team_id"]
+            team_slug = team_rec.get("slug")
+            if not isinstance(team_slug, str) or not team_slug.strip():
+                # No slug to address the per-team walk endpoint with — an
+                # unaddressable team is a failed walk, never a silent skip.
+                status_by_team[team_id] = FAMILY_UNAVAILABLE
+                other_failed += 1
+                continue
+
+            raw_members, team_completeness = cls._collect_family(
+                client, f"/teams/{slug}/{team_slug}/members/",
+                params=_PAGE_SIZE_PARAMS, cap=_MAX_MEMBERS_PER_TEAM_WALK, _sleep_fn=_sleep_fn,
+            )
+            status_by_team[team_id] = team_completeness
+            if team_completeness == FAMILY_DENIED:
+                denied += 1
+                continue
+            if team_completeness == FAMILY_UNAVAILABLE:
+                other_failed += 1
+                continue
+            if team_completeness == FAMILY_PARTIAL:
+                cap_hit = True
+
+            succeeded += 1
+            for raw_member in raw_members:
+                if not isinstance(raw_member, dict):
+                    continue
+                member_id = cls._stable_entity_id(raw_member.get("id"))
+                if member_id is None:
+                    continue
+                raw_team_role = (
+                    raw_member.get("teamRole") if isinstance(raw_member.get("teamRole"), str) else raw_member.get("role")
+                )
+                edge = cls._normalize_team_membership(
+                    organization_id, team_id=team_id, member_id=member_id,
+                    team_role_category=categorize_team_role(raw_team_role),
+                )
+                if edge["record_id"] in seen_edge_ids:
+                    continue
+                seen_edge_ids.add(edge["record_id"])
+                if len(records) >= _MAX_TOTAL_TEAM_MEMBERSHIPS:
+                    cap_hit = True
+                    break
+                records.append(edge)
+            if len(records) >= _MAX_TOTAL_TEAM_MEMBERSHIPS:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and denied > 0 and other_failed == 0:
+            completeness = FAMILY_DENIED
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or cap_hit or truncated_team_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        records.sort(key=lambda r: r["record_id"])
+        return records, completeness, status_by_team
+
     # ── Capability probes ────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET against page 1 only
@@ -843,10 +1243,11 @@ class SentryConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
-        """Fetch the Sentry organization identity and API capability
-        inventory (Sentry message 1 of 8).
+        """Fetch the Sentry organization identity, API capability
+        inventory, and project/team/member/access-edge collection
+        (Sentry messages 1-2 of 8).
 
-        Does NOT collect projects/teams/members/alert rules/integrations/
+        Does NOT collect alert rules (issue or metric)/integrations/
         webhooks/repositories/ownership rules/releases yet — see the
         module docstring for the full roadmap and sensitive-data boundary.
 
@@ -858,7 +1259,8 @@ class SentryConnector(BaseConnector):
             AuthenticationError: Token rejected or malformed credentials.
             ConnectorError: Sentry returned an unexpected error fetching
                 the organization identity itself (every capability probe
-                fails soft into a status instead of raising).
+                and every message-2 family collection fails soft into a
+                status instead of raising).
             NetworkError: Transport-level failure reaching the organization.
         """
         slug, auth_token = self._credentials(credentials)
@@ -889,6 +1291,31 @@ class SentryConnector(BaseConnector):
                 for r in capability_records
             }
 
+            project_records, project_completeness = self._collect_projects(
+                client, slug, organization_id, _sleep_fn=_sleep_fn,
+            )
+            team_records, assignment_records, team_completeness = self._collect_teams(
+                client, slug, organization_id, _sleep_fn=_sleep_fn,
+            )
+            member_records, member_completeness = self._collect_members(
+                client, slug, organization_id, _sleep_fn=_sleep_fn,
+            )
+            membership_records, membership_completeness, _status_by_team = self._collect_team_memberships(
+                client, slug, organization_id, team_records, _sleep_fn=_sleep_fn,
+            )
+
+            # Message-2 collection completeness is the ground truth for
+            # these five families — it must never be overridden by a stale
+            # message-1 capability-probe success. If a capability probe
+            # said "available" but the real collection failed, the
+            # snapshot completeness reported here reflects the collection
+            # result, not the probe.
+            family_completeness[COLLECTION_FAMILY_PROJECTS] = project_completeness
+            family_completeness[COLLECTION_FAMILY_TEAMS] = team_completeness
+            family_completeness[COLLECTION_FAMILY_MEMBERS] = member_completeness
+            family_completeness[COLLECTION_FAMILY_TEAM_MEMBERSHIPS] = membership_completeness
+            family_completeness[COLLECTION_FAMILY_PROJECT_TEAM_ASSIGNMENTS] = team_completeness
+
             organization_record = self._normalize_organization(
                 organization_id,
                 slug=slug,
@@ -897,5 +1324,10 @@ class SentryConnector(BaseConnector):
             )
             records.append(organization_record)
             records.extend(capability_records)
+            records.extend(project_records)
+            records.extend(team_records)
+            records.extend(member_records)
+            records.extend(membership_records)
+            records.extend(assignment_records)
 
         return records

@@ -4041,6 +4041,36 @@ _SENTRY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "sentry_api_capability": (
         "status",
     ),
+    # Sentry message 2 of 8 — project/team/member/access coverage.
+    # ``slug``/``name`` ARE tracked here (unlike organization's own slug):
+    # a project or team rename is a meaningful, low-signal Change to
+    # surface, whereas identity itself never moves off the immutable
+    # ``project_id``/``team_id`` fields (see the connector's rename-
+    # preserves-identity test). ``member_count`` is a derived, noisy
+    # informational count, deliberately NOT tracked.
+    "sentry_project": (
+        "slug",
+        "name",
+        "platform_category",
+        "status_category",
+    ),
+    "sentry_team": (
+        "slug",
+        "name",
+    ),
+    # Never tracks the member's own display fields — Sentry message 2
+    # never stores email/name in the first place (see the connector's
+    # sensitive-data boundary), only org_role/status.
+    "sentry_member": (
+        "org_role_category",
+        "member_status_category",
+    ),
+    "sentry_team_membership": (
+        "team_role_category",
+    ),
+    # A project-team assignment's own existence (create/delete) is what
+    # matters; there is no further mutable field on the edge itself.
+    "sentry_project_team_assignment": (),
 }
 
 
@@ -4903,6 +4933,34 @@ def _build_provider_metadata(
         metadata["highest_privilege_tier"] = (
             context_record.get("highest_privilege_tier") or record.get("highest_privilege_tier") or ""
         )
+
+    # Sentry project/team/member/access records (message 2 of 8) — never
+    # includes auth_token, DSNs, client keys, or member email (this
+    # provider never stores email in the first place). ``sentry_project``/
+    # ``sentry_team`` already surface via the generic ``name``/``slug``
+    # stanza above; the fields below are the ones the classifier can't get
+    # from record_name/record_content/field_path alone.
+    if record.get("record_type") == "sentry_project":
+        metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
+        metadata["platform_category"] = context_record.get("platform_category") or record.get("platform_category") or ""
+        metadata["status_category"] = context_record.get("status_category") or record.get("status_category") or ""
+    if record.get("record_type") == "sentry_team":
+        metadata["team_id"] = context_record.get("team_id") or record.get("team_id") or ""
+    if record.get("record_type") == "sentry_member":
+        metadata["member_id"] = context_record.get("member_id") or record.get("member_id") or ""
+        metadata["org_role_category"] = context_record.get("org_role_category") or record.get("org_role_category") or ""
+        metadata["member_status_category"] = (
+            context_record.get("member_status_category") or record.get("member_status_category") or ""
+        )
+    if record.get("record_type") == "sentry_team_membership":
+        metadata["team_id"] = context_record.get("team_id") or record.get("team_id") or ""
+        metadata["member_id"] = context_record.get("member_id") or record.get("member_id") or ""
+        metadata["team_role_category"] = (
+            context_record.get("team_role_category") or record.get("team_role_category") or ""
+        )
+    if record.get("record_type") == "sentry_project_team_assignment":
+        metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
+        metadata["team_id"] = context_record.get("team_id") or record.get("team_id") or ""
 
     return metadata
 
