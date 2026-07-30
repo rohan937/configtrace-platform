@@ -1660,7 +1660,7 @@ _SNOWFLAKE = ProviderCapability(
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1671,22 +1671,23 @@ _SNOWFLAKE = ProviderCapability(
     ),
     maturity="planned",
     notes=(
-        "Snowflake provider foundation (message 1 of 8): Programmatic Access Token "
-        "authentication over the Snowflake SQL API (HTTPS), read-only "
-        "SELECT/SHOW/DESCRIBE session discipline, account identifier validation, "
-        "and stable account identity derived from CURRENT_ORGANIZATION_NAME() / "
-        "CURRENT_ACCOUNT_NAME() (never the user-supplied account identifier "
-        "string). Drift snapshots cover account identity metadata "
-        "(organization name, account name, account locator, monitoring role) and "
-        "read-access capability probes across 13 future record families (users, "
-        "roles, role grants, object grants, databases, schemas, warehouses, "
-        "shares, network policies, authentication policies, security "
-        "integrations, storage integrations, external access integrations) — "
-        "no family is fully collected yet, only probed for availability. No "
-        "Security Findings, activity ingestion, or privilege-graph analysis "
-        "exist yet — those are later messages (2-8) in the Snowflake roadmap. "
-        "Internal registration only: not connectable, not exposed on the public "
-        "integrations list, not Live."
+        "Snowflake provider through message 6 of 8: PAT authentication over the "
+        "Snowflake SQL API, full users/roles/hierarchy/database-role coverage, "
+        "databases/schemas/warehouses/shares/object+future grants, network/"
+        "authentication policies, SAML/OAuth/SCIM/storage/external-access "
+        "integrations, transitive effective-privilege derivation (ACCOUNTADMIN/"
+        "SECURITYADMIN/MANAGE GRANTS/ownership/PUBLIC exposure), and 31 static "
+        "Security Findings covering privileged users/roles/service identities, "
+        "grant administration, managed-access-schema and integration ownership, "
+        "PUBLIC future-grant exposure, network anywhere-access, MFA posture, "
+        "and SCIM run-as role privilege context. Security Findings are "
+        "metadata-only, current-state posture checks — never a confirmed-"
+        "compromise claim. Activity ingestion, signals, risk x activity "
+        "correlations, demo/QA seeding, and case reporting are not built for "
+        "this provider (same dual-stack scope as Okta/Kubernetes/Entra: drift + "
+        "Security Findings only). Internal registration only: not connectable, "
+        "not exposed on the public integrations list, not Live — public launch "
+        "is message 8."
     ),
 )
 

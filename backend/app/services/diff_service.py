@@ -3955,6 +3955,8 @@ _SNOWFLAKE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "oauth_client_category",
         "oauth_issuer_configured",
         "scim_run_as_role",
+        "scim_run_as_role_tier",
+        "scim_run_as_role_has_manage_grants",
     ),
     "snowflake_storage_integration": (
         "enabled",
@@ -4742,6 +4744,10 @@ def _build_provider_metadata(
         metadata["integration_type"] = context_record.get("integration_type") or record.get("integration_type") or ""
         metadata["enabled"] = context_record.get("enabled") or record.get("enabled") or ""
         metadata["scim_run_as_role"] = context_record.get("scim_run_as_role") or record.get("scim_run_as_role") or ""
+        metadata["scim_run_as_role_tier"] = context_record.get("scim_run_as_role_tier") or record.get("scim_run_as_role_tier") or ""
+        metadata["scim_run_as_role_has_manage_grants"] = bool(
+            context_record.get("scim_run_as_role_has_manage_grants") or record.get("scim_run_as_role_has_manage_grants")
+        )
     if record.get("record_type") == "snowflake_storage_integration":
         metadata["integration_name"] = context_record.get("integration_name") or record.get("integration_name") or ""
         metadata["enabled"] = context_record.get("enabled") or record.get("enabled") or ""

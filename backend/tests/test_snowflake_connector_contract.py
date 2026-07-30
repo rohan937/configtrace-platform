@@ -307,7 +307,7 @@ class TestCapabilityMatrix:
         assert "snowflake" in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
         assert "snowflake" not in {p.provider for p in PROVIDER_CAPABILITIES}
 
-    def test_snowflake_drift_true_security_rules_false(self):
+    def test_snowflake_drift_true_security_rules_true(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("snowflake")
@@ -316,8 +316,11 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_diff is True
         assert cap.drift.drift_risk_classification is True
         assert cap.drift.drift_review_workflow is False
-        # No Security Findings until Snowflake message 6.
-        assert cap.security.security_rules is False
+        # Security Findings landed in Snowflake message 6; activity/case/
+        # evidence-graph capabilities remain out of scope for this provider.
+        assert cap.security.security_rules is True
+        assert cap.security.activity_ingestion is False
+        assert cap.security.case_report is False
         assert cap.security.activity_ingestion is False
         assert cap.security.demo_seed_clear is False
 

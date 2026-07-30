@@ -2090,6 +2090,50 @@ class SnowflakeConnector(BaseConnector):
             ),
         }
 
+    # ── Message 6: SCIM run-as role privilege-context resolution ────────────
+    #
+    # A small, additive enrichment on top of message 5's own derivation
+    # machinery — NOT a new SQL call, NOT a rewrite of any raw evidence
+    # field. ``snowflake_security_integration.scim_run_as_role`` (message
+    # 4's own raw field, untouched) is resolved against the SAME role-
+    # hierarchy closure/signal machinery message 5 already built, using
+    # data already sitting in this fetch()'s scope. Two NEW fields are
+    # appended to the SCIM integration's record:
+    # ``scim_run_as_role_tier`` / ``scim_run_as_role_has_manage_grants`` —
+    # never a fabricated guess: an unresolvable role name (unknown/absent
+    # from the collected account-role inventory) leaves both fields
+    # unknown/None, never coerced to a safe default.
+
+    @classmethod
+    def _resolve_scim_run_as_context(
+        cls,
+        security_integration_records: list[dict],
+        *,
+        account_role_names: set[str],
+        children_index: dict[tuple[str, str], list[tuple[str, str]]],
+        role_signals: dict[tuple[str, str], dict],
+        closure_memo: dict[tuple[str, str], frozenset],
+    ) -> list[dict]:
+        resolved: list[dict] = []
+        for rec in security_integration_records:
+            rec = dict(rec)
+            if rec.get("integration_type") == "scim":
+                run_as_role = rec.get("scim_run_as_role")
+                run_as_upper = run_as_role.strip().upper() if isinstance(run_as_role, str) else None
+                if run_as_upper and run_as_upper in account_role_names:
+                    key = cls._role_key(PRINCIPAL_TYPE_ACCOUNT_ROLE, run_as_upper)
+                    closure = cls._role_closure(key, children_index, closure_memo)
+                    effective = cls._effective_signals_for_closure(closure, role_signals)
+                    rec["scim_run_as_role_tier"] = cls._tier_for_closure(closure, effective)
+                    rec["scim_run_as_role_has_manage_grants"] = effective["has_manage_grants"]
+                else:
+                    # Role name missing/unresolvable against the collected
+                    # account-role inventory — unknown, never guessed.
+                    rec["scim_run_as_role_tier"] = PRIVILEGE_TIER_UNKNOWN
+                    rec["scim_run_as_role_has_manage_grants"] = None
+            resolved.append(rec)
+        return resolved
+
     # ── Message 2: identity/role collection ──────────────────────────────────
 
     @classmethod
@@ -2853,6 +2897,17 @@ class SnowflakeConnector(BaseConnector):
                 family_completeness[COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE] = FAMILY_PARTIAL
             else:
                 family_completeness[COLLECTION_FAMILY_EFFECTIVE_PRIVILEGE] = FAMILY_UNAVAILABLE
+
+            # ── Message 6: resolve SCIM run-as role privilege context —
+            #    additive enrichment, zero extra SQL calls (see method
+            #    docstring above).
+            security_integration_records = self._resolve_scim_run_as_context(
+                security_integration_records,
+                account_role_names={r["role_name"].upper() for r in account_role_records},
+                children_index=children_index,
+                role_signals=role_signals,
+                closure_memo=closure_memo,
+            )
 
             account_record = self._normalize_account(
                 account_id,

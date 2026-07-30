@@ -61,6 +61,7 @@ from app.services.security_rules import auth0 as auth0_rules
 from app.services.security_rules import kubernetes as kubernetes_rules
 from app.services.security_rules import okta as okta_rules
 from app.services.security_rules import entra as entra_rules
+from app.services.security_rules import snowflake as snowflake_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,8 @@ _PROVIDER_RULES = {
     "okta": [okta_rules.evaluate],
     # Entra message 6 of 8: Microsoft Entra ID security findings
     "entra": [entra_rules.evaluate],
+    # Snowflake message 6 of 8: Snowflake security findings
+    "snowflake": [snowflake_rules.evaluate],
 }
 
 
