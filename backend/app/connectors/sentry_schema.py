@@ -1,4 +1,4 @@
-"""Sentry provider schema (Sentry message 1-3 of 8).
+"""Sentry provider schema (Sentry message 1-4 of 8).
 
 Defines the record-type constants, credential validators, and capability
 taxonomy for the Sentry provider. Record types so far:
@@ -44,6 +44,33 @@ taxonomy for the Sentry provider. Record types so far:
                                     issue-alert rules (msg 3) — target
                                     type/stable-ID only, never emails,
                                     webhook URLs, or integration keys.
+  sentry_organization_integration  — one record per installed org
+                                    integration (msg 4) — provider
+                                    category, status, feature tags. Never
+                                    OAuth/access tokens or raw config.
+  sentry_repository                — one record per Sentry-tracked
+                                    repository (msg 4) — provider,
+                                    integration linkage, status. Never
+                                    clone URLs, credentials, or SSH keys.
+  sentry_code_mapping              — one record per repository<->project
+                                    stack-trace path mapping (msg 4) —
+                                    booleans only for stack/source root
+                                    configuration, never raw paths.
+  sentry_ownership_rule            — one record per (project, rule,
+                                    owner) tuple from a project's
+                                    issue-owner ruleset (msg 4) — matcher
+                                    category + resolved team/user stable
+                                    ID only, never the raw rule text or
+                                    an email address.
+
+  NOT implemented this message (see the connector module docstring's
+  message-4 documentation-verification log for why): ``sentry_webhook``
+  (Sentry's only webhook-configuration API, ProjectServiceHooksEndpoint,
+  is marked PRIVATE and feature-gated — not part of the public API
+  surface), ``sentry_release_configuration`` / ``sentry_deployment_configuration``
+  (no stable, published persistent settings endpoint exists — release
+  thresholds are EXPERIMENTAL and releases/deploys list endpoints are
+  historical activity, which this provider never ingests).
 
 SECURITY: this module never handles the auth token itself — only the
 non-secret organization_slug field is validated here. See ``sentry.py``'s
@@ -51,8 +78,6 @@ module docstring for the full sensitive-data boundary.
 
 Future messages (do not implement yet — see the Sentry roadmap in the
 connector module docstring):
-  msg 4 — integrations, webhooks, repositories, ownership rules, releases/
-          deployment settings.
   msg 5 — security/privacy posture, effective access, privileged identities.
   msg 6 — Security Findings.
   msg 7 — exhaustive Change classification, partial-sync/reliability
@@ -77,6 +102,10 @@ SENTRY_METRIC_ALERT_RULE = "sentry_metric_alert_rule"
 SENTRY_METRIC_ALERT_TRIGGER = "sentry_metric_alert_trigger"
 SENTRY_ISSUE_ALERT_RULE = "sentry_issue_alert_rule"
 SENTRY_ALERT_ACTION = "sentry_alert_action"
+SENTRY_ORGANIZATION_INTEGRATION = "sentry_organization_integration"
+SENTRY_REPOSITORY = "sentry_repository"
+SENTRY_CODE_MAPPING = "sentry_code_mapping"
+SENTRY_OWNERSHIP_RULE = "sentry_ownership_rule"
 
 ALL_SENTRY_RECORD_TYPES = frozenset({
     SENTRY_ORGANIZATION,
@@ -90,6 +119,10 @@ ALL_SENTRY_RECORD_TYPES = frozenset({
     SENTRY_METRIC_ALERT_TRIGGER,
     SENTRY_ISSUE_ALERT_RULE,
     SENTRY_ALERT_ACTION,
+    SENTRY_ORGANIZATION_INTEGRATION,
+    SENTRY_REPOSITORY,
+    SENTRY_CODE_MAPPING,
+    SENTRY_OWNERSHIP_RULE,
 })
 
 # ── Family completeness taxonomy (shared by every future collection msg) ───
@@ -182,6 +215,30 @@ COLLECTION_FAMILY_METRIC_ALERT_RULES = "metric_alert_rules"
 COLLECTION_FAMILY_ISSUE_ALERT_RULES = "issue_alert_rules"
 COLLECTION_FAMILY_ALERT_ACTIONS = "alert_actions"
 
+# Message-4 collection families (Sentry message 4 of 8). organization_
+# integrations/repositories/code_mappings are organization-scoped bulk
+# calls; ownership_rules is a bounded per-project walk (one
+# single-object GET per already-collected project — the endpoint is not
+# a list, so message-1's ``paginate_sentry`` does not apply to it).
+#
+# webhooks / release_configuration / deployment_configuration are always
+# reported UNSUPPORTED — never an HTTP call — because current official
+# Sentry documentation and source confirm no stable, published,
+# organization-scoped persistent-configuration endpoint exists for any
+# of the three: the only webhook-configuration API
+# (``ProjectServiceHooksEndpoint``) is marked PRIVATE and feature-gated;
+# the only persistent release-configuration-shaped API (release
+# thresholds) is marked EXPERIMENTAL; and release/deploy LIST endpoints
+# are historical activity, which this provider never ingests. See the
+# connector module docstring's message-4 documentation-verification log.
+COLLECTION_FAMILY_ORGANIZATION_INTEGRATIONS = "organization_integrations"
+COLLECTION_FAMILY_REPOSITORIES = "repositories"
+COLLECTION_FAMILY_CODE_MAPPINGS = "code_mappings"
+COLLECTION_FAMILY_OWNERSHIP_RULES = "ownership_rules"
+COLLECTION_FAMILY_WEBHOOKS = "webhooks"
+COLLECTION_FAMILY_RELEASE_CONFIGURATION = "release_configuration"
+COLLECTION_FAMILY_DEPLOYMENT_CONFIGURATION = "deployment_configuration"
+
 COLLECTION_FAMILIES: tuple[str, ...] = (
     COLLECTION_FAMILY_PROJECTS,
     COLLECTION_FAMILY_TEAMS,
@@ -191,11 +248,35 @@ COLLECTION_FAMILIES: tuple[str, ...] = (
     COLLECTION_FAMILY_METRIC_ALERT_RULES,
     COLLECTION_FAMILY_ISSUE_ALERT_RULES,
     COLLECTION_FAMILY_ALERT_ACTIONS,
+    COLLECTION_FAMILY_ORGANIZATION_INTEGRATIONS,
+    COLLECTION_FAMILY_REPOSITORIES,
+    COLLECTION_FAMILY_CODE_MAPPINGS,
+    COLLECTION_FAMILY_OWNERSHIP_RULES,
+    COLLECTION_FAMILY_WEBHOOKS,
+    COLLECTION_FAMILY_RELEASE_CONFIGURATION,
+    COLLECTION_FAMILY_DEPLOYMENT_CONFIGURATION,
 )
+
+# Collection families ALWAYS reported unsupported (message 4) — see the
+# doc-comment above the message-4 collection-family constants for why.
+COLLECTION_FAMILIES_ALWAYS_UNSUPPORTED: frozenset[str] = frozenset({
+    COLLECTION_FAMILY_WEBHOOKS,
+    COLLECTION_FAMILY_RELEASE_CONFIGURATION,
+    COLLECTION_FAMILY_DEPLOYMENT_CONFIGURATION,
+})
 
 # Families that are structurally unsupported this message — always
 # CAPABILITY_UNSUPPORTED, never an HTTP call. See the module docstring
 # comment above ``CAPABILITY_FAMILY_PROJECTS`` for the full rationale.
+# ``CAPABILITY_FAMILY_OWNERSHIP_RULES`` stays here permanently (like
+# ``CAPABILITY_FAMILY_ISSUE_ALERTS``): the message-1 probe sweep is
+# organization-scoped and single-page-only by design, and ownership
+# rules are a genuinely project-scoped, single-object (non-list)
+# resource — there is no org-scoped "probe" shape for it to ever call.
+# Real per-project collection exists starting message 4 (see
+# ``COLLECTION_FAMILY_OWNERSHIP_RULES`` above) and its completeness
+# overrides this stale probe-level value post-collection, exactly like
+# message-3 already does for ``CAPABILITY_FAMILY_ISSUE_ALERTS``.
 STRUCTURALLY_UNSUPPORTED_FAMILIES: frozenset[str] = frozenset({
     CAPABILITY_FAMILY_ISSUE_ALERTS,
     CAPABILITY_FAMILY_WEBHOOKS,
@@ -894,3 +975,145 @@ def categorize_owner(raw_owner: object) -> tuple[str, "Optional[str]"]:
         if prefix == "user" and ident:
             return OWNER_TYPE_USER, ident
     return OWNER_TYPE_UNKNOWN, None
+
+
+# ── Object status taxonomy (Sentry message 4 of 8) ──────────────────────────
+#
+# Confirmed via Sentry source (sentry/integrations/api/serializers/models/
+# integration.py: ``"status": obj.get_status_display()``, and
+# sentry/api/endpoints/organization_repository_details.py) that
+# integrations and repositories share the SAME ``ObjectStatus`` enum
+# already confirmed for projects in message 2 (active/disabled/
+# pending_deletion/deletion_in_progress) — reuses PROJECT_STATUSES rather
+# than redefining an identical frozenset under a new name.
+
+OBJECT_STATUS_ACTIVE = PROJECT_STATUS_ACTIVE
+OBJECT_STATUS_DISABLED = PROJECT_STATUS_DISABLED
+OBJECT_STATUS_PENDING_DELETION = PROJECT_STATUS_PENDING_DELETION
+OBJECT_STATUS_DELETION_IN_PROGRESS = PROJECT_STATUS_DELETION_IN_PROGRESS
+OBJECT_STATUS_UNKNOWN = PROJECT_STATUS_UNKNOWN
+
+
+def categorize_object_status(raw_status: object) -> str:
+    """Map a raw Sentry ``ObjectStatus`` display string (shared by
+    integrations, repositories, and projects) to a bounded category.
+    Missing/unrecognized is UNKNOWN — never assumed active."""
+    return categorize_project_status(raw_status)
+
+
+# ── Integration/repository provider taxonomy (Sentry message 4 of 8) ───────
+#
+# Sentry's integration/repository ``provider`` identifiers are
+# implementation-defined slugs (e.g. "github", "gitlab", "vsts" for Azure
+# DevOps, sometimes prefixed "integrations:github" for legacy plugin-vs-
+# integration distinction) — this connector matches by substring rather
+# than exact value so both prefixed and unprefixed forms categorize
+# correctly, mirroring the message-3 issue-alert-action-id categorization
+# precedent.
+
+PROVIDER_CATEGORY_GITHUB = "github"
+PROVIDER_CATEGORY_GITLAB = "gitlab"
+PROVIDER_CATEGORY_BITBUCKET = "bitbucket"
+PROVIDER_CATEGORY_AZURE_DEVOPS = "azure_devops"
+PROVIDER_CATEGORY_SLACK = "slack"
+PROVIDER_CATEGORY_JIRA = "jira"
+PROVIDER_CATEGORY_VERCEL = "vercel"
+PROVIDER_CATEGORY_PAGERDUTY = "pagerduty"
+PROVIDER_CATEGORY_OPSGENIE = "opsgenie"
+PROVIDER_CATEGORY_MSTEAMS = "msteams"
+PROVIDER_CATEGORY_DISCORD = "discord"
+PROVIDER_CATEGORY_OTHER = "other"
+PROVIDER_CATEGORY_UNKNOWN = "unknown"
+
+_PROVIDER_SUBSTRING_MAP: tuple[tuple[str, str], ...] = (
+    ("github", PROVIDER_CATEGORY_GITHUB),
+    ("gitlab", PROVIDER_CATEGORY_GITLAB),
+    ("bitbucket", PROVIDER_CATEGORY_BITBUCKET),
+    ("vsts", PROVIDER_CATEGORY_AZURE_DEVOPS),
+    ("azure", PROVIDER_CATEGORY_AZURE_DEVOPS),
+    ("slack", PROVIDER_CATEGORY_SLACK),
+    ("jira", PROVIDER_CATEGORY_JIRA),
+    ("vercel", PROVIDER_CATEGORY_VERCEL),
+    ("pagerduty", PROVIDER_CATEGORY_PAGERDUTY),
+    ("opsgenie", PROVIDER_CATEGORY_OPSGENIE),
+    ("msteams", PROVIDER_CATEGORY_MSTEAMS),
+    ("discord", PROVIDER_CATEGORY_DISCORD),
+)
+
+
+def categorize_provider(raw_provider: object) -> str:
+    """Map a raw Sentry integration/repository provider identifier to a
+    bounded category via substring matching. Missing/non-string is
+    UNKNOWN; a real but unrecognized provider string is OTHER."""
+    if not isinstance(raw_provider, str) or not raw_provider.strip():
+        return PROVIDER_CATEGORY_UNKNOWN
+    candidate = raw_provider.strip().lower()
+    for needle, category in _PROVIDER_SUBSTRING_MAP:
+        if needle in candidate:
+            return category
+    return PROVIDER_CATEGORY_OTHER
+
+
+# ── Ownership-rule matcher taxonomy (Sentry message 4 of 8) ─────────────────
+#
+# Confirmed via Sentry source (sentry/issues/ownership/grammar.py):
+# matcher type constants URL="url", PATH="path", MODULE="module",
+# CODEOWNERS="codeowners", plus a dynamic ``tags.<tagname>`` prefix for
+# event-tag matchers — this connector categorizes any ``tags.`` prefix as
+# TAG (the specific tag name is discarded, matching the "bounded
+# category over raw value" boundary applied throughout this module).
+
+MATCHER_CATEGORY_URL = "url"
+MATCHER_CATEGORY_PATH = "path"
+MATCHER_CATEGORY_MODULE = "module"
+MATCHER_CATEGORY_CODEOWNERS = "codeowners"
+MATCHER_CATEGORY_TAG = "tag"
+MATCHER_CATEGORY_UNKNOWN = "unknown"
+
+_MATCHER_EXACT_MAP = {
+    "url": MATCHER_CATEGORY_URL,
+    "path": MATCHER_CATEGORY_PATH,
+    "module": MATCHER_CATEGORY_MODULE,
+    "codeowners": MATCHER_CATEGORY_CODEOWNERS,
+}
+
+
+def categorize_matcher(raw_matcher_type: object) -> str:
+    """Map a raw ownership-rule matcher type string to a bounded
+    category. Missing/unrecognized is UNKNOWN — never guessed."""
+    if isinstance(raw_matcher_type, str):
+        candidate = raw_matcher_type.strip().lower()
+        if candidate in _MATCHER_EXACT_MAP:
+            return _MATCHER_EXACT_MAP[candidate]
+        if candidate.startswith("tags."):
+            return MATCHER_CATEGORY_TAG
+    return MATCHER_CATEGORY_UNKNOWN
+
+
+# ── Ownership auto-assignment taxonomy (Sentry message 4 of 8) ─────────────
+#
+# Confirmed via Sentry source (sentry/api/serializers/models/
+# projectownership.py): the API returns one of exactly three
+# human-readable ``autoAssignment`` display strings, derived from two
+# underlying booleans (``auto_assignment`` / ``suspect_committer_auto_
+# assignment``) that this connector never re-derives independently —
+# only the documented display string is categorized.
+
+AUTO_ASSIGNMENT_SUSPECT_COMMITS = "suspect_commits"
+AUTO_ASSIGNMENT_ISSUE_OWNER = "issue_owner"
+AUTO_ASSIGNMENT_OFF = "off"
+AUTO_ASSIGNMENT_UNKNOWN = "unknown"
+
+_AUTO_ASSIGNMENT_MAP = {
+    "auto assign to suspect commits": AUTO_ASSIGNMENT_SUSPECT_COMMITS,
+    "auto assign to issue owner": AUTO_ASSIGNMENT_ISSUE_OWNER,
+    "turn off auto-assignment": AUTO_ASSIGNMENT_OFF,
+}
+
+
+def categorize_auto_assignment(raw_auto_assignment: object) -> str:
+    if isinstance(raw_auto_assignment, str):
+        candidate = raw_auto_assignment.strip().lower()
+        if candidate in _AUTO_ASSIGNMENT_MAP:
+            return _AUTO_ASSIGNMENT_MAP[candidate]
+    return AUTO_ASSIGNMENT_UNKNOWN

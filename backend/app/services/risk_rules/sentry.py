@@ -1,4 +1,4 @@
-"""Sentry risk classification rules (Sentry messages 1-3 of 8).
+"""Sentry risk classification rules (Sentry messages 1-4 of 8).
 
 This module exists to give every ``sentry_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -36,12 +36,22 @@ Classification here is deliberately structural, not incident-level:
   deterministically known; an unknown direction is Low/diagnostic rather
   than guessed.
 
-Future messages (4-7) will add classifiers for integrations, webhooks,
-repositories, releases, and privileged-access posture as those record
-types are introduced — this module's dispatcher already fails safely
-into a generic low-severity message for any ``sentry_*`` record type
-that does not have a classifier yet, so this module continues to work
-unmodified as an incremental target for those insertions.
+- Integrations/repositories/code mappings/ownership rules (message 4):
+  an integration or repository being disabled/removed is Medium (routing/
+  code-context coverage may be lost); routine addition/rename is Low. A
+  code mapping losing its stack/source-root configuration is Medium
+  (stack-trace-to-source linkage degrades). An ownership rule's owner
+  team/member changing, or the rule/config disappearing, is Medium — this
+  message never claims issues will definitely go unassigned (message 5+
+  owns effective-access conclusions), only that the routing evidence
+  changed.
+
+Future messages (5-7) will add classifiers for privileged-access posture
+as those record types are introduced — this module's dispatcher already
+fails safely into a generic low-severity message for any ``sentry_*``
+record type that does not have a classifier yet, so this module
+continues to work unmodified as an incremental target for those
+insertions.
 """
 
 from __future__ import annotations
@@ -55,13 +65,17 @@ from app.connectors.sentry_schema import (
     ORG_ROLE_OWNER,
     SENTRY_ALERT_ACTION,
     SENTRY_API_CAPABILITY,
+    SENTRY_CODE_MAPPING,
     SENTRY_ISSUE_ALERT_RULE,
     SENTRY_MEMBER,
     SENTRY_METRIC_ALERT_RULE,
     SENTRY_METRIC_ALERT_TRIGGER,
     SENTRY_ORGANIZATION,
+    SENTRY_ORGANIZATION_INTEGRATION,
+    SENTRY_OWNERSHIP_RULE,
     SENTRY_PROJECT,
     SENTRY_PROJECT_TEAM_ASSIGNMENT,
+    SENTRY_REPOSITORY,
     SENTRY_TEAM,
     SENTRY_TEAM_MEMBERSHIP,
     THRESHOLD_TYPE_ABOVE,
@@ -375,6 +389,94 @@ def _classify_alert_action_change(change: object) -> tuple[str, str]:
     return "low", "A Sentry alert notification action configuration field changed."
 
 
+def _classify_organization_integration_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry organization integration was installed."
+    if ct == "removed":
+        return "medium", "A Sentry organization integration is no longer visible to ConfigTrace — routing/coverage through it may be lost."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status_category":
+        nv = _get(change, "new_value")
+        if nv in ("disabled", "pending_deletion", "deletion_in_progress"):
+            return "medium", "A Sentry organization integration was disabled or is being removed."
+        if nv == "active":
+            return "low", "A Sentry organization integration was re-enabled."
+        return "low", "A Sentry organization integration's status could no longer be determined."
+    if fp == "name":
+        return "low", "A Sentry organization integration's display name changed."
+    if fp == "provider_category":
+        return "medium", "A Sentry organization integration's provider changed."
+    return "low", "A Sentry organization integration configuration field changed."
+
+
+def _classify_repository_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry-tracked repository was added."
+    if ct == "removed":
+        return "low", "A Sentry-tracked repository is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "status_category":
+        nv = _get(change, "new_value")
+        if nv in ("disabled", "pending_deletion", "deletion_in_progress"):
+            return "medium", "A Sentry-tracked repository was disabled or is being removed."
+        return "low", "A Sentry-tracked repository's status changed."
+    if fp == "integration_id":
+        return "medium", "A Sentry-tracked repository's owning integration changed — verify the new integration is still trusted."
+    if fp == "name":
+        return "low", "A Sentry-tracked repository's display name changed."
+    return "low", "A Sentry repository configuration field changed."
+
+
+def _classify_code_mapping_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry code mapping was added."
+    if ct == "removed":
+        return "medium", "A Sentry code mapping was removed — stack-trace-to-source linkage for this project/repository may be lost."
+
+    fp = (_get(change, "field_path") or "")
+    if fp in ("repository_id", "project_id"):
+        return "medium", "A Sentry code mapping's repository or project target changed."
+    if fp in ("stack_root_configured", "source_root_configured"):
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "A Sentry code mapping's stack/source root configuration was cleared."
+        return "low", "A Sentry code mapping's stack/source root configuration changed."
+    if fp == "default_branch_configured":
+        return "low", "A Sentry code mapping's default branch configuration changed."
+    return "low", "A Sentry code mapping configuration field changed."
+
+
+def _classify_ownership_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A new Sentry ownership rule was added."
+    if ct == "removed":
+        return (
+            "medium",
+            "A Sentry ownership rule was removed. This does not by itself prove issues will go "
+            "unassigned — message 5 owns effective-access conclusions.",
+        )
+
+    fp = (_get(change, "field_path") or "")
+    if fp in ("owner_type_category", "owner_id"):
+        return "medium", "A Sentry ownership rule's owner team/member changed."
+    if fp == "matcher_category":
+        return "low", "A Sentry ownership rule's matcher type changed."
+    if fp == "is_active":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "A Sentry project's ownership configuration was deactivated."
+        return "low", "A Sentry project's ownership configuration was activated."
+    if fp in ("fallthrough", "auto_assignment_category"):
+        return "low", "A Sentry project's ownership fallback configuration changed."
+    return "low", "A Sentry ownership rule configuration field changed."
+
+
 def classify_sentry_change(change: object) -> tuple[str, str]:
     """Route a Sentry Change to its record-type classifier.
 
@@ -409,4 +511,12 @@ def classify_sentry_change(change: object) -> tuple[str, str]:
         return _classify_issue_alert_rule_change(change)
     if record_type == SENTRY_ALERT_ACTION:
         return _classify_alert_action_change(change)
+    if record_type == SENTRY_ORGANIZATION_INTEGRATION:
+        return _classify_organization_integration_change(change)
+    if record_type == SENTRY_REPOSITORY:
+        return _classify_repository_change(change)
+    if record_type == SENTRY_CODE_MAPPING:
+        return _classify_code_mapping_change(change)
+    if record_type == SENTRY_OWNERSHIP_RULE:
+        return _classify_ownership_rule_change(change)
     return "low", "A Sentry configuration field changed."

@@ -4120,6 +4120,38 @@ _SENTRY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "target_id",
         "integration_id",
     ),
+    # Sentry message 4 of 8 — integrations, repositories, code mappings,
+    # ownership rules. Never tracks raw config/URLs/credentials — see the
+    # connector's sensitive-data boundary. ``feature_categories`` and
+    # ``out_of_date`` are informational-only (derived/volatile), not
+    # tracked — a feature-flag rollout or GitHub-permission drift
+    # shouldn't itself generate a noisy Change.
+    "sentry_organization_integration": (
+        "name",
+        "provider_category",
+        "status_category",
+    ),
+    "sentry_repository": (
+        "name",
+        "provider_category",
+        "status_category",
+        "integration_id",
+    ),
+    "sentry_code_mapping": (
+        "repository_id",
+        "project_id",
+        "stack_root_configured",
+        "source_root_configured",
+        "default_branch_configured",
+    ),
+    "sentry_ownership_rule": (
+        "matcher_category",
+        "owner_type_category",
+        "owner_id",
+        "is_active",
+        "fallthrough",
+        "auto_assignment_category",
+    ),
 }
 
 
@@ -5046,6 +5078,26 @@ def _build_provider_metadata(
         metadata["target_type_category"] = (
             context_record.get("target_type_category") or record.get("target_type_category") or ""
         )
+
+    # Sentry organization integrations/repositories/code mappings/
+    # ownership rules (message 4 of 8) — never includes OAuth/access
+    # tokens, webhook URLs/secrets, repository credentials, or raw
+    # ownership-rule text.
+    if record.get("record_type") == "sentry_organization_integration":
+        metadata["integration_id"] = context_record.get("integration_id") or record.get("integration_id") or ""
+        metadata["provider_category"] = context_record.get("provider_category") or record.get("provider_category") or ""
+        metadata["status_category"] = context_record.get("status_category") or record.get("status_category") or ""
+    if record.get("record_type") == "sentry_repository":
+        metadata["repository_id"] = context_record.get("repository_id") or record.get("repository_id") or ""
+        metadata["provider_category"] = context_record.get("provider_category") or record.get("provider_category") or ""
+        metadata["integration_id"] = context_record.get("integration_id") or record.get("integration_id") or ""
+    if record.get("record_type") == "sentry_code_mapping":
+        metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
+        metadata["repository_id"] = context_record.get("repository_id") or record.get("repository_id") or ""
+    if record.get("record_type") == "sentry_ownership_rule":
+        metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
+        metadata["owner_type_category"] = context_record.get("owner_type_category") or record.get("owner_type_category") or ""
+        metadata["matcher_category"] = context_record.get("matcher_category") or record.get("matcher_category") or ""
 
     return metadata
 

@@ -196,12 +196,17 @@ from app.connectors.sentry_schema import (
     CAPABILITY_UNAVAILABLE,
     CAPABILITY_UNKNOWN,
     CAPABILITY_UNSUPPORTED,
+    COLLECTION_FAMILIES_ALWAYS_UNSUPPORTED,
     COLLECTION_FAMILY_ALERT_ACTIONS,
+    COLLECTION_FAMILY_CODE_MAPPINGS,
     COLLECTION_FAMILY_ISSUE_ALERT_RULES,
     COLLECTION_FAMILY_MEMBERS,
     COLLECTION_FAMILY_METRIC_ALERT_RULES,
+    COLLECTION_FAMILY_ORGANIZATION_INTEGRATIONS,
+    COLLECTION_FAMILY_OWNERSHIP_RULES,
     COLLECTION_FAMILY_PROJECT_TEAM_ASSIGNMENTS,
     COLLECTION_FAMILY_PROJECTS,
+    COLLECTION_FAMILY_REPOSITORIES,
     COLLECTION_FAMILY_TEAM_MEMBERSHIPS,
     COLLECTION_FAMILY_TEAMS,
     FAMILY_COMPLETE,
@@ -210,30 +215,41 @@ from app.connectors.sentry_schema import (
     FAMILY_UNAVAILABLE,
     SENTRY_ALERT_ACTION,
     SENTRY_API_CAPABILITY,
+    SENTRY_CODE_MAPPING,
     SENTRY_ISSUE_ALERT_RULE,
     SENTRY_MEMBER,
     SENTRY_METRIC_ALERT_RULE,
     SENTRY_METRIC_ALERT_TRIGGER,
     SENTRY_ORGANIZATION,
+    SENTRY_ORGANIZATION_INTEGRATION,
+    SENTRY_OWNERSHIP_RULE,
     SENTRY_PROJECT,
     SENTRY_PROJECT_TEAM_ASSIGNMENT,
+    SENTRY_REPOSITORY,
     SENTRY_TEAM,
     SENTRY_TEAM_MEMBERSHIP,
     STRUCTURALLY_UNSUPPORTED_FAMILIES,
+    OWNER_TYPE_TEAM,
+    OWNER_TYPE_UNKNOWN,
+    OWNER_TYPE_USER,
     categorize_aggregate,
+    categorize_auto_assignment,
     categorize_dataset,
     categorize_detection_type,
     categorize_environment,
     categorize_issue_action_id,
     categorize_issue_alert_status,
     categorize_match_type,
+    categorize_matcher,
     categorize_member_status,
     categorize_metric_action_type,
     categorize_metric_alert_status,
+    categorize_object_status,
     categorize_org_role,
     categorize_owner,
     categorize_platform,
     categorize_project_status,
+    categorize_provider,
     categorize_target_type,
     categorize_team_role,
     categorize_threshold_type,
@@ -279,6 +295,14 @@ _MAX_ISSUE_ALERT_RULES_PER_PROJECT = 1_000
 _MAX_PROJECTS_FOR_ISSUE_ALERT_ENUMERATION = 20_000
 _MAX_TOTAL_ISSUE_ALERT_RULES = 50_000
 _MAX_TOTAL_ALERT_ACTIONS = 100_000
+
+# Bounded collection caps (Sentry message 4 of 8) — same conventions.
+_MAX_ORGANIZATION_INTEGRATIONS = 5_000
+_MAX_REPOSITORIES = 10_000
+_MAX_CODE_MAPPINGS = 25_000
+_MAX_PROJECTS_FOR_OWNERSHIP_ENUMERATION = 20_000
+_MAX_OWNERSHIP_RULES_PER_PROJECT = 5_000
+_MAX_TOTAL_OWNERSHIP_RULES = 50_000
 
 # 429/5xx retry bounds — bounded exponential backoff with jitter, mirroring
 # the Okta/Entra/Snowflake reliability pattern.
@@ -1559,6 +1583,360 @@ class SentryConnector(BaseConnector):
         action_records.sort(key=lambda r: r["record_id"])
         return rule_records, action_records, completeness, status_by_project
 
+    # ── Record normalizers (Sentry message 4 of 8) ───────────────────────
+    #
+    # Never persist OAuth/access/refresh tokens, client secrets, webhook
+    # URLs/secrets, repository clone URLs/credentials/SSH keys, raw
+    # ownership-rule text, or raw integration config blobs — see the
+    # module docstring's sensitive-data boundary.
+
+    @classmethod
+    def _normalize_organization_integration(cls, organization_id: str, raw: dict) -> Optional[dict]:
+        integration_id = cls._stable_entity_id(raw.get("id"))
+        if integration_id is None:
+            return None
+
+        name = raw.get("name")
+        raw_provider = raw.get("provider")
+        provider_key = raw_provider.get("key") if isinstance(raw_provider, dict) else None
+        raw_status = raw.get("organizationIntegrationStatus")
+        if not isinstance(raw_status, str):
+            raw_status = raw.get("status")
+        raw_external_id = raw.get("externalId")
+        raw_features = raw_provider.get("features") if isinstance(raw_provider, dict) else None
+        feature_categories = (
+            sorted({f.strip()[:50] for f in raw_features if isinstance(f, str) and f.strip()})
+            if isinstance(raw_features, list)
+            else None
+        )
+        raw_out_of_date = raw.get("outOfDate")
+
+        return {
+            "record_type": SENTRY_ORGANIZATION_INTEGRATION,
+            "record_id": f"{organization_id}/organization_integration/{integration_id}",
+            "provider_resource_id": f"integrations/{integration_id}",
+            "organization_id": organization_id,
+            "integration_id": integration_id,
+            "name": name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None,
+            "provider_category": categorize_provider(provider_key),
+            "status_category": categorize_object_status(raw_status),
+            "external_id": (
+                raw_external_id.strip()[:_MAX_STR_LEN]
+                if isinstance(raw_external_id, str) and raw_external_id.strip()
+                else None
+            ),
+            "feature_categories": feature_categories,
+            "out_of_date": raw_out_of_date if isinstance(raw_out_of_date, bool) else None,
+        }
+
+    @classmethod
+    def _normalize_repository(cls, organization_id: str, raw: dict) -> Optional[dict]:
+        repo_id = cls._stable_entity_id(raw.get("id"))
+        if repo_id is None:
+            return None
+
+        name = raw.get("name")
+        raw_provider = raw.get("provider")
+        provider_id = raw_provider.get("id") if isinstance(raw_provider, dict) else None
+        integration_id = cls._stable_entity_id(raw.get("integrationId"))
+        raw_external_id = raw.get("externalId")
+        date_created = raw.get("dateCreated")
+
+        return {
+            "record_type": SENTRY_REPOSITORY,
+            "record_id": f"{organization_id}/repository/{repo_id}",
+            "provider_resource_id": f"repos/{repo_id}",
+            "organization_id": organization_id,
+            "repository_id": repo_id,
+            "name": name.strip()[:_MAX_STR_LEN] if isinstance(name, str) and name.strip() else None,
+            "provider_category": categorize_provider(provider_id),
+            "status_category": categorize_object_status(raw.get("status")),
+            "integration_id": integration_id,
+            "external_id": (
+                raw_external_id.strip()[:_MAX_STR_LEN]
+                if isinstance(raw_external_id, str) and raw_external_id.strip()
+                else None
+            ),
+            "date_created": date_created if isinstance(date_created, str) else None,
+        }
+
+    @classmethod
+    def _normalize_code_mapping(cls, organization_id: str, raw: dict) -> Optional[dict]:
+        mapping_id = cls._stable_entity_id(raw.get("id"))
+        if mapping_id is None:
+            return None
+
+        project_id = cls._stable_entity_id(raw.get("projectId"))
+        repository_id = cls._stable_entity_id(raw.get("repoId"))
+        integration_id = cls._stable_entity_id(raw.get("integrationId"))
+        raw_auto_generated = raw.get("automaticallyGenerated")
+
+        return {
+            "record_type": SENTRY_CODE_MAPPING,
+            "record_id": f"{organization_id}/code_mapping/{mapping_id}",
+            "provider_resource_id": f"code-mappings/{mapping_id}",
+            "organization_id": organization_id,
+            "mapping_id": mapping_id,
+            "project_id": project_id,
+            "repository_id": repository_id,
+            "integration_id": integration_id,
+            "stack_root_configured": bool(raw.get("stackRoot")) if isinstance(raw.get("stackRoot"), str) else False,
+            "source_root_configured": bool(raw.get("sourceRoot")) if isinstance(raw.get("sourceRoot"), str) else False,
+            "default_branch_configured": bool(raw.get("defaultBranch")) if isinstance(raw.get("defaultBranch"), str) else False,
+            "automatically_generated": raw_auto_generated if isinstance(raw_auto_generated, bool) else None,
+        }
+
+    @staticmethod
+    def _categorize_ownership_owner(raw_owner: dict) -> tuple[str, Optional[str]]:
+        """Return ``(owner_type_category, owner_stable_id)`` from a raw
+        ownership-rule owner dict (``{"type": "team"/"user", "name": str,
+        "id": Optional[str]}``). Never reads ``name`` — it may be a raw
+        identifier (username or email) rather than a stable ID. Returns
+        ``(OWNER_TYPE_UNKNOWN, None)`` if the owner is unresolved (no
+        ``id``) or the type is unrecognized."""
+        raw_type = raw_owner.get("type")
+        raw_id = raw_owner.get("id")
+        if isinstance(raw_id, (str, int)) and str(raw_id).strip():
+            if raw_type == "team":
+                return OWNER_TYPE_TEAM, str(raw_id).strip()
+            if raw_type == "user":
+                return OWNER_TYPE_USER, str(raw_id).strip()
+        return OWNER_TYPE_UNKNOWN, None
+
+    @classmethod
+    def _normalize_ownership_rules(cls, organization_id: str, project_id: str, raw: dict) -> list[dict]:
+        """Normalize a project's full ``ProjectOwnership`` response into
+        zero or more ``sentry_ownership_rule`` records — one per (rule,
+        owner) pair, preserving Sentry's own rule order (first-match
+        semantics) via ``rule_index``.
+
+        Never reads the ``raw`` ownership-text field — only the already-
+        parsed ``schema.rules`` array. A rule with zero resolvable owners
+        still emits one record (owner_index=0, owner fields unknown) so
+        the rule's existence is not silently dropped.
+        """
+        records: list[dict] = []
+        raw_is_active = raw.get("isActive")
+        raw_fallthrough = raw.get("fallthrough")
+        auto_assignment_category = categorize_auto_assignment(raw.get("autoAssignment"))
+        is_active = raw_is_active if isinstance(raw_is_active, bool) else None
+        fallthrough = raw_fallthrough if isinstance(raw_fallthrough, bool) else None
+
+        raw_schema = raw.get("schema")
+        raw_rules = raw_schema.get("rules") if isinstance(raw_schema, dict) else None
+        if not isinstance(raw_rules, list):
+            return records
+
+        for rule_index, raw_rule in enumerate(raw_rules):
+            if not isinstance(raw_rule, dict):
+                continue
+            raw_matcher = raw_rule.get("matcher")
+            matcher_type = raw_matcher.get("type") if isinstance(raw_matcher, dict) else None
+            matcher_category = categorize_matcher(matcher_type)
+
+            raw_owners = raw_rule.get("owners")
+            owners_to_process = raw_owners if isinstance(raw_owners, list) and raw_owners else [{}]
+
+            for owner_index, raw_owner in enumerate(owners_to_process):
+                owner_type_category, owner_id = cls._categorize_ownership_owner(
+                    raw_owner if isinstance(raw_owner, dict) else {}
+                )
+                records.append({
+                    "record_type": SENTRY_OWNERSHIP_RULE,
+                    "record_id": f"{organization_id}/ownership_rule/{project_id}/{rule_index}/{owner_index}",
+                    "provider_resource_id": f"ownership/{project_id}/{rule_index}/{owner_index}",
+                    "organization_id": organization_id,
+                    "project_id": project_id,
+                    "rule_index": rule_index,
+                    "owner_index": owner_index,
+                    "matcher_category": matcher_category,
+                    "owner_type_category": owner_type_category,
+                    "owner_id": owner_id,
+                    "is_active": is_active,
+                    "fallthrough": fallthrough,
+                    "auto_assignment_category": auto_assignment_category,
+                })
+        return records
+
+    # ── Family collection (Sentry message 4 of 8) ────────────────────────
+
+    @classmethod
+    def _collect_organization_integrations(
+        cls, client: httpx.Client, slug: str, organization_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, f"/organizations/{slug}/integrations/",
+            params=_PAGE_SIZE_PARAMS, cap=_MAX_ORGANIZATION_INTEGRATIONS, _sleep_fn=_sleep_fn,
+        )
+        records: list[dict] = []
+        seen_ids: set = set()
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_organization_integration(organization_id, raw)
+            if rec is None or rec["integration_id"] in seen_ids:
+                continue
+            seen_ids.add(rec["integration_id"])
+            records.append(rec)
+        records.sort(key=lambda r: r["integration_id"])
+        return records, completeness
+
+    @classmethod
+    def _collect_repositories(
+        cls, client: httpx.Client, slug: str, organization_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, f"/organizations/{slug}/repos/",
+            params=_PAGE_SIZE_PARAMS, cap=_MAX_REPOSITORIES, _sleep_fn=_sleep_fn,
+        )
+        records: list[dict] = []
+        seen_ids: set = set()
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_repository(organization_id, raw)
+            if rec is None or rec["repository_id"] in seen_ids:
+                continue
+            seen_ids.add(rec["repository_id"])
+            records.append(rec)
+        records.sort(key=lambda r: r["repository_id"])
+        return records, completeness
+
+    @classmethod
+    def _collect_code_mappings(
+        cls, client: httpx.Client, slug: str, organization_id: str,
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str]:
+        raw_items, completeness = cls._collect_family(
+            client, f"/organizations/{slug}/code-mappings/",
+            params=_PAGE_SIZE_PARAMS, cap=_MAX_CODE_MAPPINGS, _sleep_fn=_sleep_fn,
+        )
+        records: list[dict] = []
+        seen_ids: set = set()
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            rec = cls._normalize_code_mapping(organization_id, raw)
+            if rec is None or rec["mapping_id"] in seen_ids:
+                continue
+            seen_ids.add(rec["mapping_id"])
+            records.append(rec)
+        records.sort(key=lambda r: r["mapping_id"])
+        return records, completeness
+
+    @classmethod
+    def _collect_ownership_rules(
+        cls, client: httpx.Client, slug: str, organization_id: str, project_records: list[dict],
+        *, _sleep_fn: Callable[[float], None] = None,
+    ) -> tuple[list[dict], str, dict]:
+        """Collect ownership rules via a bounded per-PROJECT walk.
+
+        Unlike every other message-4 family, this endpoint
+        (``GET /projects/{org}/{project}/ownership/``) returns a SINGLE
+        object per project, not a list — so this walk calls
+        ``call_sentry`` directly instead of ``_collect_family``/
+        ``paginate_sentry`` (which assume a JSON array response).
+
+        A 404 means the project has no ownership configuration at all —
+        trivially complete with zero rules, never denied/unavailable. A
+        response with non-empty ``raw`` ownership text but no parsed
+        ``schema`` is treated as PARTIAL for that project (evidence of
+        rules exists but they could not be collected into structured
+        records) — never silently reported as zero rules.
+
+        Returns ``(records, completeness, status_by_project_id)``.
+        """
+        if not project_records:
+            return [], FAMILY_COMPLETE, {}
+
+        projects_to_walk = project_records[:_MAX_PROJECTS_FOR_OWNERSHIP_ENUMERATION]
+        truncated_project_list = len(project_records) > len(projects_to_walk)
+
+        records: list[dict] = []
+        status_by_project: dict = {}
+        seen_record_ids: set = set()
+        succeeded = 0
+        denied = 0
+        other_failed = 0
+        malformed = 0
+        cap_hit = False
+
+        for project_rec in projects_to_walk:
+            project_id = project_rec["project_id"]
+            project_slug = project_rec.get("slug")
+            if not isinstance(project_slug, str) or not project_slug.strip():
+                status_by_project[project_id] = FAMILY_UNAVAILABLE
+                other_failed += 1
+                continue
+
+            outcome = call_sentry(client, f"/projects/{slug}/{project_slug}/ownership/", _sleep_fn=_sleep_fn)
+            if not outcome.ok:
+                if outcome.category == CATEGORY_NOT_FOUND:
+                    status_by_project[project_id] = FAMILY_COMPLETE
+                    succeeded += 1
+                    continue
+                if outcome.category == CATEGORY_PERMISSION_DENIED:
+                    status_by_project[project_id] = FAMILY_DENIED
+                    denied += 1
+                    continue
+                status_by_project[project_id] = FAMILY_UNAVAILABLE
+                other_failed += 1
+                continue
+
+            try:
+                raw = outcome.response.json()
+            except ValueError:
+                status_by_project[project_id] = FAMILY_UNAVAILABLE
+                other_failed += 1
+                continue
+            if not isinstance(raw, dict):
+                status_by_project[project_id] = FAMILY_UNAVAILABLE
+                other_failed += 1
+                continue
+
+            raw_text = raw.get("raw")
+            raw_schema = raw.get("schema")
+            if isinstance(raw_text, str) and raw_text.strip() and not isinstance(raw_schema, dict):
+                # Evidence of configured rules exists (raw text) but they
+                # could not be parsed into structured records — PARTIAL,
+                # never silently zero.
+                status_by_project[project_id] = FAMILY_PARTIAL
+                malformed += 1
+                continue
+
+            succeeded += 1
+            status_by_project[project_id] = FAMILY_COMPLETE
+            project_rules = cls._normalize_ownership_rules(organization_id, project_id, raw)
+            if len(project_rules) > _MAX_OWNERSHIP_RULES_PER_PROJECT:
+                project_rules = project_rules[:_MAX_OWNERSHIP_RULES_PER_PROJECT]
+                status_by_project[project_id] = FAMILY_PARTIAL
+                cap_hit = True
+            for rec in project_rules:
+                if rec["record_id"] in seen_record_ids:
+                    continue
+                seen_record_ids.add(rec["record_id"])
+                if len(records) >= _MAX_TOTAL_OWNERSHIP_RULES:
+                    cap_hit = True
+                    break
+                records.append(rec)
+            if len(records) >= _MAX_TOTAL_OWNERSHIP_RULES:
+                cap_hit = True
+                break
+
+        if succeeded == 0 and (denied > 0 or malformed > 0) and other_failed == 0:
+            completeness = FAMILY_DENIED if denied > 0 and malformed == 0 else FAMILY_PARTIAL
+        elif succeeded == 0 and other_failed > 0:
+            completeness = FAMILY_UNAVAILABLE
+        elif denied > 0 or other_failed > 0 or malformed > 0 or cap_hit or truncated_project_list:
+            completeness = FAMILY_PARTIAL
+        else:
+            completeness = FAMILY_COMPLETE
+
+        records.sort(key=lambda r: (r["project_id"], r["rule_index"], r["owner_index"]))
+        return records, completeness, status_by_project
+
     # ── Capability probes ────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET against page 1 only
@@ -1629,13 +2007,15 @@ class SentryConnector(BaseConnector):
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
         """Fetch the Sentry organization identity, API capability
-        inventory, project/team/member/access-edge collection, and
-        metric/issue alert-rule + notification-action collection
-        (Sentry messages 1-3 of 8).
+        inventory, project/team/member/access-edge collection,
+        metric/issue alert-rule + notification-action collection, and
+        organization-integration/repository/code-mapping/ownership-rule
+        collection (Sentry messages 1-4 of 8).
 
-        Does NOT collect integrations/webhooks/repositories/ownership
-        rules/releases yet — see the module docstring for the full
-        roadmap and sensitive-data boundary.
+        Does NOT collect webhooks (no public API — see module docstring)
+        or release/deployment configuration (no stable persistent
+        settings endpoint exists — see module docstring) — these are
+        permanently reported unsupported, never attempted.
 
         SECURITY: auth_token is used only within this method's scope,
         never logged, never persisted beyond the local ``httpx.Client``
@@ -1706,6 +2086,19 @@ class SentryConnector(BaseConnector):
             # which source's status should win.
             action_completeness = metric_completeness if metric_completeness == issue_completeness else FAMILY_PARTIAL
 
+            integration_records, integration_completeness = self._collect_organization_integrations(
+                client, slug, organization_id, _sleep_fn=_sleep_fn,
+            )
+            repository_records, repository_completeness = self._collect_repositories(
+                client, slug, organization_id, _sleep_fn=_sleep_fn,
+            )
+            code_mapping_records, code_mapping_completeness = self._collect_code_mappings(
+                client, slug, organization_id, _sleep_fn=_sleep_fn,
+            )
+            ownership_records, ownership_completeness, _status_by_project_ownership = self._collect_ownership_rules(
+                client, slug, organization_id, project_records, _sleep_fn=_sleep_fn,
+            )
+
             # Message-2/3 collection completeness is the ground truth for
             # these families — it must never be overridden by a stale
             # message-1 capability-probe success. If a capability probe
@@ -1720,6 +2113,16 @@ class SentryConnector(BaseConnector):
             family_completeness[COLLECTION_FAMILY_METRIC_ALERT_RULES] = metric_completeness
             family_completeness[COLLECTION_FAMILY_ISSUE_ALERT_RULES] = issue_completeness
             family_completeness[COLLECTION_FAMILY_ALERT_ACTIONS] = action_completeness
+            family_completeness[COLLECTION_FAMILY_ORGANIZATION_INTEGRATIONS] = integration_completeness
+            family_completeness[COLLECTION_FAMILY_REPOSITORIES] = repository_completeness
+            family_completeness[COLLECTION_FAMILY_CODE_MAPPINGS] = code_mapping_completeness
+            family_completeness[COLLECTION_FAMILY_OWNERSHIP_RULES] = ownership_completeness
+            # webhooks / release_configuration / deployment_configuration:
+            # always unsupported this message — no HTTP call is ever
+            # attempted for them (see the module docstring's message-4
+            # documentation-verification log).
+            for always_unsupported_family in COLLECTION_FAMILIES_ALWAYS_UNSUPPORTED:
+                family_completeness[always_unsupported_family] = CAPABILITY_UNSUPPORTED
 
             organization_record = self._normalize_organization(
                 organization_id,
@@ -1739,5 +2142,9 @@ class SentryConnector(BaseConnector):
             records.extend(issue_rule_records)
             records.extend(metric_action_records)
             records.extend(issue_action_records)
+            records.extend(integration_records)
+            records.extend(repository_records)
+            records.extend(code_mapping_records)
+            records.extend(ownership_records)
 
         return records
