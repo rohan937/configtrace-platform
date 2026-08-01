@@ -204,15 +204,24 @@ from app.connectors.sentry_schema import (
     COLLECTION_FAMILY_METRIC_ALERT_RULES,
     COLLECTION_FAMILY_ORGANIZATION_INTEGRATIONS,
     COLLECTION_FAMILY_OWNERSHIP_RULES,
+    COLLECTION_FAMILY_PRIVILEGED_MEMBERS,
+    COLLECTION_FAMILY_PRIVILEGED_TEAMS,
     COLLECTION_FAMILY_PROJECT_TEAM_ASSIGNMENTS,
     COLLECTION_FAMILY_PROJECTS,
     COLLECTION_FAMILY_REPOSITORIES,
+    COLLECTION_FAMILY_ROUTING_CONTEXT,
     COLLECTION_FAMILY_TEAM_MEMBERSHIPS,
     COLLECTION_FAMILY_TEAMS,
     FAMILY_COMPLETE,
     FAMILY_DENIED,
     FAMILY_PARTIAL,
     FAMILY_UNAVAILABLE,
+    ORG_ROLE_UNKNOWN,
+    OWNER_TYPE_TEAM,
+    OWNER_TYPE_UNKNOWN,
+    OWNER_TYPE_USER,
+    ROUTING_CONTEXT_TYPE_ALERT_ACTION,
+    ROUTING_CONTEXT_TYPE_OWNERSHIP_RULE,
     SENTRY_ALERT_ACTION,
     SENTRY_API_CAPABILITY,
     SENTRY_CODE_MAPPING,
@@ -223,20 +232,23 @@ from app.connectors.sentry_schema import (
     SENTRY_ORGANIZATION,
     SENTRY_ORGANIZATION_INTEGRATION,
     SENTRY_OWNERSHIP_RULE,
+    SENTRY_PRIVILEGED_MEMBER,
+    SENTRY_PRIVILEGED_TEAM,
     SENTRY_PROJECT,
     SENTRY_PROJECT_TEAM_ASSIGNMENT,
     SENTRY_REPOSITORY,
+    SENTRY_ROUTING_CONTEXT,
     SENTRY_TEAM,
     SENTRY_TEAM_MEMBERSHIP,
     STRUCTURALLY_UNSUPPORTED_FAMILIES,
-    OWNER_TYPE_TEAM,
-    OWNER_TYPE_UNKNOWN,
-    OWNER_TYPE_USER,
+    TEAM_ADMIN_CONTRIBUTION_TIER,
+    TEAM_ROLE_ADMIN,
     categorize_aggregate,
     categorize_auto_assignment,
     categorize_dataset,
     categorize_detection_type,
     categorize_environment,
+    categorize_integration_control,
     categorize_issue_action_id,
     categorize_issue_alert_status,
     categorize_match_type,
@@ -250,10 +262,14 @@ from app.connectors.sentry_schema import (
     categorize_platform,
     categorize_project_status,
     categorize_provider,
+    categorize_repository_control,
     categorize_target_type,
     categorize_team_role,
     categorize_threshold_type,
     categorize_trigger_label,
+    highest_privilege_tier,
+    organization_wide_access_for_org_role,
+    privilege_tier_for_org_role,
     validate_auth_token,
     validate_organization_slug,
 )
@@ -1937,6 +1953,393 @@ class SentryConnector(BaseConnector):
         records.sort(key=lambda r: (r["project_id"], r["rule_index"], r["owner_index"]))
         return records, completeness, status_by_project
 
+    # ── Effective-access derivation (Sentry message 5 of 8) ──────────────
+    #
+    # Everything below is PURE LOCAL DERIVATION over already-collected
+    # message-1-4 records — it makes zero additional HTTP calls. See
+    # ``_derive_effective_access`` for the orchestrating entry point and
+    # the exact source-family-to-derived-family completeness mapping.
+
+    _COMPLETENESS_RANK = {
+        FAMILY_COMPLETE: 0,
+        FAMILY_PARTIAL: 1,
+        FAMILY_DENIED: 2,
+        FAMILY_UNAVAILABLE: 2,
+    }
+
+    @classmethod
+    def _worse_completeness(cls, *statuses: str) -> str:
+        """Return the least-complete status among ``statuses`` (never
+        invents a value outside the existing FAMILY_* taxonomy)."""
+        if not statuses:
+            return FAMILY_COMPLETE
+        return max(statuses, key=lambda s: cls._COMPLETENESS_RANK.get(s, 1))
+
+    @classmethod
+    def _resolution_completeness(cls, *, resolved: bool, source_family_completeness: str) -> str:
+        """A resolved target is always reported FAMILY_COMPLETE — positive
+        evidence stands on its own regardless of unrelated family gaps.
+        An UNRESOLVED target inherits the source family's own
+        completeness: only a fully COMPLETE source family can turn an
+        unresolved target into a confirmed orphan; anything less keeps
+        the ambiguity visible rather than asserting orphan-hood."""
+        if resolved:
+            return FAMILY_COMPLETE
+        return source_family_completeness
+
+    @staticmethod
+    def _normalize_privileged_member(
+        organization_id: str, member_id: str, *, org_role_category: str, member_status_category: str,
+        privilege_tier: str, organization_wide_project_access: Optional[bool],
+        direct_team_count: int, team_admin_team_count: int,
+        effective_project_count: Optional[int], project_access_source_categories: list,
+        alert_routing_target_count: int, ownership_rule_target_count: int,
+        integration_control_context: str, repository_control_context: str,
+        privilege_completeness: str,
+    ) -> dict:
+        return {
+            "record_type": SENTRY_PRIVILEGED_MEMBER,
+            "record_id": f"{organization_id}/privileged_member/{member_id}",
+            "provider_resource_id": f"privileged-members/{member_id}",
+            "organization_id": organization_id,
+            "member_id": member_id,
+            "org_role_category": org_role_category,
+            "member_status_category": member_status_category,
+            "privilege_tier": privilege_tier,
+            "organization_wide_project_access": organization_wide_project_access,
+            "direct_team_count": direct_team_count,
+            "team_admin_team_count": team_admin_team_count,
+            "effective_project_count": effective_project_count,
+            "project_access_source_categories": sorted(project_access_source_categories),
+            "alert_routing_target_count": alert_routing_target_count,
+            "ownership_rule_target_count": ownership_rule_target_count,
+            "integration_control_context": integration_control_context,
+            "repository_control_context": repository_control_context,
+            "privilege_completeness": privilege_completeness,
+        }
+
+    @staticmethod
+    def _normalize_privileged_team(
+        organization_id: str, team_id: str, *, project_count: int,
+        ownership_rule_target_count: int, alert_action_target_count: int,
+        privileged_member_count: int, unresolved_member_count: int,
+        access_completeness: str,
+    ) -> dict:
+        return {
+            "record_type": SENTRY_PRIVILEGED_TEAM,
+            "record_id": f"{organization_id}/privileged_team/{team_id}",
+            "provider_resource_id": f"privileged-teams/{team_id}",
+            "organization_id": organization_id,
+            "team_id": team_id,
+            "project_count": project_count,
+            "ownership_rule_target_count": ownership_rule_target_count,
+            "alert_action_target_count": alert_action_target_count,
+            "privileged_member_count": privileged_member_count,
+            "unresolved_member_count": unresolved_member_count,
+            "access_completeness": access_completeness,
+        }
+
+    @staticmethod
+    def _normalize_routing_context(
+        organization_id: str, *, context_type: str, source_record_id: str,
+        project_id: Optional[str], rule_type: Optional[str], rule_id: Optional[str],
+        target_type_category: str, target_id: Optional[str], target_resolved: bool,
+        target_active: Optional[bool], target_privilege_tier: Optional[str],
+        integration_status_category: Optional[str], context_enabled: Optional[bool],
+        completeness: str,
+    ) -> dict:
+        # Rebuild a routing_context-scoped stable ID by re-keying the
+        # source record's own stable suffix — never a synthesized index.
+        suffix = source_record_id.split("/", 2)[-1] if source_record_id.count("/") >= 2 else source_record_id
+        return {
+            "record_type": SENTRY_ROUTING_CONTEXT,
+            "record_id": f"{organization_id}/routing_context/{context_type}/{suffix}",
+            "provider_resource_id": f"routing-context/{context_type}/{suffix}",
+            "organization_id": organization_id,
+            "context_type": context_type,
+            "source_record_id": source_record_id,
+            "project_id": project_id,
+            "rule_type": rule_type,
+            "rule_id": rule_id,
+            "target_type_category": target_type_category,
+            "target_id": target_id,
+            "target_resolved": target_resolved,
+            "target_active": target_active,
+            "target_privilege_tier": target_privilege_tier,
+            "integration_status_category": integration_status_category,
+            "context_enabled": context_enabled,
+            "completeness": completeness,
+        }
+
+    @classmethod
+    def _derive_effective_access(
+        cls, organization_id: str, *,
+        project_records: list, team_records: list, member_records: list,
+        membership_records: list, assignment_records: list,
+        metric_rule_records: list, issue_rule_records: list,
+        metric_action_records: list, issue_action_records: list,
+        ownership_records: list, integration_records: list,
+        member_completeness: str, team_completeness: str,
+        membership_completeness: str, assignment_completeness: str,
+        ownership_completeness: str, action_completeness: str,
+        integration_completeness: str,
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Derive ``sentry_privileged_member``/``sentry_privileged_team``/
+        ``sentry_routing_context`` records from already-collected
+        message-1-4 records. Makes ZERO additional HTTP calls — every
+        input here is a list already produced by this fetch() call.
+
+        Source-family dependency per derived family (for the
+        organization record's ``family_completeness`` propagation):
+          privileged_members  <- members, teams, team_memberships,
+                                  project_team_assignments, alert_actions,
+                                  ownership_rules
+          privileged_teams    <- teams, team_memberships,
+                                  project_team_assignments, alert_actions,
+                                  ownership_rules
+          routing_context     <- ownership_rules/alert_actions (1:1) plus
+                                  members, teams, organization_integrations
+                                  for target resolution
+        """
+        project_ids = {r["project_id"] for r in project_records}
+        team_index = {r["team_id"]: r for r in team_records}
+        member_index = {r["member_id"]: r for r in member_records}
+        integration_index = {r["integration_id"]: r for r in integration_records}
+        metric_rule_status = {r["rule_id"]: r["status_category"] for r in metric_rule_records}
+        issue_rule_status = {r["rule_id"]: r["status_category"] for r in issue_rule_records}
+
+        memberships_by_member: dict = {}
+        memberships_by_team: dict = {}
+        for m in membership_records:
+            memberships_by_member.setdefault(m["member_id"], []).append(m)
+            memberships_by_team.setdefault(m["team_id"], []).append(m)
+
+        assignments_by_team: dict = {}
+        for a in assignment_records:
+            assignments_by_team.setdefault(a["team_id"], set()).add(a["project_id"])
+
+        alert_actions_all = metric_action_records + issue_action_records
+        alert_user_targets_by_member: dict = {}
+        alert_team_targets_by_team: dict = {}
+        for a in alert_actions_all:
+            if a["target_type_category"] == "user" and a["target_id"]:
+                alert_user_targets_by_member.setdefault(a["target_id"], 0)
+                alert_user_targets_by_member[a["target_id"]] += 1
+            if a["target_type_category"] == "team" and a["target_id"]:
+                alert_team_targets_by_team.setdefault(a["target_id"], 0)
+                alert_team_targets_by_team[a["target_id"]] += 1
+
+        ownership_user_targets_by_member: dict = {}
+        ownership_team_targets_by_team: dict = {}
+        for o in ownership_records:
+            if o["owner_type_category"] == "user" and o["owner_id"]:
+                ownership_user_targets_by_member.setdefault(o["owner_id"], 0)
+                ownership_user_targets_by_member[o["owner_id"]] += 1
+            if o["owner_type_category"] == "team" and o["owner_id"]:
+                ownership_team_targets_by_team.setdefault(o["owner_id"], 0)
+                ownership_team_targets_by_team[o["owner_id"]] += 1
+
+        member_privilege_tier: dict = {}
+
+        # ── Privileged members ────────────────────────────────────────
+        privilege_source_completeness = cls._worse_completeness(
+            member_completeness, team_completeness, membership_completeness, assignment_completeness,
+        )
+        privileged_member_records: list[dict] = []
+        for member in member_records:
+            member_id = member["member_id"]
+            org_role_category = member["org_role_category"]
+            base_tier = privilege_tier_for_org_role(org_role_category)
+            member_memberships = memberships_by_member.get(member_id, [])
+            direct_team_count = len(member_memberships)
+            team_admin_team_count = sum(1 for m in member_memberships if m["team_role_category"] == TEAM_ROLE_ADMIN)
+
+            tiers_to_combine = [base_tier]
+            if team_admin_team_count > 0:
+                tiers_to_combine.append(TEAM_ADMIN_CONTRIBUTION_TIER)
+            privilege_tier = highest_privilege_tier(tiers_to_combine)
+            member_privilege_tier[member_id] = privilege_tier
+
+            org_wide_access = organization_wide_access_for_org_role(org_role_category)
+            access_sources: list = []
+            if org_wide_access is True:
+                effective_project_ids = set(project_ids)
+                access_sources.append("organization_wide")
+                effective_project_count = len(effective_project_ids)
+            elif org_wide_access is False:
+                effective_project_ids = set()
+                for m in member_memberships:
+                    effective_project_ids |= assignments_by_team.get(m["team_id"], set())
+                effective_project_count = len(effective_project_ids)
+                access_sources.append("team_membership" if effective_project_count > 0 else "none")
+            else:
+                effective_project_count = None
+                access_sources.append("unknown")
+
+            alert_routing_target_count = alert_user_targets_by_member.get(member_id, 0)
+            ownership_rule_target_count = ownership_user_targets_by_member.get(member_id, 0)
+
+            is_privileged_org_role = org_role_category in ("owner", "manager", "admin") or org_role_category == ORG_ROLE_UNKNOWN
+            has_meaningful_authority = (
+                is_privileged_org_role
+                or team_admin_team_count > 0
+                or alert_routing_target_count > 0
+                or ownership_rule_target_count > 0
+            )
+            if not has_meaningful_authority:
+                continue
+
+            privileged_member_records.append(cls._normalize_privileged_member(
+                organization_id, member_id,
+                org_role_category=org_role_category,
+                member_status_category=member["member_status_category"],
+                privilege_tier=privilege_tier,
+                organization_wide_project_access=org_wide_access,
+                direct_team_count=direct_team_count,
+                team_admin_team_count=team_admin_team_count,
+                effective_project_count=effective_project_count,
+                project_access_source_categories=access_sources,
+                alert_routing_target_count=alert_routing_target_count,
+                ownership_rule_target_count=ownership_rule_target_count,
+                integration_control_context=categorize_integration_control(org_role_category),
+                repository_control_context=categorize_repository_control(org_role_category),
+                privilege_completeness=privilege_source_completeness,
+            ))
+        privileged_member_records.sort(key=lambda r: r["member_id"])
+
+        # ── Privileged teams ──────────────────────────────────────────
+        team_source_completeness = cls._worse_completeness(
+            team_completeness, membership_completeness, assignment_completeness,
+        )
+        privileged_team_records: list[dict] = []
+        for team in team_records:
+            team_id = team["team_id"]
+            project_count = len(assignments_by_team.get(team_id, set()))
+            ownership_rule_target_count = ownership_team_targets_by_team.get(team_id, 0)
+            alert_action_target_count = alert_team_targets_by_team.get(team_id, 0)
+            team_memberships = memberships_by_team.get(team_id, [])
+            privileged_member_count = sum(1 for m in team_memberships if m["team_role_category"] == TEAM_ROLE_ADMIN)
+            unresolved_member_count = sum(1 for m in team_memberships if m["member_id"] not in member_index)
+
+            if not (
+                project_count > 0 or ownership_rule_target_count > 0
+                or alert_action_target_count > 0 or privileged_member_count > 0
+                or unresolved_member_count > 0
+            ):
+                continue
+
+            privileged_team_records.append(cls._normalize_privileged_team(
+                organization_id, team_id,
+                project_count=project_count,
+                ownership_rule_target_count=ownership_rule_target_count,
+                alert_action_target_count=alert_action_target_count,
+                privileged_member_count=privileged_member_count,
+                unresolved_member_count=unresolved_member_count,
+                access_completeness=team_source_completeness,
+            ))
+        privileged_team_records.sort(key=lambda r: r["team_id"])
+
+        # ── Routing context (ownership rules) ────────────────────────────
+        identity_completeness = cls._worse_completeness(member_completeness, team_completeness)
+        routing_context_records: list[dict] = []
+        for rule in ownership_records:
+            target_type_category = rule["owner_type_category"]
+            target_id = rule["owner_id"]
+            if target_type_category == "team":
+                target_resolved = bool(target_id) and target_id in team_index
+                target_active = True if target_resolved else None
+                target_tier = None
+            elif target_type_category == "user":
+                target_resolved = bool(target_id) and target_id in member_index
+                if target_resolved:
+                    target_active = member_index[target_id]["member_status_category"] == "active"
+                    target_tier = member_privilege_tier.get(target_id) or privilege_tier_for_org_role(
+                        member_index[target_id]["org_role_category"]
+                    )
+                else:
+                    target_active = None
+                    target_tier = None
+            else:
+                target_resolved = False
+                target_active = None
+                target_tier = None
+
+            routing_context_records.append(cls._normalize_routing_context(
+                organization_id, context_type=ROUTING_CONTEXT_TYPE_OWNERSHIP_RULE,
+                source_record_id=rule["record_id"], project_id=rule["project_id"],
+                rule_type=None, rule_id=None,
+                target_type_category=target_type_category, target_id=target_id,
+                target_resolved=target_resolved, target_active=target_active,
+                target_privilege_tier=target_tier, integration_status_category=None,
+                context_enabled=rule.get("is_active"),
+                completeness=cls._resolution_completeness(
+                    resolved=target_resolved, source_family_completeness=identity_completeness,
+                ),
+            ))
+
+        # ── Routing context (alert actions) ──────────────────────────────
+        for action in alert_actions_all:
+            target_type_category = action["target_type_category"]
+            target_id = action["target_id"]
+            if target_type_category == "team":
+                target_resolved = bool(target_id) and target_id in team_index
+                target_active = True if target_resolved else None
+                target_tier = None
+            elif target_type_category == "user":
+                target_resolved = bool(target_id) and target_id in member_index
+                if target_resolved:
+                    target_active = member_index[target_id]["member_status_category"] == "active"
+                    target_tier = member_privilege_tier.get(target_id) or privilege_tier_for_org_role(
+                        member_index[target_id]["org_role_category"]
+                    )
+                else:
+                    target_active = None
+                    target_tier = None
+            else:
+                # specific / sentry_app / issue_owners / unknown — no
+                # stable ID is ever stored for these (message-3
+                # sensitive-data boundary), so resolution is never
+                # attempted or claimed.
+                target_resolved = False
+                target_active = None
+                target_tier = None
+
+            integration_id = action.get("integration_id")
+            if integration_id:
+                integration_rec = integration_index.get(integration_id)
+                integration_status_category = integration_rec["status_category"] if integration_rec else None
+            else:
+                integration_status_category = None
+
+            rule_type = action["rule_type"]
+            rule_id = action["rule_id"]
+            if rule_type == "metric":
+                rule_status = metric_rule_status.get(rule_id)
+            elif rule_type == "issue":
+                rule_status = issue_rule_status.get(rule_id)
+            else:
+                rule_status = None
+            context_enabled = (rule_status == "enabled") if rule_status is not None else None
+
+            action_completeness_for_target = cls._resolution_completeness(
+                resolved=target_resolved,
+                source_family_completeness=cls._worse_completeness(identity_completeness, action_completeness),
+            )
+            routing_context_records.append(cls._normalize_routing_context(
+                organization_id, context_type=ROUTING_CONTEXT_TYPE_ALERT_ACTION,
+                source_record_id=action["record_id"], project_id=None,
+                rule_type=rule_type, rule_id=rule_id,
+                target_type_category=target_type_category, target_id=target_id,
+                target_resolved=target_resolved, target_active=target_active,
+                target_privilege_tier=target_tier,
+                integration_status_category=integration_status_category,
+                context_enabled=context_enabled,
+                completeness=action_completeness_for_target,
+            ))
+
+        routing_context_records.sort(key=lambda r: r["record_id"])
+        return privileged_member_records, privileged_team_records, routing_context_records
+
     # ── Capability probes ────────────────────────────────────────────────
     #
     # Every probe is a single, minimal, read-only GET against page 1 only
@@ -2008,14 +2411,18 @@ class SentryConnector(BaseConnector):
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
         """Fetch the Sentry organization identity, API capability
         inventory, project/team/member/access-edge collection,
-        metric/issue alert-rule + notification-action collection, and
+        metric/issue alert-rule + notification-action collection,
         organization-integration/repository/code-mapping/ownership-rule
-        collection (Sentry messages 1-4 of 8).
+        collection, and effective-access derivation (Sentry messages 1-5
+        of 8).
 
         Does NOT collect webhooks (no public API — see module docstring)
         or release/deployment configuration (no stable persistent
         settings endpoint exists — see module docstring) — these are
-        permanently reported unsupported, never attempted.
+        permanently reported unsupported, never attempted. Message-5's
+        privileged-member/privileged-team/routing-context derivation
+        makes ZERO additional HTTP calls — it is pure local computation
+        over the records already collected above.
 
         SECURITY: auth_token is used only within this method's scope,
         never logged, never persisted beyond the local ``httpx.Client``
@@ -2124,6 +2531,34 @@ class SentryConnector(BaseConnector):
             for always_unsupported_family in COLLECTION_FAMILIES_ALWAYS_UNSUPPORTED:
                 family_completeness[always_unsupported_family] = CAPABILITY_UNSUPPORTED
 
+            # Message-5 effective-access derivation — PURE LOCAL
+            # DERIVATION over the records already collected above. Makes
+            # zero additional HTTP calls (no new `client.get`/`call_sentry`
+            # invocation appears anywhere in this block).
+            privileged_member_records, privileged_team_records, routing_context_records = (
+                self._derive_effective_access(
+                    organization_id,
+                    project_records=project_records, team_records=team_records, member_records=member_records,
+                    membership_records=membership_records, assignment_records=assignment_records,
+                    metric_rule_records=metric_rule_records, issue_rule_records=issue_rule_records,
+                    metric_action_records=metric_action_records, issue_action_records=issue_action_records,
+                    ownership_records=ownership_records, integration_records=integration_records,
+                    member_completeness=member_completeness, team_completeness=team_completeness,
+                    membership_completeness=membership_completeness, assignment_completeness=team_completeness,
+                    ownership_completeness=ownership_completeness, action_completeness=action_completeness,
+                    integration_completeness=integration_completeness,
+                )
+            )
+            family_completeness[COLLECTION_FAMILY_PRIVILEGED_MEMBERS] = self._worse_completeness(
+                member_completeness, team_completeness, membership_completeness,
+            )
+            family_completeness[COLLECTION_FAMILY_PRIVILEGED_TEAMS] = self._worse_completeness(
+                team_completeness, membership_completeness,
+            )
+            family_completeness[COLLECTION_FAMILY_ROUTING_CONTEXT] = self._worse_completeness(
+                ownership_completeness, action_completeness,
+            )
+
             organization_record = self._normalize_organization(
                 organization_id,
                 slug=slug,
@@ -2146,5 +2581,8 @@ class SentryConnector(BaseConnector):
             records.extend(repository_records)
             records.extend(code_mapping_records)
             records.extend(ownership_records)
+            records.extend(privileged_member_records)
+            records.extend(privileged_team_records)
+            records.extend(routing_context_records)
 
         return records

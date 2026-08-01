@@ -1,4 +1,4 @@
-"""Sentry risk classification rules (Sentry messages 1-4 of 8).
+"""Sentry risk classification rules (Sentry messages 1-5 of 8).
 
 This module exists to give every ``sentry_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -46,11 +46,22 @@ Classification here is deliberately structural, not incident-level:
   owns effective-access conclusions), only that the routing evidence
   changed.
 
-Future messages (5-7) will add classifiers for privileged-access posture
-as those record types are introduced — this module's dispatcher already
-fails safely into a generic low-severity message for any ``sentry_*``
-record type that does not have a classifier yet, so this module
-continues to work unmodified as an incremental target for those
+- Effective access (message 5): all severities below reflect purely
+  DERIVED evidence (zero additional API calls) — a member gaining the
+  ``owner``/``manager`` tier or organization-wide project access is HIGH;
+  gaining ``admin`` (or a bare team-admin bump) is MEDIUM; any reduction
+  is Low/restorative. A routing target flipping from resolved to
+  unresolved (an ownership rule or alert action now points at a
+  team/member that no longer exists) is HIGH when the owning rule/config
+  is still enabled/active, MEDIUM otherwise — this module never claims
+  issues are DEFINITELY unassigned or unrouted, only that the routing
+  evidence itself changed (message 6 owns Finding-level conclusions).
+
+Future messages (6-7) will add Security Findings and exhaustive
+reliability hardening as those concerns are introduced — this module's
+dispatcher already fails safely into a generic low-severity message for
+any ``sentry_*`` record type that does not have a classifier yet, so this
+module continues to work unmodified as an incremental target for those
 insertions.
 """
 
@@ -63,6 +74,9 @@ from app.connectors.sentry_schema import (
     ORG_ROLE_ADMIN,
     ORG_ROLE_MANAGER,
     ORG_ROLE_OWNER,
+    PRIVILEGE_TIER_CRITICAL,
+    PRIVILEGE_TIER_HIGH,
+    PRIVILEGE_TIER_MEDIUM,
     SENTRY_ALERT_ACTION,
     SENTRY_API_CAPABILITY,
     SENTRY_CODE_MAPPING,
@@ -73,9 +87,12 @@ from app.connectors.sentry_schema import (
     SENTRY_ORGANIZATION,
     SENTRY_ORGANIZATION_INTEGRATION,
     SENTRY_OWNERSHIP_RULE,
+    SENTRY_PRIVILEGED_MEMBER,
+    SENTRY_PRIVILEGED_TEAM,
     SENTRY_PROJECT,
     SENTRY_PROJECT_TEAM_ASSIGNMENT,
     SENTRY_REPOSITORY,
+    SENTRY_ROUTING_CONTEXT,
     SENTRY_TEAM,
     SENTRY_TEAM_MEMBERSHIP,
     THRESHOLD_TYPE_ABOVE,
@@ -83,6 +100,8 @@ from app.connectors.sentry_schema import (
 )
 
 _PRIVILEGED_ORG_ROLES = frozenset({ORG_ROLE_OWNER, ORG_ROLE_MANAGER, ORG_ROLE_ADMIN})
+_HIGH_OR_ABOVE_TIERS = frozenset({PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH})
+_TIER_RANK = {"unknown": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
 def _get(obj: Any, field: str) -> Any:
@@ -477,6 +496,133 @@ def _classify_ownership_rule_change(change: object) -> tuple[str, str]:
     return "low", "A Sentry ownership rule configuration field changed."
 
 
+def _classify_privileged_member_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    privilege_tier = pm.get("privilege_tier")
+
+    if ct == "added":
+        if privilege_tier in _HIGH_OR_ABOVE_TIERS:
+            return (
+                "high",
+                f"A Sentry member was newly identified with {privilege_tier}-tier organization/routing "
+                "authority. Verify this was intentional.",
+            )
+        if privilege_tier == "medium":
+            return "medium", "A Sentry member was newly identified with medium-tier organization/routing authority."
+        return "low", "A Sentry member was newly identified with meaningful (low-tier) routing authority."
+    if ct == "removed":
+        return "low", "A Sentry member no longer has meaningful organization/routing authority (privileged-member evidence removed)."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "privilege_tier":
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        pv_rank = _TIER_RANK.get(pv, 0)
+        nv_rank = _TIER_RANK.get(nv, 0)
+        if nv_rank > pv_rank:
+            if nv in _HIGH_OR_ABOVE_TIERS:
+                return "high", f"A Sentry member's privilege tier increased to {nv}."
+            return "medium", f"A Sentry member's privilege tier increased to {nv}."
+        if nv_rank < pv_rank:
+            return "low", f"A Sentry member's privilege tier decreased to {nv}."
+        return "low", "A Sentry member's privilege tier changed without a clear direction."
+    if fp == "organization_wide_project_access":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return "high", "A Sentry member gained organization-wide project access."
+        if nv is False:
+            return "low", "A Sentry member's organization-wide project access was removed."
+        return "medium", "A Sentry member's organization-wide project access could no longer be determined."
+    if fp == "effective_project_count":
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return "medium", "A Sentry member's effective project access broadened."
+        return "low", "A Sentry member's effective project access changed."
+    if fp in ("integration_control_context", "repository_control_context"):
+        nv = _get(change, "new_value")
+        if nv == "full":
+            return "medium", "A Sentry member gained broader integration/repository control authority."
+        return "low", "A Sentry member's integration/repository control context changed."
+    if fp in ("team_admin_team_count", "alert_routing_target_count", "ownership_rule_target_count"):
+        return "low", "A Sentry member's routing-authority scope changed."
+    return "low", "A Sentry privileged-member record field changed."
+
+
+def _classify_privileged_team_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    if ct == "added":
+        return "low", "A Sentry team was newly identified with meaningful project/routing authority."
+    if ct == "removed":
+        return "low", "A Sentry team no longer has meaningful project/routing authority."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "privileged_member_count":
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return "medium", "A Sentry team gained an additional team-admin member."
+        return "low", "A Sentry team's team-admin member count changed."
+    if fp == "project_count":
+        return "low", "A Sentry team's assigned project count changed."
+    if fp in ("ownership_rule_target_count", "alert_action_target_count"):
+        return "low", "A Sentry team's routing-target count changed."
+    if fp == "unresolved_member_count":
+        pv = _get(change, "prev_value")
+        nv = _get(change, "new_value")
+        if isinstance(pv, int) and isinstance(nv, int) and nv > pv:
+            return "medium", "A Sentry team gained an unresolved membership reference (member no longer found)."
+        return "low", "A Sentry team's unresolved-membership count changed."
+    return "low", "A Sentry privileged-team record field changed."
+
+
+def _classify_routing_context_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    context_enabled = pm.get("context_enabled")
+
+    if ct == "added":
+        target_resolved = pm.get("target_resolved")
+        if target_resolved is False and context_enabled:
+            return (
+                "medium",
+                "A new Sentry routing target was identified as unresolved on an active/enabled rule.",
+            )
+        return "low", "A new Sentry routing context was identified."
+    if ct == "removed":
+        return "low", "A Sentry routing context is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "")
+    if fp == "target_resolved":
+        nv = _get(change, "new_value")
+        if nv is False:
+            severity = "high" if context_enabled else "medium"
+            return severity, "A Sentry routing target became unresolved (points to a team/member that no longer exists)."
+        return "low", "A previously-unresolved Sentry routing target was restored."
+    if fp == "target_active":
+        nv = _get(change, "new_value")
+        if nv is False:
+            return "medium", "A Sentry routing target is no longer an active member."
+        return "low", "A Sentry routing target's active status changed."
+    if fp == "integration_status_category":
+        nv = _get(change, "new_value")
+        if nv == "disabled":
+            severity = "high" if context_enabled else "medium"
+            return severity, "A Sentry routing target's delivery integration was disabled."
+        return "low", "A Sentry routing target's delivery integration status changed."
+    if fp == "context_enabled":
+        nv = _get(change, "new_value")
+        if nv is True:
+            return "low", "A Sentry routing context's owning rule/configuration became enabled/active."
+        return "low", "A Sentry routing context's owning rule/configuration changed enabled/active state."
+    if fp in ("target_type_category", "target_id"):
+        return "medium", "A Sentry routing context's target changed."
+    return "low", "A Sentry routing context field changed."
+
+
 def classify_sentry_change(change: object) -> tuple[str, str]:
     """Route a Sentry Change to its record-type classifier.
 
@@ -519,4 +665,10 @@ def classify_sentry_change(change: object) -> tuple[str, str]:
         return _classify_code_mapping_change(change)
     if record_type == SENTRY_OWNERSHIP_RULE:
         return _classify_ownership_rule_change(change)
+    if record_type == SENTRY_PRIVILEGED_MEMBER:
+        return _classify_privileged_member_change(change)
+    if record_type == SENTRY_PRIVILEGED_TEAM:
+        return _classify_privileged_team_change(change)
+    if record_type == SENTRY_ROUTING_CONTEXT:
+        return _classify_routing_context_change(change)
     return "low", "A Sentry configuration field changed."

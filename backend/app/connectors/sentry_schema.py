@@ -1,4 +1,4 @@
-"""Sentry provider schema (Sentry message 1-4 of 8).
+"""Sentry provider schema (Sentry message 1-5 of 8).
 
 Defines the record-type constants, credential validators, and capability
 taxonomy for the Sentry provider. Record types so far:
@@ -63,7 +63,7 @@ taxonomy for the Sentry provider. Record types so far:
                                     ID only, never the raw rule text or
                                     an email address.
 
-  NOT implemented this message (see the connector module docstring's
+  NOT implemented in message 4 (see the connector module docstring's
   message-4 documentation-verification log for why): ``sentry_webhook``
   (Sentry's only webhook-configuration API, ProjectServiceHooksEndpoint,
   is marked PRIVATE and feature-gated — not part of the public API
@@ -72,13 +72,31 @@ taxonomy for the Sentry provider. Record types so far:
   thresholds are EXPERIMENTAL and releases/deploys list endpoints are
   historical activity, which this provider never ingests).
 
+  sentry_privileged_member         — one record per organization member
+                                    with meaningful organization/team/
+                                    routing authority (msg 5) — PURELY
+                                    DERIVED from already-collected
+                                    records (zero additional HTTP calls).
+                                    Ordinary members are never emitted.
+  sentry_privileged_team           — one record per team with meaningful
+                                    project/routing authority (msg 5) —
+                                    derived; ordinary teams are never
+                                    emitted.
+  sentry_routing_context           — one record per ownership-rule or
+                                    alert-action target, resolving
+                                    whether the target is a known,
+                                    active team/member/integration (msg
+                                    5) — derived 1:1 from the existing
+                                    ``sentry_ownership_rule``/
+                                    ``sentry_alert_action`` records, never
+                                    a new API call.
+
 SECURITY: this module never handles the auth token itself — only the
 non-secret organization_slug field is validated here. See ``sentry.py``'s
 module docstring for the full sensitive-data boundary.
 
 Future messages (do not implement yet — see the Sentry roadmap in the
 connector module docstring):
-  msg 5 — security/privacy posture, effective access, privileged identities.
   msg 6 — Security Findings.
   msg 7 — exhaustive Change classification, partial-sync/reliability
           hardening.
@@ -106,6 +124,9 @@ SENTRY_ORGANIZATION_INTEGRATION = "sentry_organization_integration"
 SENTRY_REPOSITORY = "sentry_repository"
 SENTRY_CODE_MAPPING = "sentry_code_mapping"
 SENTRY_OWNERSHIP_RULE = "sentry_ownership_rule"
+SENTRY_PRIVILEGED_MEMBER = "sentry_privileged_member"
+SENTRY_PRIVILEGED_TEAM = "sentry_privileged_team"
+SENTRY_ROUTING_CONTEXT = "sentry_routing_context"
 
 ALL_SENTRY_RECORD_TYPES = frozenset({
     SENTRY_ORGANIZATION,
@@ -123,6 +144,9 @@ ALL_SENTRY_RECORD_TYPES = frozenset({
     SENTRY_REPOSITORY,
     SENTRY_CODE_MAPPING,
     SENTRY_OWNERSHIP_RULE,
+    SENTRY_PRIVILEGED_MEMBER,
+    SENTRY_PRIVILEGED_TEAM,
+    SENTRY_ROUTING_CONTEXT,
 })
 
 # ── Family completeness taxonomy (shared by every future collection msg) ───
@@ -239,6 +263,15 @@ COLLECTION_FAMILY_WEBHOOKS = "webhooks"
 COLLECTION_FAMILY_RELEASE_CONFIGURATION = "release_configuration"
 COLLECTION_FAMILY_DEPLOYMENT_CONFIGURATION = "deployment_configuration"
 
+# Message-5 DERIVED families (Sentry message 5 of 8) — never collected via
+# a new HTTP call; completeness is computed purely from the completeness
+# of the already-collected source families each derivation reads (see
+# ``sentry.py``'s ``_derive_effective_access`` docstring for the exact
+# source-family dependency list per derived family).
+COLLECTION_FAMILY_PRIVILEGED_MEMBERS = "privileged_members"
+COLLECTION_FAMILY_PRIVILEGED_TEAMS = "privileged_teams"
+COLLECTION_FAMILY_ROUTING_CONTEXT = "routing_context"
+
 COLLECTION_FAMILIES: tuple[str, ...] = (
     COLLECTION_FAMILY_PROJECTS,
     COLLECTION_FAMILY_TEAMS,
@@ -255,6 +288,9 @@ COLLECTION_FAMILIES: tuple[str, ...] = (
     COLLECTION_FAMILY_WEBHOOKS,
     COLLECTION_FAMILY_RELEASE_CONFIGURATION,
     COLLECTION_FAMILY_DEPLOYMENT_CONFIGURATION,
+    COLLECTION_FAMILY_PRIVILEGED_MEMBERS,
+    COLLECTION_FAMILY_PRIVILEGED_TEAMS,
+    COLLECTION_FAMILY_ROUTING_CONTEXT,
 )
 
 # Collection families ALWAYS reported unsupported (message 4) — see the
@@ -1117,3 +1153,168 @@ def categorize_auto_assignment(raw_auto_assignment: object) -> str:
         if candidate in _AUTO_ASSIGNMENT_MAP:
             return _AUTO_ASSIGNMENT_MAP[candidate]
     return AUTO_ASSIGNMENT_UNKNOWN
+
+
+# ── Privilege tier taxonomy (Sentry message 5 of 8) ─────────────────────────
+#
+# Confirmed via current official docs
+# (https://docs.sentry.io/organization/membership/, accessed this
+# message): Owner and Manager both "can perform Team Admin actions
+# without needing to join the team" — the documented basis for
+# organization-wide project access below. Admin "automatically
+# assume[s] the Team Admin role for teams they join" (NOT org-wide by
+# default) but can create/remove teams and projects and edit global
+# integrations. Member access is team-mediated only ("access projects
+# their teams own"). Billing has no project/team/integration authority
+# at all — billing/compliance only. Mirrors the Okta/Entra precedent
+# (``PRIVILEGE_TIER_*`` + ``highest_privilege_tier()``): a known tier
+# always outranks unknown — unknown is the floor, never silently
+# coerced to low/ordinary.
+
+PRIVILEGE_TIER_CRITICAL = "critical"
+PRIVILEGE_TIER_HIGH = "high"
+PRIVILEGE_TIER_MEDIUM = "medium"
+PRIVILEGE_TIER_LOW = "low"
+PRIVILEGE_TIER_UNKNOWN = "unknown"
+
+PRIVILEGE_TIERS = frozenset({
+    PRIVILEGE_TIER_CRITICAL, PRIVILEGE_TIER_HIGH, PRIVILEGE_TIER_MEDIUM,
+    PRIVILEGE_TIER_LOW, PRIVILEGE_TIER_UNKNOWN,
+})
+
+# Ranks are internal ordering helpers for `highest_privilege_tier()`
+# comparisons only — never persisted. UNKNOWN sits at the floor (rank 0)
+# so any real, known tier always outranks it.
+_PRIVILEGE_TIER_RANK: dict = {
+    PRIVILEGE_TIER_UNKNOWN: 0,
+    PRIVILEGE_TIER_LOW: 1,
+    PRIVILEGE_TIER_MEDIUM: 2,
+    PRIVILEGE_TIER_HIGH: 3,
+    PRIVILEGE_TIER_CRITICAL: 4,
+}
+
+# Owner: "unrestricted access to the organization, its data, and its
+# settings" + billing/plan changes -> CRITICAL (the single most powerful
+# documented role). Manager: "full management access to all teams and
+# projects" + member management, but not billing/plan changes -> HIGH.
+# Admin: can create/remove teams/projects and edit global integrations,
+# but is NOT org-wide by default and can no longer be assigned on
+# Business/Enterprise plans -> MEDIUM. Member: team-mediated access only
+# -> LOW. Billing: no project/team/integration authority -> LOW (never
+# inflated merely for being "non-member" — see the module docstring's
+# billing-role guidance). Unknown: never guessed -> UNKNOWN.
+_ORG_ROLE_TIER: dict = {
+    "owner": PRIVILEGE_TIER_CRITICAL,
+    "manager": PRIVILEGE_TIER_HIGH,
+    "admin": PRIVILEGE_TIER_MEDIUM,
+    "member": PRIVILEGE_TIER_LOW,
+    "billing": PRIVILEGE_TIER_LOW,
+}
+
+# Team Admin authority is team-SCOPED, never organization-wide — an
+# ordinary member (org role "member"/"billing"/unknown) who is a Team
+# Admin for at least one team gains bounded, team-scoped authority. This
+# is deliberately capped below MEDIUM's org-role meaning (Admin's
+# organization-level team/project creation authority) since a Team Admin
+# only controls their own team(s), not the organization.
+TEAM_ADMIN_CONTRIBUTION_TIER = PRIVILEGE_TIER_MEDIUM
+
+# Organization roles documented as granting Team-Admin-without-joining
+# (i.e. implicit access to every team's projects, regardless of actual
+# team membership) — see the doc-comment above this section.
+_ORG_WIDE_ACCESS_ROLES = frozenset({"owner", "manager"})
+
+
+def privilege_tier_for_org_role(org_role_category: object) -> str:
+    """Tier for a normalized ``org_role_category`` string (message-2's
+    ``categorize_org_role()`` output). Unrecognized/unknown values return
+    ``PRIVILEGE_TIER_UNKNOWN`` — never guessed from role-name substrings."""
+    if isinstance(org_role_category, str):
+        return _ORG_ROLE_TIER.get(org_role_category, PRIVILEGE_TIER_UNKNOWN)
+    return PRIVILEGE_TIER_UNKNOWN
+
+
+def highest_privilege_tier(tiers: "list") -> str:
+    """Return the highest-ranked tier in ``tiers``, or unknown if empty.
+
+    A known tier always outranks ``unknown`` (rank 0 is the floor, not
+    the ceiling) — a member holding one documented HIGH-tier role and one
+    piece of unresolvable evidence is reported as ``high``, not
+    ``unknown``, because the known evidence is more informative.
+    """
+    if not tiers:
+        return PRIVILEGE_TIER_UNKNOWN
+    return max(tiers, key=lambda t: _PRIVILEGE_TIER_RANK.get(t, -1))
+
+
+def organization_wide_access_for_org_role(org_role_category: object) -> "Optional[bool]":
+    """Return whether ``org_role_category`` documentedly grants implicit,
+    organization-wide project access (Team Admin actions without joining
+    any team). Returns ``None`` for an unknown/unrecognized role — never
+    ``False`` — since we cannot rule out organization-wide access for a
+    role whose semantics are unresolved."""
+    if not isinstance(org_role_category, str) or org_role_category == ORG_ROLE_UNKNOWN:
+        return None
+    return org_role_category in _ORG_WIDE_ACCESS_ROLES
+
+
+# ── Integration/repository control-context taxonomy (Sentry message 5) ─────
+#
+# Confirmed via current official docs
+# (https://docs.sentry.io/organization/membership/): Owner/Manager have
+# full integration and repository management authority (edit global
+# integrations, remove repositories). Admin can "edit Global
+# Integrations" (integration authority) but no documented per-repository
+# removal authority beyond that. Member "can add repositories (through
+# GitHub integrations)" — a narrow, documented ADD-only capability, not
+# full control. Billing has no documented integration/repository
+# authority at all.
+
+CONTROL_CONTEXT_FULL = "full"
+CONTROL_CONTEXT_INTEGRATION_ONLY = "integration_only"
+CONTROL_CONTEXT_ADD_ONLY = "add_only"
+CONTROL_CONTEXT_NONE = "none"
+CONTROL_CONTEXT_UNKNOWN = "unknown"
+
+_INTEGRATION_CONTROL_BY_ROLE: dict = {
+    "owner": CONTROL_CONTEXT_FULL,
+    "manager": CONTROL_CONTEXT_FULL,
+    "admin": CONTROL_CONTEXT_INTEGRATION_ONLY,
+    "member": CONTROL_CONTEXT_NONE,
+    "billing": CONTROL_CONTEXT_NONE,
+}
+
+_REPOSITORY_CONTROL_BY_ROLE: dict = {
+    "owner": CONTROL_CONTEXT_FULL,
+    "manager": CONTROL_CONTEXT_FULL,
+    "admin": CONTROL_CONTEXT_INTEGRATION_ONLY,
+    "member": CONTROL_CONTEXT_ADD_ONLY,
+    "billing": CONTROL_CONTEXT_NONE,
+}
+
+
+def categorize_integration_control(org_role_category: object) -> str:
+    if isinstance(org_role_category, str) and org_role_category in _INTEGRATION_CONTROL_BY_ROLE:
+        return _INTEGRATION_CONTROL_BY_ROLE[org_role_category]
+    return CONTROL_CONTEXT_UNKNOWN
+
+
+def categorize_repository_control(org_role_category: object) -> str:
+    if isinstance(org_role_category, str) and org_role_category in _REPOSITORY_CONTROL_BY_ROLE:
+        return _REPOSITORY_CONTROL_BY_ROLE[org_role_category]
+    return CONTROL_CONTEXT_UNKNOWN
+
+
+# ── Routing-context taxonomy (Sentry message 5 of 8) ────────────────────────
+#
+# ``completeness`` on a routing-context record reuses the SAME
+# FAMILY_COMPLETE/FAMILY_PARTIAL/FAMILY_DENIED/FAMILY_UNAVAILABLE
+# taxonomy defined above (never a new, redundant enum) — a resolved
+# target is always ``FAMILY_COMPLETE`` (positive evidence stands on its
+# own regardless of unrelated family gaps); an UNRESOLVED target inherits
+# the completeness of the source family that would have proven it either
+# way, so an unresolved target is only ever reported as a confirmed
+# orphan when that source family was itself FAMILY_COMPLETE.
+
+ROUTING_CONTEXT_TYPE_OWNERSHIP_RULE = "ownership_rule"
+ROUTING_CONTEXT_TYPE_ALERT_ACTION = "alert_action"

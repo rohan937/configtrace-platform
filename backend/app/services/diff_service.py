@@ -4152,6 +4152,41 @@ _SENTRY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "fallthrough",
         "auto_assignment_category",
     ),
+    # Sentry message 5 of 8 — effective access, purely derived from
+    # already-collected records (never a new API call). ``direct_team_
+    # count``/``project_access_source_categories`` are NOT tracked
+    # (informational context for a change that's already captured by the
+    # tracked fields below); ``effective_project_count`` and
+    # ``organization_wide_project_access`` ARE tracked — these are
+    # exactly the "did this member's reach broaden/narrow" signals.
+    "sentry_privileged_member": (
+        "org_role_category",
+        "member_status_category",
+        "privilege_tier",
+        "organization_wide_project_access",
+        "effective_project_count",
+        "team_admin_team_count",
+        "alert_routing_target_count",
+        "ownership_rule_target_count",
+        "integration_control_context",
+        "repository_control_context",
+    ),
+    "sentry_privileged_team": (
+        "project_count",
+        "ownership_rule_target_count",
+        "alert_action_target_count",
+        "privileged_member_count",
+        "unresolved_member_count",
+    ),
+    "sentry_routing_context": (
+        "target_type_category",
+        "target_id",
+        "target_resolved",
+        "target_active",
+        "target_privilege_tier",
+        "integration_status_category",
+        "context_enabled",
+    ),
 }
 
 
@@ -5098,6 +5133,29 @@ def _build_provider_metadata(
         metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
         metadata["owner_type_category"] = context_record.get("owner_type_category") or record.get("owner_type_category") or ""
         metadata["matcher_category"] = context_record.get("matcher_category") or record.get("matcher_category") or ""
+
+    # Sentry effective-access derivation (message 5 of 8) — purely
+    # derived, never includes emails, URLs, or secrets.
+    if record.get("record_type") == "sentry_privileged_member":
+        metadata["member_id"] = context_record.get("member_id") or record.get("member_id") or ""
+        metadata["org_role_category"] = context_record.get("org_role_category") or record.get("org_role_category") or ""
+        metadata["privilege_tier"] = context_record.get("privilege_tier") or record.get("privilege_tier") or ""
+        metadata["organization_wide_project_access"] = context_record.get("organization_wide_project_access")
+        if metadata["organization_wide_project_access"] is None:
+            metadata["organization_wide_project_access"] = record.get("organization_wide_project_access")
+    if record.get("record_type") == "sentry_privileged_team":
+        metadata["team_id"] = context_record.get("team_id") or record.get("team_id") or ""
+    if record.get("record_type") == "sentry_routing_context":
+        metadata["context_type"] = context_record.get("context_type") or record.get("context_type") or ""
+        metadata["project_id"] = context_record.get("project_id") or record.get("project_id") or ""
+        metadata["rule_id"] = context_record.get("rule_id") or record.get("rule_id") or ""
+        metadata["target_type_category"] = context_record.get("target_type_category") or record.get("target_type_category") or ""
+        metadata["target_resolved"] = context_record.get("target_resolved")
+        if metadata["target_resolved"] is None:
+            metadata["target_resolved"] = record.get("target_resolved")
+        metadata["context_enabled"] = context_record.get("context_enabled")
+        if metadata["context_enabled"] is None:
+            metadata["context_enabled"] = record.get("context_enabled")
 
     return metadata
 
