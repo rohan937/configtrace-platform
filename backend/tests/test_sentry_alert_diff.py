@@ -137,10 +137,14 @@ class TestMetricAlertRuleDiff:
         c = _find(changes, change_type="added")
         assert classify_sentry_change(c)[0] == "low"
 
-    def test_added_enabled_zero_actions_is_medium(self):
+    def test_added_enabled_zero_actions_is_high(self):
+        # Matches the sentry_metric_alert_unrouted static Finding severity
+        # (high) — Sentry message 7's Finding-vs-Change parity requires a
+        # transition into a risky state to be at least as severe as the
+        # corresponding static Finding.
         changes = _diff([], [_metric_rule("r1", action_count=0)])
         c = _find(changes, change_type="added")
-        assert classify_sentry_change(c)[0] == "medium"
+        assert classify_sentry_change(c)[0] == "high"
 
     def test_removed_is_medium(self):
         changes = _diff([_metric_rule("r1")], [])
@@ -300,10 +304,13 @@ class TestMetricAlertTriggerDiff:
 
 
 class TestIssueAlertRuleDiff:
-    def test_added_enabled_zero_actions_is_medium(self):
+    def test_added_enabled_zero_actions_is_high(self):
+        # Matches the sentry_issue_alert_unrouted static Finding severity
+        # (high) — see the metric-rule equivalent test for the parity
+        # rationale.
         changes = _diff([], [_issue_rule("ir1", action_count=0)])
         c = _find(changes, change_type="added")
-        assert classify_sentry_change(c)[0] == "medium"
+        assert classify_sentry_change(c)[0] == "high"
 
     def test_added_with_actions_is_low(self):
         changes = _diff([], [_issue_rule("ir1", action_count=1)])

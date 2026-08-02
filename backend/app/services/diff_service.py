@@ -5683,6 +5683,165 @@ def _snowflake_removal_suppressed(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Sentry false-removal prevention (Sentry message 7 of 8)
+#
+# The Sentry connector (app/connectors/sentry.py) collects 15 organization-
+# scoped families plus 3 derived rollups (privileged member/team, routing
+# context). Any ONE family — or, for the two genuinely per-parent-walk
+# families, any ONE team/project within it — can fail (permission scoped
+# down, rate-limited to exhaustion) while every other family/parent collects
+# normally. Naively diffing two consecutive snapshots would then report
+# every previously-known record in the failed family/parent as "removed" —
+# a false drift signal, not a real deletion.
+#
+# The connector reports:
+#   - organization-wide completeness via `sentry_organization.family_completeness`
+#     (the single always-present organization record, keyed by organization_id);
+#   - PER-TEAM completeness for the one genuinely per-team walk (team
+#     memberships, one API call per team) via
+#     `sentry_team.membership_collection_status` — Sentry message 7 (this
+#     message) — so a single failed team doesn't suppress removals for every
+#     OTHER team's memberships;
+#   - PER-PROJECT completeness for the two genuinely per-project walks
+#     (issue-alert rules + their embedded actions, and ownership rules) via
+#     `sentry_project.issue_alert_collection_status` /
+#     `sentry_project.ownership_collection_status` — Sentry message 7 (this
+#     message) — so a single failed project doesn't suppress removals for
+#     every OTHER project's issue alerts/ownership rules.
+#
+# Metric alert rules (and their embedded triggers/actions) are a SINGLE
+# organization-wide call, not per-project — `metric_alert_rules` /
+# `alert_actions` family completeness alone is the correct (and only
+# available) granularity for those record types.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SENTRY_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE: dict[str, str] = {
+    "sentry_project": "projects",
+    "sentry_team": "teams",
+    "sentry_member": "members",
+    "sentry_project_team_assignment": "project_team_assignments",
+    "sentry_metric_alert_rule": "metric_alert_rules",
+    "sentry_metric_alert_trigger": "metric_alert_rules",
+    "sentry_organization_integration": "organization_integrations",
+    "sentry_repository": "repositories",
+    "sentry_code_mapping": "code_mappings",
+}
+
+
+def _sentry_removal_suppressed(
+    prev_record: dict, new_index: dict[str, dict]
+) -> Optional[str]:
+    """Return a short reason string if *prev_record*'s absence from the new
+    snapshot must NOT be reported as a "removed" Change, or ``None`` if the
+    normal removal path should proceed.
+
+    Only ever inspects Sentry records — every other provider's removal
+    behavior is completely unaffected (returns ``None`` immediately for any
+    non-``sentry_*`` record).
+    """
+    record_type = prev_record.get("record_type")
+    if not isinstance(record_type, str) or not record_type.startswith("sentry_"):
+        return None
+    # The organization record's own disappearance is a real signal
+    # (integration lost all access / organization deleted) — never
+    # suppressed.
+    if record_type == "sentry_organization":
+        return None
+
+    organization_id = prev_record.get("organization_id")
+    org_record = new_index.get(organization_id) if organization_id else None
+    family_completeness = (
+        org_record.get("family_completeness") if isinstance(org_record, dict) else None
+    )
+    if not isinstance(family_completeness, dict):
+        # No organization record (or a malformed one) in the new snapshot
+        # to consult at all — fall back to the normal (unsuppressed)
+        # removal path rather than guessing about completeness.
+        family_completeness = {}
+
+    def _incomplete(key: str) -> bool:
+        status = family_completeness.get(key)
+        return isinstance(status, str) and status != "complete"
+
+    # ── Per-team completeness (team-membership walk) ────────────────────────
+    if record_type == "sentry_team_membership":
+        team_id = prev_record.get("team_id")
+        parent = new_index.get(f"{organization_id}/team/{team_id}") if team_id else None
+        if isinstance(parent, dict):
+            status = parent.get("membership_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:team_memberships" if _incomplete("team_memberships") else None
+
+    # ── Per-project completeness (issue-alert walk) ──────────────────────────
+    if record_type == "sentry_issue_alert_rule":
+        project_id = prev_record.get("project_id")
+        parent = new_index.get(f"{organization_id}/project/{project_id}") if project_id else None
+        if isinstance(parent, dict):
+            status = parent.get("issue_alert_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:issue_alert_rules" if _incomplete("issue_alert_rules") else None
+
+    if record_type == "sentry_alert_action":
+        # Metric-type actions come from the single org-wide metric-alert
+        # call; issue-type actions come from the per-project issue-alert
+        # walk. NOTE: the action record itself carries no `project_id` (see
+        # `_normalize_metric_alert_action`/`_normalize_issue_alert_action`),
+        # and resolving one via a linear scan of `new_index` per removed
+        # action would be O(n) per check — unacceptable at the 150,000-
+        # action scale target. Deliberately safe rather than precise (the
+        # same tradeoff Snowflake's `_snowflake_removal_suppressed` makes
+        # for database-role object grants): any ONE project's issue-alert
+        # walk failing marks `issue_alert_rules` partial for the whole
+        # fetch, so checking the coarser organization-wide family status
+        # here still correctly suppresses the false removal — it just
+        # doesn't exclude unrelated projects' actions from that same
+        # widened suppression window.
+        if prev_record.get("rule_type") == "issue":
+            return "family_incomplete:issue_alert_rules_or_actions" if (
+                _incomplete("issue_alert_rules") or _incomplete("alert_actions")
+            ) else None
+        return "family_incomplete:alert_actions" if _incomplete("alert_actions") else None
+
+    # ── Per-project completeness (ownership-rule walk) ──────────────────────
+    if record_type == "sentry_ownership_rule":
+        project_id = prev_record.get("project_id")
+        parent = new_index.get(f"{organization_id}/project/{project_id}") if project_id else None
+        if isinstance(parent, dict):
+            status = parent.get("ownership_collection_status")
+            return f"parent_incomplete:{status}" if isinstance(status, str) and status != "complete" else None
+        return "family_incomplete:ownership_rules" if _incomplete("ownership_rules") else None
+
+    # ── Derived records (privileged member/team, routing context — message
+    #    5) — each derivation depends on multiple upstream families; ANY of
+    #    them being incomplete can make the derivation incomplete, so the
+    #    current record's own absence must not be reported as a real
+    #    access-loss "removed" Change. ────────────────────────────────────────
+    if record_type == "sentry_privileged_member":
+        return "family_incomplete:privilege_derivation_inputs" if (
+            _incomplete("members") or _incomplete("teams") or _incomplete("team_memberships")
+            or _incomplete("project_team_assignments") or _incomplete("alert_actions")
+            or _incomplete("ownership_rules")
+        ) else None
+    if record_type == "sentry_privileged_team":
+        return "family_incomplete:privilege_derivation_inputs" if (
+            _incomplete("teams") or _incomplete("team_memberships") or _incomplete("project_team_assignments")
+            or _incomplete("alert_actions") or _incomplete("ownership_rules")
+        ) else None
+    if record_type == "sentry_routing_context":
+        return "family_incomplete:routing_derivation_inputs" if (
+            _incomplete("members") or _incomplete("teams") or _incomplete("ownership_rules")
+            or _incomplete("alert_actions") or _incomplete("organization_integrations")
+        ) else None
+
+    # ── Flat, organization-wide families ─────────────────────────────────────
+    key = _SENTRY_FAMILY_COMPLETENESS_KEY_BY_RECORD_TYPE.get(record_type)
+    if key and _incomplete(key):
+        return f"family_incomplete:{key}"
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Diff computation — pure, no DB
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -5753,6 +5912,7 @@ def compute_diff(
                 or _okta_removal_suppressed(prev_record, new_index)
                 or _entra_removal_suppressed(prev_record, new_index)
                 or _snowflake_removal_suppressed(prev_record, new_index)
+                or _sentry_removal_suppressed(prev_record, new_index)
             )
             if suppress_reason is not None:
                 logger.info(

@@ -372,6 +372,7 @@ CATEGORY_PERMISSION_DENIED = "permission_denied"
 CATEGORY_NOT_FOUND = "not_found"
 CATEGORY_THROTTLED = "throttled"
 CATEGORY_SERVER_ERROR = "server_error"
+CATEGORY_CLIENT_ERROR = "client_error"
 CATEGORY_CONNECTION_ERROR = "connection_error"
 CATEGORY_TLS_ERROR = "tls_error"
 CATEGORY_TIMEOUT = "timeout"
@@ -390,6 +391,12 @@ def _classify_response(resp: httpx.Response) -> tuple[str, str]:
         return CATEGORY_THROTTLED, "HTTP 429: Sentry rate-limited the request."
     if status >= 500:
         return CATEGORY_SERVER_ERROR, f"HTTP {status}: Sentry returned a server error."
+    if 400 <= status < 500:
+        # Any OTHER 4xx (400 malformed request, 405, 409, 422, ...) is a
+        # client-side problem, never transient — must never be retried as
+        # if it were a server error (Sentry message 7 fix: previously fell
+        # through to CATEGORY_SERVER_ERROR and was retried).
+        return CATEGORY_CLIENT_ERROR, f"HTTP {status}: Sentry rejected the request."
     return CATEGORY_SERVER_ERROR, f"HTTP {status}: unexpected Sentry API response."
 
 
@@ -2473,7 +2480,7 @@ class SentryConnector(BaseConnector):
             member_records, member_completeness = self._collect_members(
                 client, slug, organization_id, _sleep_fn=_sleep_fn,
             )
-            membership_records, membership_completeness, _status_by_team = self._collect_team_memberships(
+            membership_records, membership_completeness, status_by_team = self._collect_team_memberships(
                 client, slug, organization_id, team_records, _sleep_fn=_sleep_fn,
             )
 
@@ -2483,7 +2490,7 @@ class SentryConnector(BaseConnector):
             metric_rule_records, metric_trigger_records, metric_action_records, metric_completeness = (
                 self._collect_metric_alert_rules(client, slug, organization_id, project_id_by_slug, _sleep_fn=_sleep_fn)
             )
-            issue_rule_records, issue_action_records, issue_completeness, _status_by_project = (
+            issue_rule_records, issue_action_records, issue_completeness, status_by_project_issue_alerts = (
                 self._collect_issue_alert_rules(client, slug, organization_id, project_records, _sleep_fn=_sleep_fn)
             )
             # Both metric-trigger actions and issue-rule actions share one
@@ -2502,9 +2509,31 @@ class SentryConnector(BaseConnector):
             code_mapping_records, code_mapping_completeness = self._collect_code_mappings(
                 client, slug, organization_id, _sleep_fn=_sleep_fn,
             )
-            ownership_records, ownership_completeness, _status_by_project_ownership = self._collect_ownership_rules(
+            ownership_records, ownership_completeness, status_by_project_ownership = self._collect_ownership_rules(
                 client, slug, organization_id, project_records, _sleep_fn=_sleep_fn,
             )
+
+            # Sentry message 7 of 8: expose the per-team/per-project
+            # completeness signals already computed above (previously
+            # discarded) onto the team/project records themselves, so
+            # diff_service._sentry_removal_suppressed() can localize
+            # false-removal suppression to just the ONE team/project whose
+            # nested walk failed, rather than either suppressing nothing
+            # (false "removed" Changes) or suppressing the entire
+            # organization-wide family (masking real removals elsewhere).
+            # These are diagnostic completeness fields, never diff-tracked
+            # (see _SENTRY_TRACKED_FIELDS_BY_TYPE in diff_service.py).
+            for team_rec in team_records:
+                team_rec["membership_collection_status"] = status_by_team.get(
+                    team_rec["team_id"], FAMILY_UNAVAILABLE
+                )
+            for project_rec in project_records:
+                project_rec["issue_alert_collection_status"] = status_by_project_issue_alerts.get(
+                    project_rec["project_id"], FAMILY_UNAVAILABLE
+                )
+                project_rec["ownership_collection_status"] = status_by_project_ownership.get(
+                    project_rec["project_id"], FAMILY_UNAVAILABLE
+                )
 
             # Message-2/3 collection completeness is the ground truth for
             # these families — it must never be overridden by a stale

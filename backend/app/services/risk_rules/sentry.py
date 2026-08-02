@@ -260,12 +260,18 @@ def _classify_metric_alert_rule_change(change: object) -> tuple[str, str]:
     if ct == "added":
         if status_category == "enabled" and action_count == 0:
             return (
-                "medium",
+                "high",
                 "A new Sentry metric alert rule was added enabled with zero notification actions "
                 "— it will not notify anyone if it fires.",
             )
         return "low", "A new Sentry metric alert rule was added."
     if ct == "removed":
+        if status_category != "enabled" or action_count == 0:
+            return (
+                "low",
+                "A Sentry metric alert rule that was disabled or already had no notification "
+                "actions is no longer visible to ConfigTrace — no active monitoring coverage was lost.",
+            )
         return "medium", "A Sentry metric alert rule is no longer visible to ConfigTrace — monitoring coverage may have been lost."
 
     fp = (_get(change, "field_path") or "")
@@ -349,12 +355,18 @@ def _classify_issue_alert_rule_change(change: object) -> tuple[str, str]:
     if ct == "added":
         if status_category == "enabled" and action_count == 0:
             return (
-                "medium",
+                "high",
                 "A new Sentry issue alert rule was added enabled with zero notification actions "
                 "— it will not notify anyone when it fires.",
             )
         return "low", "A new Sentry issue alert rule was added."
     if ct == "removed":
+        if status_category != "enabled" or action_count == 0:
+            return (
+                "low",
+                "A Sentry issue alert rule that was disabled or already had no notification "
+                "actions is no longer visible to ConfigTrace — no active monitoring coverage was lost.",
+            )
         return "medium", "A Sentry issue alert rule is no longer visible to ConfigTrace — monitoring coverage may have been lost."
 
     fp = (_get(change, "field_path") or "")
@@ -585,11 +597,23 @@ def _classify_routing_context_change(change: object) -> tuple[str, str]:
     context_enabled = pm.get("context_enabled")
 
     if ct == "added":
+        # provider_metadata carries only a small allowlist (see
+        # `_build_provider_metadata`) — `integration_status_category` is
+        # not among it, so read the full new record (available on an
+        # "added" Change's own `new_value`) for that field instead.
+        new_record = _get(change, "new_value")
+        new_record = new_record if isinstance(new_record, dict) else {}
         target_resolved = pm.get("target_resolved")
+        integration_status = new_record.get("integration_status_category")
         if target_resolved is False and context_enabled:
             return (
-                "medium",
+                "high",
                 "A new Sentry routing target was identified as unresolved on an active/enabled rule.",
+            )
+        if integration_status == "disabled" and context_enabled:
+            return (
+                "high",
+                "A new Sentry routing target was identified referencing a disabled integration on an active/enabled rule.",
             )
         return "low", "A new Sentry routing context was identified."
     if ct == "removed":
