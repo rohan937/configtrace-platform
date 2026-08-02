@@ -783,6 +783,26 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "snowflake_scim_critical_privilege_run_as": ("snowflake_security_integration",),
     "snowflake_scim_high_privilege_run_as": ("snowflake_security_integration",),
     "snowflake_saml_integration_incomplete_config": ("snowflake_security_integration",),
+    "sentry_active_organization_owner": ("sentry_privileged_member",),
+    "sentry_active_organization_manager": ("sentry_privileged_member",),
+    "sentry_active_organization_admin": ("sentry_privileged_member",),
+    "sentry_pending_privileged_invitation": ("sentry_privileged_member",),
+    "sentry_member_broad_routing_authority": ("sentry_privileged_member",),
+    "sentry_member_team_admin_without_org_role": ("sentry_privileged_member",),
+    "sentry_team_has_broad_routing_authority": ("sentry_privileged_team",),
+    "sentry_team_has_unresolved_members": ("sentry_privileged_team",),
+    "sentry_metric_alert_unrouted": ("sentry_metric_alert_rule",),
+    "sentry_issue_alert_unrouted": ("sentry_issue_alert_rule",),
+    "sentry_metric_alert_disabled_with_routing_configured": ("sentry_metric_alert_rule",),
+    "sentry_issue_alert_disabled_with_routing_configured": ("sentry_issue_alert_rule",),
+    "sentry_alert_targets_missing_team": ("sentry_routing_context",),
+    "sentry_alert_targets_missing_member": ("sentry_routing_context",),
+    "sentry_alert_references_inactive_member": ("sentry_routing_context",),
+    "sentry_alert_references_disabled_integration": ("sentry_routing_context",),
+    "sentry_ownership_targets_missing_team": ("sentry_routing_context",),
+    "sentry_ownership_targets_missing_member": ("sentry_routing_context",),
+    "sentry_ownership_targets_inactive_member": ("sentry_routing_context",),
+    "sentry_repository_pending_deletion": ("sentry_repository",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -956,6 +976,13 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Network policy anywhere-access posture",
         "Authentication policy MFA enrollment posture",
         "Security integration (SAML/OAuth/SCIM) posture and SCIM run-as role privilege",
+    ],
+    "sentry": [
+        "Privileged organization members & pending privileged invitations",
+        "Privileged team / combined routing authority posture",
+        "Alert coverage (enabled rules with no notification actions)",
+        "Alert & ownership notification routing (missing/inactive targets, disabled integrations)",
+        "Repository configuration integrity",
     ],
 }
 

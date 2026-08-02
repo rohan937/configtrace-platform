@@ -62,6 +62,7 @@ from app.services.security_rules import kubernetes as kubernetes_rules
 from app.services.security_rules import okta as okta_rules
 from app.services.security_rules import entra as entra_rules
 from app.services.security_rules import snowflake as snowflake_rules
+from app.services.security_rules import sentry as sentry_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,8 @@ _PROVIDER_RULES = {
     "entra": [entra_rules.evaluate],
     # Snowflake message 6 of 8: Snowflake security findings
     "snowflake": [snowflake_rules.evaluate],
+    # Sentry message 6 of 8: Sentry security findings
+    "sentry": [sentry_rules.evaluate],
 }
 
 

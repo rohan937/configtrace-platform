@@ -731,6 +731,27 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "snowflake_scim_high_privilege_run_as",
         "snowflake_saml_integration_incomplete_config",
         "snowflake_user_high_risk_future_grant",
+        # Sentry (message 6 of 8)
+        "sentry_active_organization_owner",
+        "sentry_active_organization_manager",
+        "sentry_active_organization_admin",
+        "sentry_pending_privileged_invitation",
+        "sentry_member_broad_routing_authority",
+        "sentry_member_team_admin_without_org_role",
+        "sentry_team_has_broad_routing_authority",
+        "sentry_team_has_unresolved_members",
+        "sentry_metric_alert_unrouted",
+        "sentry_issue_alert_unrouted",
+        "sentry_metric_alert_disabled_with_routing_configured",
+        "sentry_issue_alert_disabled_with_routing_configured",
+        "sentry_alert_targets_missing_team",
+        "sentry_alert_targets_missing_member",
+        "sentry_alert_references_inactive_member",
+        "sentry_alert_references_disabled_integration",
+        "sentry_ownership_targets_missing_team",
+        "sentry_ownership_targets_missing_member",
+        "sentry_ownership_targets_inactive_member",
+        "sentry_repository_pending_deletion",
     }
 )
 

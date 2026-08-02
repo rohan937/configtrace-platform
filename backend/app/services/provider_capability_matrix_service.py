@@ -1724,7 +1724,7 @@ _SENTRY = ProviderCapability(
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1735,6 +1735,23 @@ _SENTRY = ProviderCapability(
     ),
     maturity="planned",
     notes=(
+        "Message 6 added Security Findings: 20 static posture rules spanning "
+        "privileged organization members (Owner/Manager/Admin role-specific "
+        "rules, pending privileged invitations, combined alert+ownership "
+        "routing authority, Team Admin delegation without an org-level "
+        "role), privileged teams (combined routing authority, unresolved "
+        "membership), alert coverage (enabled rules with zero notification "
+        "actions, disabled rules retaining routing config), alert/ownership "
+        "notification routing (confirmed-missing team/member targets on "
+        "enabled rules, inactive-member targets, disabled-integration "
+        "references), and repository configuration integrity — see "
+        "backend/tests/reports/sentry_security_findings_matrix.md for the "
+        "full rule inventory and the deferred-rule list (repository/code-"
+        "mapping cross-record joins, invalid-ownership-rule detection, and "
+        "per-project ownership-unroutable aggregates are all deferred "
+        "because the per-record Finding evaluator cannot join sibling "
+        "records without a connector-schema change, which is out of this "
+        "message's scope). "
         "Sentry provider foundation (message 1 of 8): organization auth token "
         "(bearer) authentication over the Sentry SaaS REST API (fixed "
         "https://sentry.io/api/0 origin — self-hosted Sentry is not "
