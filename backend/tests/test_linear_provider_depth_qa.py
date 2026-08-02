@@ -517,12 +517,13 @@ def test_linear_rule_copy_no_forbidden_phrases() -> None:
 
 
 def test_planned_next_stage_structural_invariant() -> None:
-    """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A
-    is now the planned next stage."""
+    """Regression note: Kubernetes launched (message 1 / M89A), then
+    Sentry (message 8 — public launch) was the FINAL planned provider.
+    Provider expansion is now frozen."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
     assert isinstance(planned, str) and planned, "planned_next_stage must be a non-empty string"
-    assert "M90A" in planned, f"planned_next_stage should reference M90A, got {planned!r}"
+    assert "frozen" in planned.lower(), f"planned_next_stage should say frozen, got {planned!r}"
 
 
 def test_kubernetes_not_yet_implemented() -> None:

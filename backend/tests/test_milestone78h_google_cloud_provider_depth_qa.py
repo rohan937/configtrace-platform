@@ -409,10 +409,12 @@ def test_capability_matrix_pins_google_cloud_partial_demo_ready():
 
 
 def test_expansion_framework_points_beyond_m79d():
-    """Planned next stage has advanced to M90A (Sentry Drift Provider Foundation)."""
+    """Planned next stage advanced past every launched provider; Sentry
+    (message 8 — public launch) was the FINAL planned provider, so
+    provider expansion is now frozen."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M90A" in planned, planned
+    assert "frozen" in planned.lower(), planned
     assert "Sentry" in planned
     assert "M78H" not in planned, "M78H is done; pointer must advance past it"
     assert "M78I" not in planned, "M78I is done; pointer must advance past it"

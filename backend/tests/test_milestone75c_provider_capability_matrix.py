@@ -71,17 +71,18 @@ EXPECTED_LABELS = {
     "shopify": "Shopify",
 }
 
-# All providers in the matrix, including Kubernetes, Okta, and Microsoft
-# Entra ID / Snowflake (all maturity "partial" — drift + Security Findings
-# only, no activity ingestion/demo/case-report stack, so all four are
+# All providers in the matrix, including Kubernetes, Okta, Microsoft Entra ID,
+# Snowflake, and Sentry (all maturity "partial" — drift + Security Findings
+# only, no activity ingestion/demo/case-report stack, so all five are
 # intentionally excluded from EXPECTED_PROVIDERS above).
-ALL_MATRIX_PROVIDERS = EXPECTED_PROVIDERS | {"kubernetes", "okta", "entra", "snowflake"}
+ALL_MATRIX_PROVIDERS = EXPECTED_PROVIDERS | {"kubernetes", "okta", "entra", "snowflake", "sentry"}
 ALL_MATRIX_LABELS = {
     **EXPECTED_LABELS,
     "kubernetes": "Kubernetes",
     "okta": "Okta",
     "entra": "Microsoft Entra ID",
     "snowflake": "Snowflake",
+    "sentry": "Sentry",
 }
 
 
@@ -108,8 +109,8 @@ def _read_fe(rel: str) -> str:
 # ════════════════════════════════════════════════════════════════════════════
 
 
-def test_matrix_has_exactly_twelve_providers():
-    assert len(svc.PROVIDER_CAPABILITIES) == 12
+def test_matrix_has_exactly_thirteen_providers():
+    assert len(svc.PROVIDER_CAPABILITIES) == 13
     keys = {p.provider for p in svc.PROVIDER_CAPABILITIES}
     assert keys == ALL_MATRIX_PROVIDERS
 
@@ -189,7 +190,7 @@ def test_drift_remediation_preview_is_honest():
 def test_summary_counts_are_correct():
     matrix = svc.get_matrix()
     summary = matrix["summary"]
-    assert summary["total_providers"] == 12
+    assert summary["total_providers"] == 13
     # The 8 dual-stack-complete providers have every security capability;
     # Kubernetes/Okta/Entra/Snowflake (security_rules only, no activity
     # ingestion) do not.
@@ -209,7 +210,7 @@ def test_summary_counts_are_correct():
 def test_get_matrix_structure():
     matrix = svc.get_matrix()
     assert "providers" in matrix and "summary" in matrix
-    assert len(matrix["providers"]) == 12
+    assert len(matrix["providers"]) == 13
     # Each provider dict has the expected keys.
     for pdict in matrix["providers"]:
         for key in ("provider", "label", "category", "drift", "security", "maturity", "notes"):
@@ -259,7 +260,7 @@ def test_endpoint_returns_matrix(client):
     assert r.status_code == 200
     body = r.json()
     assert "providers" in body and "summary" in body
-    assert body["summary"]["total_providers"] == 12
+    assert body["summary"]["total_providers"] == 13
     # All expected providers present.
     returned = {p["provider"] for p in body["providers"]}
     assert returned == ALL_MATRIX_PROVIDERS

@@ -896,24 +896,23 @@ class TestSendGridExpansionFramework:
             "SendGrid arc is complete and must not be in the recommended queue"
         )
 
-    def test_kubernetes_is_the_next_recommended_provider(self) -> None:
+    def test_recommended_queue_is_empty_after_sentry_launch(self) -> None:
         """Regression note: Kubernetes launched and was removed from the
-        recommended queue — Sentry is now #1."""
+        recommended queue. Sentry (message 8 — public launch) was the
+        FINAL planned provider, so the queue is now permanently empty."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw["recommended_next_providers"]
-        assert recs, "recommended_next_providers must not be empty"
-        top = recs[0]
-        assert top["provider"] == "sentry", (
-            f"Sentry should be #1 recommended provider; got: {top['provider']!r}"
-        )
+        assert recs == [], f"recommended_next_providers must be empty; got: {recs!r}"
 
-    def test_next_provider_summary_is_kubernetes(self) -> None:
-        """Regression note: Kubernetes launched — Sentry is now next_provider."""
+    def test_next_provider_summary_is_none_expansion_frozen(self) -> None:
+        """Regression note: Kubernetes launched, then Sentry (message 8 —
+        public launch) was the FINAL planned provider. next_provider is
+        now permanently None."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
-        assert fw["summary"]["next_provider"] == "Sentry", (
-            f"next_provider should be 'Sentry'; got: {fw['summary']['next_provider']!r}"
+        assert fw["summary"]["next_provider"] is None, (
+            f"next_provider should be None; got: {fw['summary']['next_provider']!r}"
         )
 
 

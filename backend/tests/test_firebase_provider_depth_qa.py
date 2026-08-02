@@ -397,18 +397,18 @@ def test_firebase_capability_is_complete() -> None:
     assert cap.maturity == "complete"
 
 
-def test_expansion_framework_points_at_kubernetes() -> None:
+def test_expansion_framework_queue_is_empty_after_sentry_launch() -> None:
     """Regression note: Kubernetes launched its provider architecture
     foundation (message 1 / M89A) and was removed from the recommended
-    queue — Sentry (M90A) is now the head."""
+    queue. Sentry (message 8 — public launch) was the FINAL planned
+    provider, so the queue is now permanently empty."""
     from app.services.provider_expansion_framework import (
         RECOMMENDED_NEXT_PROVIDERS,
     )
     providers = {p.provider for p in RECOMMENDED_NEXT_PROVIDERS}
     assert "kubernetes" not in providers
-    head = RECOMMENDED_NEXT_PROVIDERS[0]
-    assert head.provider == "sentry"
-    assert "M90" in (head.first_milestone_name or "")
+    assert "sentry" not in providers
+    assert RECOMMENDED_NEXT_PROVIDERS == []
 
 
 def test_kubernetes_is_not_implemented() -> None:

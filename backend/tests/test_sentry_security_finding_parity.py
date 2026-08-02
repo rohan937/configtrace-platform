@@ -185,20 +185,23 @@ class TestCapabilityMatrixParity:
         assert cap is not None
         assert cap.security.security_rules is True
 
-    def test_sentry_maturity_stays_planned(self):
+    def test_sentry_maturity_is_partial_matching_dual_stack_convention(self):
+        # As of Sentry message 8 (launch), maturity reflects the same
+        # "drift + Security Findings, no activity ingestion" dual-stack
+        # convention already used by Okta/Entra/Snowflake/Kubernetes.
         from app.services.provider_capability_matrix_service import get_provider_capability
 
         cap = get_provider_capability("sentry")
-        assert cap.maturity == "planned"
+        assert cap.maturity == "partial"
 
-    def test_sentry_still_absent_from_full_capabilities_list(self):
+    def test_sentry_present_in_full_capabilities_list_after_launch(self):
         from app.services.provider_capability_matrix_service import (
             PROVIDER_CAPABILITIES,
             PROVIDER_CAPABILITIES_PARTIAL,
         )
 
-        assert "sentry" in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
-        assert "sentry" not in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "sentry" in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "sentry" not in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
 
 
 class TestFrontendParity:
@@ -229,12 +232,12 @@ class TestFrontendParity:
             _provider, backend_severity, _category = security_rule_pack._RULE_META[key]
             assert fe_severity == backend_severity, f"{key}: frontend severity {fe_severity!r} != backend {backend_severity!r}"
 
-    def test_frontend_sentry_not_in_connectable_provider_ids(self):
+    def test_frontend_sentry_in_connectable_provider_ids(self):
         providers_ts = _REPO_ROOT / "frontend" / "src" / "lib" / "providers.ts"
         text = providers_ts.read_text()
         conn_match = re.search(r"CONNECTABLE_PROVIDER_IDS[^=]*=\s*\[(.*?)\];", text, re.DOTALL)
         assert conn_match, "could not locate CONNECTABLE_PROVIDER_IDS array"
-        assert '"sentry"' not in conn_match.group(1)
+        assert '"sentry"' in conn_match.group(1)
 
     def test_no_frontend_wording_claims_compromise(self):
         """MANDATORY guard: no sentry_* frontend entry may claim a

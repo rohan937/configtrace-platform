@@ -319,6 +319,102 @@ STRUCTURALLY_UNSUPPORTED_FAMILIES: frozenset[str] = frozenset({
     CAPABILITY_FAMILY_OWNERSHIP_RULES,
 })
 
+# ── Core vs extended coverage (Sentry message 8 of 8) ───────────────────────
+#
+# Only the 7 families message 1's ``_CAPABILITY_PROBES`` actually probes
+# (an org-scoped, page-1-only GET) participate in coverage classification.
+# The 3 STRUCTURALLY_UNSUPPORTED_FAMILIES are always CAPABILITY_UNSUPPORTED
+# regardless of token scope — including them in a Full/Partial check would
+# make Full permanently unreachable, since "unsupported" never equals
+# "available". Core: organization identity, project/team/member inventory
+# — the minimum needed for meaningful monitoring (matches the connector's
+# own message-2 access-coverage scope). Extended: alerting, integrations,
+# repositories — may require additional token scopes
+# (``alerts:read``/``org:integrations``) a narrowly-scoped monitoring
+# token legitimately may not have; absence alone must not make the
+# integration Invalid.
+PROBED_CAPABILITY_FAMILIES: tuple[str, ...] = tuple(
+    f for f, _ in (
+        (CAPABILITY_FAMILY_PROJECTS, None),
+        (CAPABILITY_FAMILY_TEAMS, None),
+        (CAPABILITY_FAMILY_MEMBERS, None),
+        (CAPABILITY_FAMILY_METRIC_ALERTS, None),
+        (CAPABILITY_FAMILY_INTEGRATIONS, None),
+        (CAPABILITY_FAMILY_REPOSITORIES, None),
+        (CAPABILITY_FAMILY_RELEASES, None),
+    )
+)
+CORE_CAPABILITY_FAMILIES: tuple[str, ...] = (
+    CAPABILITY_FAMILY_PROJECTS,
+    CAPABILITY_FAMILY_TEAMS,
+    CAPABILITY_FAMILY_MEMBERS,
+)
+EXTENDED_CAPABILITY_FAMILIES: tuple[str, ...] = (
+    CAPABILITY_FAMILY_METRIC_ALERTS,
+    CAPABILITY_FAMILY_INTEGRATIONS,
+    CAPABILITY_FAMILY_REPOSITORIES,
+    CAPABILITY_FAMILY_RELEASES,
+)
+assert set(CORE_CAPABILITY_FAMILIES) | set(EXTENDED_CAPABILITY_FAMILIES) == set(PROBED_CAPABILITY_FAMILIES)
+assert not (set(CORE_CAPABILITY_FAMILIES) & set(EXTENDED_CAPABILITY_FAMILIES))
+
+# ── Coverage state taxonomy ──────────────────────────────────────────────────
+
+COVERAGE_FULL = "full"
+COVERAGE_PARTIAL = "partial"
+COVERAGE_INVALID = "invalid"
+
+_FAMILY_DIAGNOSTIC_GROUP: dict[str, str] = {
+    CAPABILITY_FAMILY_PROJECTS: "Projects and teams",
+    CAPABILITY_FAMILY_TEAMS: "Projects and teams",
+    CAPABILITY_FAMILY_MEMBERS: "Members and access",
+    CAPABILITY_FAMILY_METRIC_ALERTS: "Alert rules",
+    CAPABILITY_FAMILY_INTEGRATIONS: "Integrations",
+    CAPABILITY_FAMILY_REPOSITORIES: "Repositories",
+    CAPABILITY_FAMILY_RELEASES: "Releases",
+}
+assert set(_FAMILY_DIAGNOSTIC_GROUP) == set(PROBED_CAPABILITY_FAMILIES)
+
+
+def compute_coverage_state(family_status: dict) -> str:
+    """Return ``COVERAGE_INVALID``/``COVERAGE_PARTIAL``/``COVERAGE_FULL``
+    from a ``{family: CAPABILITY_*}`` map (probed families only).
+
+    Invalid: zero core families are readable — no meaningful monitoring
+    would result from creating this integration. Full: every probed
+    family (core and extended) is readable. Partial: at least one core
+    family is readable, but something is not — the integration is still
+    useful and must NOT be rejected merely because an optional/elevated
+    family is denied.
+    """
+    core_available = sum(
+        1 for family in CORE_CAPABILITY_FAMILIES if family_status.get(family) == CAPABILITY_AVAILABLE
+    )
+    if core_available == 0:
+        return COVERAGE_INVALID
+    all_available = all(
+        family_status.get(family) == CAPABILITY_AVAILABLE for family in PROBED_CAPABILITY_FAMILIES
+    )
+    return COVERAGE_FULL if all_available else COVERAGE_PARTIAL
+
+
+def format_capability_diagnostics(family_status: dict) -> dict:
+    """Collapse per-family capability statuses into grouped, safe,
+    human-readable diagnostics (never raw request URLs, never a raw API
+    error) — e.g. ``{"Projects and teams": "Available", "Integrations":
+    "Permission denied"}``. A group is "Available" only if every family
+    mapped into it is available."""
+    groups: dict[str, str] = {}
+    for family in PROBED_CAPABILITY_FAMILIES:
+        label = _FAMILY_DIAGNOSTIC_GROUP[family]
+        status = family_status.get(family)
+        available = status == CAPABILITY_AVAILABLE
+        if label not in groups:
+            groups[label] = "Available"
+        if not available and groups[label] == "Available":
+            groups[label] = "Permission denied" if status == CAPABILITY_DENIED else "Unavailable"
+    return groups
+
 
 # ── Credential validators ───────────────────────────────────────────────────
 

@@ -1295,15 +1295,13 @@ def test_expansion_framework_not_pointing_to_m82_current():
     )
 
 
-def test_expansion_framework_pagerduty_at_head_of_queue():
-    # M83A shipped Clerk; PagerDuty is now the head.
+def test_expansion_framework_queue_is_empty_after_sentry_launch():
+    # After the PagerDuty/Linear/Jira/GitLab/Terraform/Kubernetes/Sentry
+    # arcs all shipped — Sentry (message 8, public launch) was the FINAL
+    # planned provider — the recommended queue is now permanently empty.
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
-    assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
-    # After the PagerDuty/Linear/Jira/GitLab/Terraform/Kubernetes arcs shipped, Sentry is now at head.
-    assert recs[0]["provider"] in ("kubernetes", "pagerduty", "linear", "jira", "gitlab", "sentry"), (
-        f"Sentry should be head of RECOMMENDED_NEXT_PROVIDERS; got: {recs[0]['provider']!r}"
-    )
+    assert recs == [], f"RECOMMENDED_NEXT_PROVIDERS must be empty; got: {recs!r}"
 
 
 def test_expansion_framework_recommended_milestones_dont_reuse_shipped():

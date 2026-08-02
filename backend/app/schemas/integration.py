@@ -1229,6 +1229,28 @@ class IntegrationReconnectRequest(BaseModel):
             "diagnostics are recomputed against the new role."
         ),
     )
+    sentry_organization_slug: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Optional new Sentry organization slug. Sentry integrations "
+            "only. Only needed when the organization was renamed in "
+            "Sentry — a token rotation with no slug change may omit this "
+            "field. A slug that resolves to a genuinely different "
+            "organization (different stable organization ID) is rejected."
+        ),
+    )
+    sentry_auth_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Sentry organization auth token. Required for Sentry "
+            "integrations. A rotated token for the SAME organization is "
+            "accepted; credentials resolving to a different organization "
+            "are rejected. Stored encrypted — never returned in API "
+            "responses."
+        ),
+    )
 
 
 class IntegrationResponse(BaseModel):

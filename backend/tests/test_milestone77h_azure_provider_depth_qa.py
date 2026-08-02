@@ -317,10 +317,11 @@ def test_capability_matrix_pins_azure_partial_demo_ready():
     assert "Activity Log" in notes
 
 
-def test_expansion_framework_points_to_m77i():
-    """Rolled forward: next stage is M90A Sentry Drift Provider Foundation."""
+def test_expansion_framework_reflects_frozen_state():
+    """Rolled forward: Sentry (message 8 — public launch) was the FINAL
+    planned provider. Provider expansion is now frozen."""
     fw = get_framework()
-    assert "M90A" in fw["summary"]["planned_next_stage"]
+    assert "frozen" in fw["summary"]["planned_next_stage"].lower()
     assert "Sentry" in fw["summary"]["planned_next_stage"]
 
 

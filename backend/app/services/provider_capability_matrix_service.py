@@ -1733,9 +1733,27 @@ _SENTRY = ProviderCapability(
         evidence_timeline=False,
         evidence_graph=False,
     ),
-    maturity="planned",
+    maturity="partial",
     notes=(
-        "Message 6 added Security Findings: 20 static posture rules spanning "
+        "Sentry provider expansion complete (messages 1-8 of 8): organization "
+        "auth token authentication over the Sentry SaaS REST API, full "
+        "project/team/member/access coverage, metric/issue alerting, "
+        "organization integrations/repositories/code mappings/ownership "
+        "routing, effective-access derivation, 20 static Security Findings, "
+        "exhaustive Change-classification/false-removal/reliability "
+        "certification (see backend/tests/reports/"
+        "sentry_reliability_certification.md), and public launch "
+        "certification: the credential path (organization_slug + "
+        "auth_token) is wired end-to-end through the standard integration "
+        "creation and reconnect flow, creation now runs synchronous "
+        "create-time validation (organization-detail request + 7 bounded "
+        "capability probes), Full/Partial/Invalid coverage diagnostics are "
+        "computed via SentryConnector.probe_coverage(), reconnect rejects "
+        "credentials for a genuinely different organization while accepting "
+        "same-organization token rotation and slug renames, and the "
+        "integration card and setup form are live — see "
+        "backend/tests/reports/sentry_provider_certification.md. Message 6 "
+        "added Security Findings: 20 static posture rules spanning "
         "privileged organization members (Owner/Manager/Admin role-specific "
         "rules, pending privileged invitations, combined alert+ownership "
         "routing authority, Team Admin delegation without an org-level "
@@ -1764,16 +1782,31 @@ _SENTRY = ProviderCapability(
         "record families (projects, teams, members, issue alert rules, "
         "metric alert rules, integrations, webhooks, repositories, "
         "ownership rules, releases) — no family is fully collected yet, "
-        "only probed for availability (three of the ten are structurally "
-        "unsupported this message because they are project-scoped and no "
-        "project inventory exists until message 2). No Security Findings, "
-        "activity ingestion, or privileged-access analysis exist yet — "
-        "those are later messages (2-8) in the Sentry roadmap. Sentry is "
-        "the final planned provider before the provider-expansion freeze. "
-        "Internal registration only: not connectable, not exposed on the "
-        "public integrations list, not Live."
+        "only probed for availability at message 1 (three of the ten were "
+        "structurally unsupported for probing because they are project-"
+        "scoped and no project inventory existed until message 2 — real "
+        "per-project collection now covers issue alert rules and "
+        "ownership rules; webhook configuration and persistent release/"
+        "deployment configuration remain permanently unsupported, see "
+        "Known limitations below). Sentry SaaS only — no self-hosted "
+        "support, no custom API base URL, no arbitrary regional host "
+        "(EU/Frankfurt data-residency organizations using a de.sentry.io "
+        "host are not currently supported, only the default sentry.io "
+        "origin). No issue/event ingestion, stack traces, breadcrumbs, "
+        "session replay, performance spans/profiles, DSN ingestion, "
+        "source-code/commit-content ingestion, or release/deployment-"
+        "history ingestion, ever. Activity ingestion, signals, risk x "
+        "activity correlations, demo/QA seeding, and case reporting are "
+        "not built for this provider — Sentry's security stack is drift + "
+        "Security Findings only, the same dual-stack scope as Okta/Entra/"
+        "Snowflake/Kubernetes. Sentry was the final planned provider — "
+        "provider expansion is now complete and frozen; no further "
+        "providers will be added. Publicly connectable and Live."
     ),
 )
+
+
+PROVIDER_CAPABILITIES.append(_SENTRY)
 
 
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
@@ -1789,7 +1822,6 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
-    _SENTRY,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

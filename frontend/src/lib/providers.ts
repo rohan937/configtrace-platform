@@ -51,9 +51,7 @@ export type ProviderId =
   | "entra"
   // ── Snowflake message 8 — public launch (fully connectable) ───────────────
   | "snowflake"
-  // ── Sentry message 1 — provider architecture foundation (not yet
-  //    user-connectable; intentionally excluded from PROVIDER_IDS and
-  //    CONNECTABLE_PROVIDER_IDS until Sentry message 8) ─────────────────────
+  // ── Sentry message 8 — public launch (fully connectable) ──────────────────
   | "sentry";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
@@ -657,24 +655,22 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     borderColor: "rgba(41,181,232,0.25)",
   },
 
-  // ── Sentry message 1 — provider architecture foundation (not yet
-  //    user-connectable; excluded from PROVIDER_IDS and
-  //    CONNECTABLE_PROVIDER_IDS until a later Sentry message) ───────────────
+  // ── Sentry message 8 — public launch (fully connectable) ──────────────────
   sentry: {
     id: "sentry",
     label: "Sentry",
     shortLabel: "Sentry",
     category: "observability",
     description:
-      "Connect a Sentry organization with a dedicated organization auth token. ConfigTrace is building configuration drift and security monitoring for organization access, alerting, integrations, notification routing, and project configuration. Not yet available to connect.",
+      "Connect a Sentry organization (SaaS, sentry.io) with a dedicated organization-owned internal integration token. ConfigTrace tracks configuration drift and flags security risk across organization access, projects, teams, members, alert routing, integrations, repositories, and release configuration.",
     monitoredSurfaces: [
-      "Organization identity (slug, name, status) — planned",
-      "Projects, teams, and members — planned",
-      "Issue and metric alert rules, notification routing — planned",
-      "Integrations, webhooks, repositories, and release configuration — planned",
+      "Organization identity, projects, teams, and members",
+      "Issue and metric alert rules and their notification routing targets",
+      "Installed integrations, linked repositories, and release/ownership configuration",
+      "Effective access derivation — organization-owner and team-admin posture, privileged members and teams",
     ],
     trustNote:
-      "Sentry support is in early foundation development and is not yet connectable. ConfigTrace will use a dedicated organization auth token, scoped to the narrowest practical read-only permissions, to read configuration metadata only via read-only GET requests. It will never store the token value, and will never ingest error events, stack traces, issue contents, or any other event data.",
+      "ConfigTrace stores your Sentry auth token encrypted and uses it only to read configuration metadata via read-only GET requests — it never modifies your Sentry organization. The token value is never included in snapshots, Findings, Changes, or logs. A dedicated organization-owned internal integration token with read-only scopes is recommended over a personal token. Some metadata families (metric alerts, integrations, repositories, releases) may require additional token scopes and will show as Partial coverage if unavailable, which does not block the connection. ConfigTrace does not ingest issue events, error data, stack traces, breadcrumbs, session replays, performance spans, or DSNs, and only supports Sentry SaaS (sentry.io) — not self-hosted Sentry.",
     color: "#362D59",
     bgColor: "rgba(54,45,89,0.10)",
     borderColor: "rgba(54,45,89,0.25)",
@@ -719,6 +715,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "entra",
   // ── Snowflake message 8 — public launch ──────────────────────────────────
   "snowflake",
+  // ── Sentry message 8 — public launch ─────────────────────────────────────
+  "sentry",
 ];
 
 /**
@@ -765,6 +763,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "entra",
   // ── Snowflake message 8 — public launch ──────────────────────────────────
   "snowflake",
+  // ── Sentry message 8 — public launch ─────────────────────────────────────
+  "sentry",
 ];
 
 /**

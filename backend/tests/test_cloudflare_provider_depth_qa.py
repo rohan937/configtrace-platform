@@ -610,15 +610,17 @@ def test_expansion_framework_terraform_cloud_arc_complete() -> None:
     )
 
 
-def test_expansion_framework_kubernetes_is_in_queue() -> None:
+def test_expansion_framework_queue_is_empty_after_sentry_launch() -> None:
     """Regression note: Kubernetes launched and was removed from the
-    recommended queue — Sentry is now there instead."""
+    recommended queue; Sentry (message 8 — public launch) was the FINAL
+    planned provider, so the queue is now permanently empty."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     queue = fw.get("recommended_next_providers", [])
     providers = [p.get("provider", "") for p in queue]
     assert "kubernetes" not in providers
-    assert "sentry" in providers
+    assert "sentry" not in providers
+    assert providers == []
 
 
 # ── Section R: Safety check — Cloudflare evaluator dispatch ───────────────────

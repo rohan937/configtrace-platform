@@ -23,12 +23,21 @@ export default function ReconnectIntegrationModal({
 
   const isCloudflare = integration.provider === "cloudflare";
   const isVercel = integration.provider === "vercel";
+  const isSentry = integration.provider === "sentry";
   const fieldLabel = isCloudflare
     ? "Cloudflare API token"
     : isVercel
     ? "Vercel API token"
+    : isSentry
+    ? "Sentry auth token"
     : "GitHub Personal Access Token";
-  const placeholder = isCloudflare ? "cf-token-…" : isVercel ? "Vercel API token" : "github_pat_…";
+  const placeholder = isCloudflare
+    ? "cf-token-…"
+    : isVercel
+    ? "Vercel API token"
+    : isSentry
+    ? "Organization auth token"
+    : "github_pat_…";
 
   async function handleSave() {
     const trimmed = token.trim();
@@ -41,6 +50,8 @@ export default function ReconnectIntegrationModal({
         ? { api_token: trimmed }
         : isVercel
         ? { vercel_token: trimmed }
+        : isSentry
+        ? { sentry_auth_token: trimmed }
         : { github_token: trimmed };
       const updated = await reconnectIntegration(integration.id, payload, authToken);
       onSuccess(updated);
@@ -85,7 +96,13 @@ export default function ReconnectIntegrationModal({
           We&apos;ll validate the new token before saving.{" "}
           <span style={{ color: "#565b6e" }}>
             This integration will keep pointing at the same{" "}
-            {isCloudflare ? "Cloudflare zone" : isVercel ? "Vercel project" : "repository"}.
+            {isCloudflare
+              ? "Cloudflare zone"
+              : isVercel
+              ? "Vercel project"
+              : isSentry
+              ? "Sentry organization"
+              : "repository"}.
             The token is never stored in plaintext or returned by the API.
           </span>
         </p>
@@ -120,7 +137,9 @@ export default function ReconnectIntegrationModal({
             {error.includes("Authentication") || error.includes("401") || error.includes("403")
               ? "Token is invalid or lacks required permissions."
               : error.includes("502") || error.includes("Could not reach")
-              ? `Could not reach ${isCloudflare ? "Cloudflare" : isVercel ? "Vercel" : "GitHub"}. Try again.`
+              ? `Could not reach ${
+                  isCloudflare ? "Cloudflare" : isVercel ? "Vercel" : isSentry ? "Sentry" : "GitHub"
+                }. Try again.`
               : error}
           </p>
         )}

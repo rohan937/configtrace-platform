@@ -180,29 +180,25 @@ def test_expansion_framework_terraform_cloud_not_in_queue() -> None:
     )
 
 
-def test_expansion_framework_sentry_is_head_of_queue() -> None:
+def test_expansion_framework_queue_is_empty_after_sentry_launch() -> None:
     """Regression note: Kubernetes was head of the recommended queue when
-    this test was written (M88I). Kubernetes launched its provider
-    architecture foundation (Kubernetes message 1 / M89A) and was removed
-    from the queue, matching every other provider's launch pattern — Sentry
-    is now the head of the queue."""
+    this test was written (M88I), then Sentry became the head. Sentry
+    (message 8 — public launch) was the FINAL planned provider, matching
+    every other provider's launch pattern — the queue is now permanently
+    empty."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     queue = fw.get("recommended_next_providers", [])
-    assert len(queue) >= 1
-    first = queue[0]
-    assert "sentry" in first.get("provider", "").lower() or "Sentry" in first.get("label", ""), (
-        f"Sentry should be first in recommended queue; got: {first}"
-    )
+    assert queue == [], f"recommended_next_providers must be empty; got: {queue!r}"
 
 
-def test_expansion_framework_sentry_still_in_queue() -> None:
+def test_expansion_framework_sentry_not_in_queue() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     queue = fw.get("recommended_next_providers", [])
     labels = [p.get("label", "") for p in queue]
-    assert any("Sentry" in label for label in labels), (
-        f"Sentry not found in recommended_next_providers; got: {labels}"
+    assert not any("Sentry" in label for label in labels), (
+        f"Sentry must not be in recommended_next_providers after launch; got: {labels}"
     )
 
 

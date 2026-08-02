@@ -1935,7 +1935,7 @@ def _create_sentry_integration(
     db: Session,
 ) -> Integration:
     """Create a Sentry integration + organization resource (Sentry
-    message 1 of 8).
+    message 8 of 8 — public launch).
 
     SECURITY: credentials["auth_token"] is NEVER logged, NEVER returned,
     NEVER stored in plaintext outside the encrypted credentials column,
@@ -1943,21 +1943,34 @@ def _create_sentry_integration(
     display name and the non-secret organization_slug are used for
     resource identity.
 
-    Live API validation (acquiring the organization identity via
-    ``GET /organizations/{slug}/``) is deferred to the first sync,
-    matching the established pattern for every ConfigTrace provider at
-    their OWN message 1 (Okta, Entra, Snowflake, etc.) — this avoids
-    leaking organization-reachability details through a synchronous
-    create-time error message. Synchronous create-time validation is a
-    message-8 (public launch) concern, not a foundation concern.
-
-    Sentry is registered internally (dispatch, schema, capability matrix)
-    but is NOT publicly connectable — it is excluded from the frontend's
-    PROVIDER_IDS / CONNECTABLE_PROVIDER_IDS until Sentry message 8.
+    Message 8 validates synchronously before anything is written —
+    ``SentryConnector.probe_coverage()`` runs the organization-detail
+    request plus the 7 bounded capability probes (never a full
+    organization inventory) and computes Full/Partial/Invalid coverage.
+    Invalid (malformed credentials, rejected token, unreachable
+    organization, or zero meaningful monitored families reachable) is
+    rejected here instead of silently creating a seemingly healthy
+    integration — this matches the Okta/Entra/Snowflake message-8 launch
+    precedent. Partial coverage (some optional/elevated family denied) is
+    accepted; useful monitoring still results.
     """
-    from app.connectors.sentry_schema import validate_organization_slug
+    from app.connectors.sentry import SentryConnector
+    from app.connectors.sentry_schema import COVERAGE_INVALID, validate_organization_slug
 
     organization_slug = validate_organization_slug(credentials.get("organization_slug"))
+
+    # Raises AuthenticationError / NetworkError / ConnectorError — caught by
+    # the router and returned as a 400/502, matching every other provider.
+    coverage_result = SentryConnector().probe_coverage(credentials)
+    if coverage_result["coverage"] == COVERAGE_INVALID:
+        raise ConnectorError(
+            "ConfigTrace connected to Sentry, but the token cannot read any "
+            "of the core families (projects, teams, members). Grant the "
+            "token at least the org:read and member:read scopes before "
+            "connecting."
+        )
+
+    organization_id = coverage_result["organization_id"]
 
     # ── 1. Encrypt credentials ────────────────────────────────────────────────
     ciphertext, iv = encrypt_credentials(credentials)
@@ -1978,25 +1991,151 @@ def _create_sentry_integration(
     db.flush()
 
     # ── 3. Create Resource row ─────────────────────────────────────────────────
-    # SECURITY: resource_metadata stores ONLY the non-secret
-    # organization_slug the user supplied. auth_token is NEVER copied
-    # here — the real stable organization identity is computed by the
-    # connector from the organization detail response's immutable ``id``
-    # field during fetch(), not at creation time.
+    # SECURITY: resource_metadata stores ONLY non-secret fields —
+    # organization_slug (user-supplied), the stable organization_id
+    # (derived from Sentry's own immutable organization ``id`` field),
+    # and coverage/diagnostics. auth_token is NEVER copied here.
     resource = Resource(
         integration_id=integration.id,
         user_id=user_id,
         provider_resource_type="sentry_organization",
-        provider_resource_id=str(integration.id),
+        provider_resource_id=f"organization/{organization_id}",
         display_name=f"{display_name} ({organization_slug})" if organization_slug else display_name,
         resource_metadata={
             "organization_slug": organization_slug or None,
+            "organization_id": organization_id,
+            "coverage": coverage_result["coverage"],
+            "diagnostics": coverage_result["diagnostics"],
         },
         is_active=True,
     )
     db.add(resource)
 
     # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_sentry(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_organization_slug: str | None,
+    new_auth_token: str,
+    db: Session,
+) -> Integration:
+    """Replace the auth token (and optionally the organization slug) for
+    an existing Sentry integration (Sentry message 8 of 8 — public
+    launch).
+
+    The new credentials are validated (organization-detail request +
+    bounded capability probes) before the database row is updated. If
+    they resolve to a genuinely DIFFERENT Sentry organization (different
+    stable ``organization_id``, derived from Sentry's own immutable
+    organization ``id`` field — never the raw ``organization_slug``
+    string a caller could alias) than the one this integration is
+    connected to, the update is rejected — a rotated token or a renamed
+    organization slug for the SAME organization is always accepted (after
+    validation); pointing this integration at a different organization is
+    not. This mirrors the Okta/Entra/Snowflake reconnect precedent.
+
+    SECURITY: the token is stored encrypted only. It is NEVER logged or
+    returned. The old token is discarded (overwritten) and never reused —
+    a fresh ``SentryConnector()``/``httpx.Client`` is built from the new
+    credentials only, so no prior session/organization/capability state
+    leaks into the new connection.
+    """
+    from app.connectors.sentry import SentryConnector
+    from app.connectors.sentry_schema import COVERAGE_INVALID, validate_organization_slug
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # organization_slug may be omitted for a token-only rotation — fall
+    # back to the existing encrypted credentials so the same organization
+    # slug is reused.
+    existing_creds = decrypt_credentials(
+        integration.encrypted_credentials,
+        integration.credential_iv,
+    )
+    organization_slug = validate_organization_slug(
+        new_organization_slug or existing_creds.get("organization_slug")
+    )
+
+    new_creds = {
+        "organization_slug": organization_slug,
+        "auth_token": new_auth_token,
+    }
+
+    # Fresh connector instance bound only to the new credentials — no
+    # connector/session state is reused from any prior connection.
+    # Raises AuthenticationError/NetworkError/ConnectorError on failure.
+    coverage_result = SentryConnector().probe_coverage(new_creds)
+    if coverage_result["coverage"] == COVERAGE_INVALID:
+        raise ConnectorError(
+            "ConfigTrace connected to Sentry, but the token cannot read "
+            "any of the core families (projects, teams, members). Grant "
+            "the token at least the org:read and member:read scopes "
+            "before reconnecting."
+        )
+    new_organization_id = coverage_result["organization_id"]
+
+    existing_org_resource = (
+        db.query(Resource)
+        .filter(
+            Resource.integration_id == integration_id,
+            Resource.provider_resource_type == "sentry_organization",
+        )
+        .first()
+    )
+    existing_resource_id = (
+        existing_org_resource.provider_resource_id if existing_org_resource is not None else None
+    )
+    existing_organization_id = (
+        existing_resource_id[len("organization/"):]
+        if isinstance(existing_resource_id, str) and existing_resource_id.startswith("organization/")
+        else None
+    )
+
+    # existing_organization_id uses the SAME compute_organization_id()
+    # derivation as new_organization_id — both are the stable "id:<id>"
+    # form, so a slug rename never causes a false mismatch here; only a
+    # genuinely different underlying organization does.
+    if existing_organization_id and existing_organization_id != new_organization_id:
+        raise ConnectorError(
+            "These credentials point to a different Sentry organization "
+            "than the one this integration is connected to. To monitor a "
+            "different Sentry organization, create a new integration "
+            "instead of replacing this one's credentials."
+        )
+
+    # Encrypt and store. Old token is overwritten, never retained or reused.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
+    if integration.status in ("error", "needs_reconnect"):
+        integration.status = "active"
+
+    if existing_org_resource is not None:
+        existing_org_resource.provider_resource_id = f"organization/{new_organization_id}"
+        existing_org_resource.display_name = (
+            f"{integration.display_name} ({organization_slug})" if organization_slug else integration.display_name
+        )
+        existing_org_resource.resource_metadata = {
+            **(existing_org_resource.resource_metadata or {}),
+            "organization_slug": organization_slug or None,
+            "organization_id": new_organization_id,
+            "coverage": coverage_result["coverage"],
+            "diagnostics": coverage_result["diagnostics"],
+        }
+
     db.commit()
     db.refresh(integration)
     return integration

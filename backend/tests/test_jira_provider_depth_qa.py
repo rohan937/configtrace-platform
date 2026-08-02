@@ -527,13 +527,15 @@ def test_jira_not_in_recommended_next_providers() -> None:
     assert "jira" not in providers
 
 
-def test_kubernetes_is_planned_next_provider() -> None:
+def test_recommended_queue_is_empty_after_sentry_launch() -> None:
     """Regression note: Kubernetes launched and was removed from the
-    recommended queue — Sentry is now there instead."""
+    recommended queue. Sentry (message 8 — public launch) was the FINAL
+    planned provider, so the queue is now permanently empty."""
     recs = get_framework()["recommended_next_providers"]
     providers = {r["provider"] if isinstance(r, dict) else r.provider for r in recs}
     assert "kubernetes" not in providers
-    assert "sentry" in providers
+    assert "sentry" not in providers
+    assert recs == []
 
 
 def test_jira_capability_is_security_implemented() -> None:

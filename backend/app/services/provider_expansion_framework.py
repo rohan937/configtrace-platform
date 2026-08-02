@@ -479,49 +479,17 @@ class RecommendedProvider:
 # launched in M88A and completed its arc in M88I; Terraform Cloud is no
 # longer in the recommended queue. Kubernetes launched its provider
 # architecture foundation (Kubernetes message 1 / M89A) and is no longer in
-# the recommended queue. Sentry is now the head of the recommended queue.
-RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="sentry",
-        label="Sentry",
-        category="observability",
-        why_high_fit=(
-            "Sentry project DSN exposure, internal integration token posture, "
-            "data scrubbing settings, and alert rule scope are common DevOps "
-            "configuration surfaces with reviewable drift patterns. "
-            "DSN oversharing and disabled data scrubbing are security signals."
-        ),
-        drift_surfaces=(
-            "project_dsn_posture",
-            "internal_integration_tokens",
-            "data_scrubbing_settings",
-            "alert_rule_scope",
-            "team_access_settings",
-        ),
-        security_surfaces=(
-            "project_dsn_broad_scope",
-            "data_scrubbing_disabled",
-            "internal_integration_broad_scope",
-            "alert_rule_scope_expanded",
-        ),
-        sensitive_data_to_avoid=(
-            "dsn_values_or_tokens",
-            "event_payload_contents",
-            "user_emails_or_identities",
-            "stack_trace_contents",
-            "raw_alert_payloads",
-            "internal_integration_secrets",
-        ),
-        first_milestone_name="M90A: Sentry Drift Provider Foundation",
-        notes=(
-            "Use the Sentry REST API. Focus on project settings (data scrubbing booleans — "
-            "never DSN values), internal integrations (scope category — never token values), "
-            "and alert rules (event type category — never raw alert payloads). "
-            "Never store DSN values, event payloads, stack traces, user identities, or "
-            "internal integration secrets."
-        ),
-    ),
-]
+# the recommended queue. Sentry was the last entry in this queue and
+# completed its full 8-message dual-stack arc (Sentry message 8 / public
+# launch) — Sentry is now removed from the recommended queue.
+#
+# PROVIDER EXPANSION IS FROZEN as of Sentry's public launch. Sentry was
+# explicitly the final planned provider; no further provider is queued or
+# auto-recommended. This list is intentionally empty and must stay empty —
+# do not add a replacement provider here. If provider expansion is ever
+# resumed by a future explicit decision, a new entry may be added at that
+# time, but nothing in this codebase should implicitly recommend one.
+RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = []
 
 RECOMMENDED_NEXT_BY_KEY: dict[str, RecommendedProvider] = {
     p.provider: p for p in RECOMMENDED_NEXT_PROVIDERS
@@ -590,6 +558,10 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M90A: Sentry Drift Provider Foundation",
+            "planned_next_stage": (
+                "Provider expansion is frozen. Sentry (public launch, message 8 "
+                "of 8) was the final planned provider — no further provider is "
+                "queued or planned."
+            ),
         },
     }

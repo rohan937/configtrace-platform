@@ -503,13 +503,15 @@ class TestGoogleCloudCanonicalProviderKey:
 # ── TestGoogleCloudExpansionFramework ─────────────────────────────────────────
 
 class TestGoogleCloudExpansionFramework:
-    def test_planned_next_stage_points_at_kubernetes(self) -> None:
-        """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
+    def test_planned_next_stage_reflects_frozen_expansion(self) -> None:
+        """Regression note: Kubernetes launched (message 1 / M89A), then
+        Sentry (message 8 — public launch) was the FINAL planned provider.
+        Provider expansion is now frozen."""
         from app.services.provider_expansion_framework import get_framework
         stage = get_framework()["summary"]["planned_next_stage"]
-        assert "M90A" in stage, f"planned_next_stage should contain M90A, got {stage!r}"
+        assert "frozen" in stage.lower(), f"planned_next_stage should say frozen, got {stage!r}"
         assert "Sentry" in stage, (
-            f"planned_next_stage should contain Sentry, got {stage!r}"
+            f"planned_next_stage should reference Sentry as the final provider, got {stage!r}"
         )
 
     def test_google_cloud_is_not_the_next_stage(self) -> None:
@@ -528,14 +530,14 @@ class TestGoogleCloudExpansionFramework:
             "Google Cloud has launched and must not be in the recommended queue"
         )
 
-    def test_kubernetes_is_head_of_recommended_queue(self) -> None:
+    def test_recommended_queue_is_empty_after_sentry_launch(self) -> None:
         """Regression note: Kubernetes launched and was removed from the
-        recommended queue — Sentry is now the head."""
+        recommended queue. Sentry (message 8 — public launch) was the
+        FINAL planned provider, so the queue is now permanently empty."""
         from app.services.provider_expansion_framework import (
             RECOMMENDED_NEXT_PROVIDERS,
         )
-        head = RECOMMENDED_NEXT_PROVIDERS[0]
-        assert head.provider == "sentry"
+        assert RECOMMENDED_NEXT_PROVIDERS == []
 
 
 # ── TestGoogleCloudProviderCapabilityMatrix ───────────────────────────────────

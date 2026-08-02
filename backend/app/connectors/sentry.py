@@ -243,6 +243,8 @@ from app.connectors.sentry_schema import (
     STRUCTURALLY_UNSUPPORTED_FAMILIES,
     TEAM_ADMIN_CONTRIBUTION_TIER,
     TEAM_ROLE_ADMIN,
+    compute_coverage_state,
+    format_capability_diagnostics,
     categorize_aggregate,
     categorize_auto_assignment,
     categorize_dataset,
@@ -2414,6 +2416,64 @@ class SentryConnector(BaseConnector):
             outcome = call_sentry(client, f"/organizations/{slug}/")
             _raise_for_outcome(outcome, context=f"GET /organizations/{slug}/")
         return True
+
+    def probe_coverage(self, credentials: dict) -> dict:
+        """Synchronous, bounded credential validation + coverage diagnosis
+        (Sentry message 8 of 8).
+
+        Runs exactly two things against the live organization: the
+        organization-detail request (``validate_credentials``'s own
+        endpoint) and the 7 bounded, page-1-only capability probes
+        (message 1's ``_CAPABILITY_PROBES`` — never a full inventory
+        collection). This is the SAME bounded probe sweep already used to
+        seed ``family_completeness`` during a real ``fetch()``, never a
+        separate, heavier surface.
+
+        Returns a dict:
+            {
+                "coverage": COVERAGE_FULL | COVERAGE_PARTIAL | COVERAGE_INVALID,
+                "organization_id": str,
+                "slug": str,
+                "name": Optional[str],
+                "family_status": {family: CAPABILITY_*},
+                "diagnostics": {group_label: "Available" | "Permission denied" | "Unavailable"},
+            }
+
+        Raises AuthenticationError/ConnectorError/NetworkError if the
+        organization-detail request itself fails — a family-probe failure
+        never raises, it only affects ``coverage``/``diagnostics``.
+        """
+        slug, auth_token = self._credentials(credentials)
+        with self._make_client(auth_token) as client:
+            outcome = call_sentry(client, f"/organizations/{slug}/")
+            resp = _raise_for_outcome(outcome, context=f"GET /organizations/{slug}/")
+            try:
+                raw_org = resp.json()
+            except ValueError as exc:
+                raise ConnectorError("sentry: /organizations/{slug}/ response was not valid JSON") from exc
+            if not isinstance(raw_org, dict):
+                raise ConnectorError("sentry: /organizations/{slug}/ response was not a JSON object")
+
+            organization_id = self.compute_organization_id(raw_org.get("id"))
+            if organization_id is None:
+                raise ConnectorError(
+                    "sentry: could not establish a stable organization identity — "
+                    "the organization detail response did not include a usable 'id' field"
+                )
+
+            capability_records = self._probe_capabilities(client, organization_id, slug=slug)
+            family_status = {r["family"]: r["status"] for r in capability_records}
+
+        coverage = compute_coverage_state(family_status)
+        name = raw_org.get("name")
+        return {
+            "coverage": coverage,
+            "organization_id": organization_id,
+            "slug": slug,
+            "name": name.strip() if isinstance(name, str) and name.strip() else None,
+            "family_status": family_status,
+            "diagnostics": format_capability_diagnostics(family_status),
+        }
 
     def fetch(self, credentials: dict, *, _sleep_fn: Callable[[float], None] = None) -> list[dict]:
         """Fetch the Sentry organization identity, API capability

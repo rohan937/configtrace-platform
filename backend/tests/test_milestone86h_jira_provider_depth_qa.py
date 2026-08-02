@@ -634,16 +634,14 @@ def test_expansion_framework_jira_points_to_m86i() -> None:
     )
 
 
-def test_gitlab_head_of_recommended_queue() -> None:
+def test_recommended_queue_is_empty_after_sentry_launch() -> None:
     from app.services.provider_expansion_framework import get_framework
 
     fw = get_framework()
     recs = fw.get("recommended_next_providers", [])
-    assert recs, "Recommended next-provider queue is empty"
-    # M87A launched GitLab; Terraform Cloud is now head. Accept GitLab or later.
-    assert recs[0]["provider"] in ("gitlab", "terraform_cloud", "kubernetes", "sentry"), (
-        f"Expected GitLab or later at head of recommended queue, got '{recs[0]['provider']}'"
-    )
+    # M87A launched GitLab; Sentry (message 8 — public launch) was the
+    # FINAL planned provider. The queue is now permanently empty.
+    assert recs == [], f"Recommended next-provider queue must be empty; got: {recs!r}"
     providers = [r["provider"] for r in recs]
     assert "jira" not in providers, "Jira should not be in the recommended queue (launched M86A)"
 

@@ -973,17 +973,13 @@ class TestRoadmapState:
             "Clerk must not be in recommended_next_providers (arc M83A–M83I complete)"
         )
 
-    def test_kubernetes_is_head_of_recommended_providers(self) -> None:
+    def test_recommended_providers_queue_is_empty_expansion_frozen(self) -> None:
         """Regression note: Kubernetes launched and was removed from the
-        recommended queue — Sentry is now the head."""
+        recommended queue. Sentry (message 8 — public launch) was the
+        FINAL planned provider, so the queue is now permanently empty."""
         fw = get_framework()
         recommended = fw.get("recommended_next_providers", [])
-        assert recommended, "recommended_next_providers must not be empty"
-        first = recommended[0]
-        provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-        assert "sentry" in provider.lower(), (
-            f"Expected sentry at head of recommended providers, got: {provider!r}"
-        )
+        assert recommended == [], f"recommended_next_providers must be empty; got: {recommended!r}"
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -799,18 +799,18 @@ def test_expansion_framework_planned_next_stage_m88h() -> None:
     ), f"planned_next_stage should point to M88H or later; got: {planned!r}"
 
 
-def test_expansion_framework_kubernetes_in_queue() -> None:
+def test_expansion_framework_queue_is_empty_after_sentry_launch() -> None:
     """Regression note: Kubernetes launched its provider architecture
     foundation (Kubernetes message 1 / M89A) and was removed from the
-    recommended queue — Sentry is now there instead."""
+    recommended queue. Sentry (message 8 — public launch) was the FINAL
+    planned provider, so the queue is now permanently empty."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     queue = fw.get("recommended_next_providers", [])
     labels = [p.get("label", "") for p in queue]
     assert not any("Kubernetes" in label for label in labels)
-    assert any("Sentry" in label for label in labels), (
-        f"Sentry not found in recommended_next_providers; got: {labels}"
-    )
+    assert not any("Sentry" in label for label in labels)
+    assert labels == []
 
 
 def test_expansion_framework_terraform_cloud_is_still_partial() -> None:

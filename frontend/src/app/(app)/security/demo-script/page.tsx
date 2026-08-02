@@ -282,14 +282,20 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#8b90a0" }}>
           <strong style={{ color: "#e8eaf0" }}>Recommended next providers</strong> — in suggested onboarding order:
         </p>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          {NEXT_PROVIDERS_BRIEF.map(({ label, category, milestone }) => (
-            <div key={label} style={{ fontSize: "12px", background: "#1e2030", border: "1px solid #2a2d38", borderRadius: "8px", padding: "6px 12px" }}>
-              <div style={{ color: "#e8eaf0", fontWeight: 600 }}>{label}</div>
-              <div style={{ color: "#565b6e", fontSize: "11px" }}>{category} · {milestone}</div>
-            </div>
-          ))}
-        </div>
+        {NEXT_PROVIDERS_BRIEF.length === 0 ? (
+          <p style={{ margin: 0, fontSize: "12px", color: "#565b6e" }}>
+            Provider expansion is frozen. Sentry (message 8 — public launch) was the final planned provider; no further provider is queued.
+          </p>
+        ) : (
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            {NEXT_PROVIDERS_BRIEF.map(({ label, category, milestone }) => (
+              <div key={label} style={{ fontSize: "12px", background: "#1e2030", border: "1px solid #2a2d38", borderRadius: "8px", padding: "6px 12px" }}>
+                <div style={{ color: "#e8eaf0", fontWeight: 600 }}>{label}</div>
+                <div style={{ color: "#565b6e", fontSize: "11px" }}>{category} · {milestone}</div>
+              </div>
+            ))}
+          </div>
+        )}
         <p style={{ margin: "10px 0 0", fontSize: "11px", color: "#565b6e" }}>
           See <code style={{ color: "#8b90a0" }}>GET /security/provider-expansion-framework</code> for the full stage checklist, privacy requirements, and provider queue.
         </p>
@@ -331,10 +337,13 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 // GitLab arc complete M87A–M87I; Terraform Cloud arc complete M88A–M88I.
 // Kubernetes launched its provider architecture foundation at M89A
 // (Kubernetes message 1) and is no longer in the recommended queue.
-// Sentry is now the head of the recommended provider queue at M90A.
-const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
-  { label: "Sentry", category: "devops", milestone: "M90A" },
-];
+// Sentry completed its full 8-message dual-stack arc (Sentry message 8 /
+// public launch) and is no longer in the recommended queue.
+//
+// PROVIDER EXPANSION IS FROZEN. Sentry was explicitly the final planned
+// provider. This list is intentionally empty and must stay empty — do
+// not add a replacement provider here.
+const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [];
 
 // M75C — Static capability table data. Source of truth lives in the backend
 // service (provider_capability_matrix_service.py) and the GET

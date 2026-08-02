@@ -764,12 +764,14 @@ class TestExpansionFramework:
             "Linear should not be in RECOMMENDED_NEXT_PROVIDERS (arc launched in M85A)"
         )
 
-    def test_jira_is_head_of_recommended_queue(self) -> None:
-        # NOTE: head of recommended queue advances with the roadmap; assert structural invariant.
+    def test_recommended_queue_is_empty_after_sentry_launch(self) -> None:
+        # NOTE: head of recommended queue advanced with the roadmap until
+        # Sentry (message 8 — public launch), the FINAL planned provider.
+        # The queue is now permanently empty.
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
-        assert recs and isinstance(recs[0]["provider"], str) and len(recs[0]["provider"]) > 0
+        assert recs == []
 
 
 # ── I. Frontend Provider Visibility ──────────────────────────────────────────

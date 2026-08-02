@@ -751,13 +751,15 @@ class TestExpansionFramework:
             "PagerDuty should not be in RECOMMENDED_NEXT_PROVIDERS (arc launched in M84A)"
         )
 
-    def test_linear_is_head_of_recommended_queue(self) -> None:
+    def test_recommended_queue_is_empty_after_sentry_launch(self) -> None:
+        """Sentry (message 8 — public launch) was the final planned
+        provider; the recommendation queue is now permanently empty — no
+        provider (kubernetes/linear/jira/gitlab or otherwise) is head."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
-        assert recs and recs[0]["provider"] in ("kubernetes", "linear", "jira", "gitlab"), (
-            f"Kubernetes should be head of recommended queue; got {recs[0]['provider'] if recs else None!r}"
-        )
+        assert recs == []
+        assert fw["summary"]["next_provider"] is None
 
 
 # ── I. Frontend Provider Visibility ──────────────────────────────────────────

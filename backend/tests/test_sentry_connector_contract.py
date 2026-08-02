@@ -51,6 +51,10 @@ class TestProviderDispatchWiring:
     def test_create_integration_creates_row_without_leaking_secret(
         self, test_user, db_session,
     ):
+        from unittest.mock import patch
+
+        from app.connectors.sentry import SentryConnector
+        from app.connectors.sentry_schema import COVERAGE_FULL
         from app.models.resource import Resource
         from app.schemas.integration import IntegrationResponse
         from app.services import integration_service
@@ -59,13 +63,22 @@ class TestProviderDispatchWiring:
             "organization_slug": _SLUG,
             "auth_token": _TOKEN,
         }
-        integration = integration_service.create_integration(
-            user_id=test_user.id,
-            provider="sentry",
-            display_name="sentry-test",
-            credentials=credentials,
-            db=db_session,
-        )
+        coverage_result = {
+            "coverage": COVERAGE_FULL,
+            "organization_id": "id:999",
+            "slug": _SLUG,
+            "name": "My Org",
+            "family_status": {},
+            "diagnostics": {},
+        }
+        with patch.object(SentryConnector, "probe_coverage", return_value=coverage_result):
+            integration = integration_service.create_integration(
+                user_id=test_user.id,
+                provider="sentry",
+                display_name="sentry-test",
+                credentials=credentials,
+                db=db_session,
+            )
         try:
             assert integration.provider == "sentry"
             assert integration.encrypted_credentials is not None
@@ -104,29 +117,37 @@ class TestProviderDispatchWiring:
                 db=db_session,
             )
 
-    def test_create_integration_does_not_contact_sentry(self, test_user, db_session):
-        """Message 1 defers credential validation to first sync — creating
-        the integration must never make an outbound HTTP call."""
+    def test_create_integration_rejects_invalid_coverage(self, test_user, db_session):
+        """Sentry message 8: synchronous validation rejects Invalid
+        coverage before any row is persisted."""
         from unittest.mock import patch
 
         from app.connectors.sentry import SentryConnector
+        from app.connectors.sentry_schema import COVERAGE_INVALID
+        from app.connectors.exceptions import ConnectorError
         from app.services import integration_service
 
         credentials = {
             "organization_slug": _SLUG,
             "auth_token": _TOKEN,
         }
-        with patch.object(SentryConnector, "validate_credentials") as mock_validate:
-            integration = integration_service.create_integration(
-                user_id=test_user.id,
-                provider="sentry",
-                display_name="sentry-no-contact",
-                credentials=credentials,
-                db=db_session,
-            )
-            mock_validate.assert_not_called()
-        db_session.delete(integration)
-        db_session.commit()
+        coverage_result = {
+            "coverage": COVERAGE_INVALID,
+            "organization_id": "id:999",
+            "slug": _SLUG,
+            "name": "My Org",
+            "family_status": {},
+            "diagnostics": {},
+        }
+        with patch.object(SentryConnector, "probe_coverage", return_value=coverage_result):
+            with pytest.raises(ConnectorError):
+                integration_service.create_integration(
+                    user_id=test_user.id,
+                    provider="sentry",
+                    display_name="sentry-invalid",
+                    credentials=credentials,
+                    db=db_session,
+                )
 
 
 # ── Credential schema ──────────────────────────────────────────────────────────
@@ -300,17 +321,16 @@ class TestDiffRiskDispatch:
 
 
 class TestCapabilityMatrix:
-    def test_sentry_registered_in_partial_list_not_complete_list(self):
-        """Message 1: Sentry is foundation-only — it must appear in the
-        PROVIDER_CAPABILITIES_PARTIAL staging list, not the canonical
-        PROVIDER_CAPABILITIES list."""
+    def test_sentry_registered_in_complete_list_after_launch(self):
+        """Sentry message 8: Sentry has launched — it must appear in the
+        canonical PROVIDER_CAPABILITIES list, not the PARTIAL staging list."""
         from app.services.provider_capability_matrix_service import (
             PROVIDER_CAPABILITIES,
             PROVIDER_CAPABILITIES_PARTIAL,
         )
 
-        assert "sentry" in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
-        assert "sentry" not in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "sentry" in {p.provider for p in PROVIDER_CAPABILITIES}
+        assert "sentry" not in {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
 
     def test_sentry_drift_true_security_rules_true(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -344,17 +364,18 @@ class TestCapabilityMatrix:
 
         cap = get_provider_capability("sentry")
         assert cap.maturity in MATURITY_LEVELS
-        assert cap.maturity == "planned"
+        assert cap.maturity == "partial"
 
-    def test_get_matrix_excludes_sentry_until_complete(self):
+    def test_get_matrix_includes_sentry_after_launch(self):
         """get_matrix() only ever surfaces PROVIDER_CAPABILITIES (the
-        canonical complete list) — Sentry is staged in PARTIAL and must
-        not appear in the public matrix endpoint's provider list yet."""
+        canonical complete list) — Sentry moved from PARTIAL to
+        PROVIDER_CAPABILITIES at launch (message 8) and must appear in
+        the public matrix endpoint's provider list."""
         from app.services.provider_capability_matrix_service import get_matrix
 
         matrix = get_matrix()
         provider_ids = {p["provider"] for p in matrix["providers"]}
-        assert "sentry" not in provider_ids
+        assert "sentry" in provider_ids
 
     def test_sentry_in_security_coverage_providers(self):
         from app.services.security_coverage_service import PROVIDERS
@@ -367,7 +388,7 @@ class TestCapabilityMatrix:
 
 class TestFrontendCatalogState:
     """Source-scan checks (no TS execution) confirming Sentry is present
-    internally but NOT yet user-connectable (message 1 of 8)."""
+    internally and IS user-connectable (message 8 of 8 — public launch)."""
 
     def _providers_ts_text(self) -> str:
         from pathlib import Path
@@ -388,26 +409,28 @@ class TestFrontendCatalogState:
         text = self._providers_ts_text()
         assert "sentry: {" in text
 
-    def test_sentry_not_in_connectable_provider_ids(self):
+    def test_sentry_in_connectable_provider_ids(self):
         text = self._providers_ts_text()
         start = text.index("export const CONNECTABLE_PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"sentry"' not in block
+        assert '"sentry"' in block
 
-    def test_sentry_not_in_provider_ids_display_order(self):
+    def test_sentry_in_provider_ids_display_order(self):
         text = self._providers_ts_text()
         start = text.index("export const PROVIDER_IDS")
         end = text.index("];", start)
         block = text[start:end]
-        assert '"sentry"' not in block
+        assert '"sentry"' in block
 
-    def test_sentry_card_copy_is_truthful_about_not_yet_connectable(self):
+    def test_sentry_card_copy_omits_not_yet_connectable_wording(self):
         text = self._providers_ts_text()
         start = text.index("sentry: {")
         end = text.index("\n  },", start)
         block = text[start:end].lower()
-        assert "not yet" in block or "not yet connectable" in block or "planned" in block
+        assert "not yet" not in block
+        assert "not yet connectable" not in block
+        assert "— planned" not in block
 
     def test_sentry_card_copy_does_not_claim_credential_storage(self):
         text = self._providers_ts_text()

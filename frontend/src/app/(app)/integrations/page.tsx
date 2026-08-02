@@ -43,6 +43,7 @@ import KubernetesIntegrationForm from "@/components/integrations/KubernetesInteg
 import OktaIntegrationForm from "@/components/integrations/OktaIntegrationForm";
 import EntraIntegrationForm from "@/components/integrations/EntraIntegrationForm";
 import SnowflakeIntegrationForm from "@/components/integrations/SnowflakeIntegrationForm";
+import SentryIntegrationForm from "@/components/integrations/SentryIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -1359,6 +1360,10 @@ export default function IntegrationsPage() {
     // ── Snowflake message 8 — public launch ───────────────────────────────────────
     if (selectedProvider === "snowflake") {
       return <SnowflakeIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── Sentry message 8 — public launch ────────────────────────────────────────────
+    if (selectedProvider === "sentry") {
+      return <SentryIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

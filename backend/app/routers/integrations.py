@@ -1021,6 +1021,40 @@ def reconnect_integration(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _build_response(integration, db)
+    elif integration.provider == "sentry":
+        if not body.sentry_auth_token:
+            raise HTTPException(
+                status_code=422,
+                detail="sentry_auth_token is required for Sentry integrations.",
+            )
+        try:
+            integration = integration_service.reconnect_credentials_sentry(
+                integration_id=integration_id,
+                user_id=current_user.id,
+                new_organization_slug=body.sentry_organization_slug,
+                new_auth_token=body.sentry_auth_token,
+                db=db,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Authentication failed: {exc}",
+            ) from exc
+        except ConnectorError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider validation error: {exc}",
+            ) from exc
+        except NetworkError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach the Sentry organization: {exc}",
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _build_response(integration, db)
     else:
         raise HTTPException(
             status_code=400,

@@ -950,11 +950,13 @@ def test_expansion_framework_planned_next_stage_m87i() -> None:
                 or "M90A" in planned or "Sentry" in planned)
 
 
-def test_expansion_framework_terraform_cloud_in_queue() -> None:
+def test_expansion_framework_queue_is_empty_after_sentry_launch() -> None:
     from app.services.provider_expansion_framework import get_framework
     recs = get_framework().get("recommended_next_providers", [])
-    provider_keys = [r.get("provider") for r in recs]
-    assert "terraform_cloud" in provider_keys or "kubernetes" in provider_keys or "sentry" in provider_keys or "terraform" in str(provider_keys)
+    # Terraform Cloud/Kubernetes/Sentry all launched; Sentry (message 8 —
+    # public launch) was the FINAL planned provider — the queue is now
+    # permanently empty.
+    assert recs == []
 
 
 def test_expansion_framework_gitlab_not_in_recommended_queue() -> None:

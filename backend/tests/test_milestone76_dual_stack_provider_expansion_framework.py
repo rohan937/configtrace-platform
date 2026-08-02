@@ -59,7 +59,7 @@ EXPECTED_STAGE_KEYS_IN_ORDER = [
     "demo_qa",
 ]
 
-EXPECTED_NEXT_PROVIDER_ORDER = [
+EXPECTED_NEXT_PROVIDER_ORDER: list[str] = [
     # M77I added Google Cloud at the top of the queue; M78A launched it.
     # M79A launched Twilio. M80A launched SendGrid. M81A launched Auth0
     # (moved into PROVIDER_CAPABILITIES_PARTIAL). M82A launched Datadog.
@@ -67,8 +67,10 @@ EXPECTED_NEXT_PROVIDER_ORDER = [
     # M86A launched Jira. M87A launched GitLab. M88A launched Terraform Cloud.
     # M88I completed the Terraform Cloud arc; Kubernetes was then the head.
     # Kubernetes message 1 (M89A) launched the provider architecture
-    # foundation, removing it from the queue; Sentry is now the head.
-    "sentry",
+    # foundation, removing it from the queue; Sentry was then the head.
+    # Sentry message 8 (public launch) completed Sentry's full dual-stack
+    # arc and Sentry was the FINAL planned provider — provider expansion
+    # is now frozen. This list is intentionally empty and must stay empty.
 ]
 
 
@@ -189,6 +191,30 @@ def test_recommended_next_providers_in_order():
     assert providers == EXPECTED_NEXT_PROVIDER_ORDER
 
 
+def test_recommended_next_providers_is_empty_expansion_frozen():
+    """Sentry (message 8 — public launch) was the final planned provider.
+    Provider expansion is now frozen: the recommended-next-provider queue
+    must be empty, and no unlaunched provider may be auto-recommended as
+    a replacement."""
+    assert svc.RECOMMENDED_NEXT_PROVIDERS == []
+    assert svc.get_next_provider_recommendations() == []
+    fw = svc.get_framework()
+    assert fw["recommended_next_providers"] == []
+    assert fw["summary"]["recommended_provider_count"] == 0
+    assert fw["summary"]["next_provider"] is None
+    assert fw["summary"]["next_milestone"] is None
+    assert "frozen" in fw["summary"]["planned_next_stage"].lower()
+    assert "sentry" in fw["summary"]["planned_next_stage"].lower()
+
+
+def test_sentry_not_recommended_after_launch():
+    """Sentry itself must not appear anywhere in the recommendation queue
+    now that it has launched — including by key lookup."""
+    providers = [p.provider for p in svc.RECOMMENDED_NEXT_PROVIDERS]
+    assert "sentry" not in providers
+    assert "sentry" not in svc.RECOMMENDED_NEXT_BY_KEY
+
+
 def test_each_recommended_provider_has_drift_surfaces():
     for p in svc.RECOMMENDED_NEXT_PROVIDERS:
         assert len(p.drift_surfaces) >= 1, (
@@ -254,37 +280,13 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # M87A launched GitLab; Terraform Cloud is now the head.
-    assert summary["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry")
-    next_ms = summary["next_milestone"] or ""
-    assert ("PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms
-            or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms
-            or "GitLab" in next_ms or "M87A" in next_ms
-            or "Terraform" in next_ms or "M88A" in next_ms
-            or "Kubernetes" in next_ms or "M89A" in next_ms
-            or "Sentry" in next_ms or "M90A" in next_ms)
-    assert (
-        "M83" in summary["planned_next_stage"]
-        or "Clerk" in summary["planned_next_stage"]
-        or "M82" in summary["planned_next_stage"]
-        or "Datadog" in summary["planned_next_stage"]
-        or "M84" in summary["planned_next_stage"]
-        or "PagerDuty" in summary["planned_next_stage"]
-        or "M85A" in summary["planned_next_stage"]
-        or "Linear" in summary["planned_next_stage"]
-        or "M85B" in summary["planned_next_stage"]
-        or "M86A" in summary["planned_next_stage"]
-        or "M86B" in summary["planned_next_stage"]
-        or "Jira" in summary["planned_next_stage"]
-        or "M87A" in summary["planned_next_stage"]
-        or "GitLab" in summary["planned_next_stage"]
-        or "M88A" in summary["planned_next_stage"]
-        or "Terraform" in summary["planned_next_stage"]
-        or "M89A" in summary["planned_next_stage"]
-        or "Kubernetes" in summary["planned_next_stage"]
-        or "M90A" in summary["planned_next_stage"]
-        or "Sentry" in summary["planned_next_stage"]
-    )
+    # Sentry (message 8 — public launch) was the final planned provider;
+    # provider expansion is now frozen, so the queue is empty and there is
+    # no next provider — this must never silently point at a replacement.
+    assert summary["recommended_provider_count"] == 0
+    assert summary["next_provider"] is None
+    assert summary["next_milestone"] is None
+    assert "frozen" in summary["planned_next_stage"].lower()
 
 
 def test_framework_is_static_no_db_needed():
@@ -293,21 +295,21 @@ def test_framework_is_static_no_db_needed():
     assert f1 == f2
 
 
-def test_get_next_provider_recommendations_first_is_pagerduty():
-    """Flipped in M83A: Clerk launched; PagerDuty is now the head of the queue.
-    Updated in M85A: Linear launched; Jira is now the head.
-    Updated in M86A: Jira launched; GitLab is now the head.
-    Updated in M87A: GitLab launched; Terraform Cloud is now the head."""
+def test_get_next_provider_recommendations_is_empty_after_sentry_launch():
+    """Sentry (message 8 — public launch) was the final planned provider.
+    The recommendation queue is now permanently empty — no provider is
+    ever again auto-recommended as a replacement head."""
     recs = svc.get_next_provider_recommendations()
-    # After M87A, GitLab launched; Terraform Cloud is now at head.
-    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab", "terraform_cloud", "kubernetes", "sentry")
-    assert recs[0]["label"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry")
-    assert len(recs[0]["sensitive_data_to_avoid"]) >= 1
-    # google_cloud, auth0, datadog, clerk must no longer be in this list.
+    assert recs == []
+    # Every previously-launched provider (including Sentry itself) must
+    # never reappear in this list.
     providers = [r["provider"] for r in recs]
-    assert "google_cloud" not in providers
-    assert "auth0" not in providers
-    assert "clerk" not in providers
+    for launched in (
+        "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk",
+        "pagerduty", "linear", "jira", "gitlab", "terraform_cloud",
+        "kubernetes", "sentry",
+    ):
+        assert launched not in providers
 
 
 def test_capability_matrix_planned_next_stage_references_dual_stack():
@@ -331,8 +333,10 @@ def test_endpoint_returns_framework(client):
     body = r.json()
     assert "template" in body and "recommended_next_providers" in body
     assert body["summary"]["stage_count"] == 6
-    # M87A: GitLab launched (now in PARTIAL); Terraform Cloud is now the queue head.
-    assert body["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry")
+    # Sentry (message 8 — public launch) was the final planned provider;
+    # provider expansion is frozen, so there is no next provider.
+    assert body["recommended_next_providers"] == []
+    assert body["summary"]["next_provider"] is None
 
 
 def test_endpoint_stages_in_order(client):
@@ -342,28 +346,25 @@ def test_endpoint_stages_in_order(client):
     assert keys == EXPECTED_STAGE_KEYS_IN_ORDER
 
 
-def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
+def test_endpoint_next_providers_queue_is_empty_expansion_frozen(client):
     r = client.get("/security/provider-expansion-framework")
     assert r.status_code == 200
-    labels = [p["label"] for p in r.json()["recommended_next_providers"]]
-    # Twilio/SendGrid/Auth0/Datadog all launched — none in the recommended queue.
-    assert "Twilio" not in labels
-    assert "SendGrid" not in labels
-    assert "Auth0" not in labels
-    assert "Datadog" not in labels
-    # Clerk launched in M83A, PagerDuty in M84A, Linear in M85A, Jira in M86A, GitLab in M87A.
-    assert "Clerk" not in labels
-    assert "PagerDuty" not in labels  # PagerDuty launched in M84A
-    assert "Linear" not in labels  # Linear launched in M85A
-    assert "Jira" not in labels  # Jira launched in M86A
-    assert "GitLab" not in labels  # GitLab launched in M87A
-    assert "Terraform Cloud" not in labels  # Terraform Cloud launched in M88A and arc completed M88I
-    # Regression note: this previously asserted "Kubernetes" was in the
-    # queue. Kubernetes launched its provider architecture foundation
-    # (Kubernetes message 1 / M89A) and was removed from the queue — Sentry
-    # is now the head.
-    assert "Kubernetes" not in labels
-    assert "Sentry" in labels
+    body = r.json()
+    labels = [p["label"] for p in body["recommended_next_providers"]]
+    assert labels == []
+    # Every previously-launched provider — Twilio/SendGrid/Auth0/Datadog/
+    # Clerk/PagerDuty/Linear/Jira/GitLab/Terraform Cloud/Kubernetes/Sentry —
+    # must never reappear in the recommended queue. Sentry (message 8,
+    # public launch) was explicitly the FINAL planned provider: provider
+    # expansion is now frozen, so no unlaunched provider is automatically
+    # recommended as a replacement head either.
+    for label in (
+        "Twilio", "SendGrid", "Auth0", "Datadog", "Clerk", "PagerDuty",
+        "Linear", "Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry",
+    ):
+        assert label not in labels
+    assert body["summary"]["next_provider"] is None
+    assert "frozen" in body["summary"]["planned_next_stage"].lower()
 
 
 def test_endpoint_unauthenticated_rejected():

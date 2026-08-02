@@ -192,7 +192,9 @@ export interface IntegrationCreateRequest {
     // ── Microsoft Entra ID message 8 — public launch ────────────────────────────
     | "entra"
     // ── Snowflake message 8 — public launch ─────────────────────────────────────
-    | "snowflake";
+    | "snowflake"
+    // ── Sentry message 8 — public launch ─────────────────────────────────────────
+    | "sentry";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -460,6 +462,20 @@ export interface IntegrationCreateRequest {
   snowflake_programmatic_access_token?: string;
   /** Dedicated read-only monitoring role. Required for snowflake. */
   snowflake_role?: string;
+  // ── Sentry fields (message 8 — public launch) ───────────────────────────────
+  /**
+   * Sentry organization slug — the path segment on the fixed
+   * https://sentry.io API origin. Required for the sentry provider.
+   */
+  sentry_organization_slug?: string;
+  /**
+   * Sentry organization auth token (an organization-owned internal
+   * integration token is recommended over a personal token). Sent to
+   * backend once; never stored in frontend state after submission, never
+   * logged, never echoed back. Stored encrypted server-side — NEVER
+   * returned in API responses.
+   */
+  sentry_auth_token?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */
