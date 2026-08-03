@@ -76,14 +76,16 @@ class TestModuleDispatchReachable:
         assert len(keys) == len(set(keys)), "duplicate snowflake_* rule key value found"
 
 
-class TestRegistryParity:
-    def test_module_keys_subset_of_registry(self):
-        missing = _module_rule_keys() - _registry_snowflake_keys()
-        assert not missing, f"rule keys missing from security_rule_registry: {sorted(missing)}"
-
-    def test_registry_has_no_extra_snowflake_keys(self):
-        extra = _registry_snowflake_keys() - _module_rule_keys()
-        assert not extra, f"registry has snowflake_* keys with no matching rule: {sorted(extra)}"
+# NOTE (Provider Certification Framework message 2): TestRegistryParity's
+# module-keys == registry set-equality assertions formerly here are now
+# framework-owned — see
+# app.provider_certification.gates.gate_security_finding_registry_parity
+# and its negative-mutation coverage in
+# tests/test_provider_certification_gates.py::TestSecurityFindingRegistryParityGate,
+# plus tests/test_provider_certification_snowflake.py which independently
+# re-derives and pins the exact 31-ID set. See
+# tests/reports/provider_certification_duplication_inventory.md for the
+# full consolidation record.
 
 
 class TestConfidenceParity:
@@ -186,13 +188,10 @@ class TestFrontendParity:
     def test_frontend_catalog_file_exists(self):
         assert _FRONTEND_CATALOG.exists()
 
-    def test_every_registered_snowflake_rule_in_frontend_catalog(self):
-        missing = _registry_snowflake_keys() - _frontend_snowflake_keys()
-        assert not missing, f"missing frontend catalog entries: {sorted(missing)}"
-
-    def test_no_frontend_only_snowflake_rules(self):
-        extra = _frontend_snowflake_keys() - _registry_snowflake_keys()
-        assert not extra, f"frontend catalog has snowflake_* keys with no backend rule: {sorted(extra)}"
+    # NOTE (message 2): the frontend-catalog == registry set-equality
+    # checks formerly here (test_every_registered_snowflake_rule_in_frontend_catalog,
+    # test_no_frontend_only_snowflake_rules) are now framework-owned — see
+    # gate_security_finding_registry_parity's frontend_catalog branch.
 
     def test_frontend_entries_have_provider_snowflake(self):
         text = _FRONTEND_CATALOG.read_text()
@@ -230,27 +229,11 @@ class TestFrontendParity:
                 assert phrase not in block_lower, f"{key} frontend copy contains forbidden phrase {phrase!r}"
 
 
-class TestFullCrossLayerParity:
-    def test_all_layers_have_identical_snowflake_key_sets(self):
-        layers = {
-            "module": _module_rule_keys(),
-            "registry": _registry_snowflake_keys(),
-            "confidence": _confidence_snowflake_keys(),
-            "pack": _pack_snowflake_keys(),
-            "coverage": _coverage_snowflake_keys(),
-            "frontend": _frontend_snowflake_keys(),
-        }
-        reference = layers["registry"]
-        for name, keys in layers.items():
-            assert keys == reference, (
-                f"{name} layer diverges from registry — "
-                f"missing={sorted(reference - keys)} extra={sorted(keys - reference)}"
-            )
-
-    def test_expected_rule_count_is_31(self):
-        # Pinned count — update deliberately if the taxonomy changes; a
-        # silent drift here should fail loudly rather than pass unnoticed.
-        assert len(_registry_snowflake_keys()) == 31
+# NOTE (message 2): TestFullCrossLayerParity's all-layers-identical check
+# and pinned rule-count assertion are now framework-owned — see
+# gate_security_finding_registry_parity (exact set equality across every
+# layer) and tests/test_provider_certification_snowflake.py (pins the
+# exact 31-ID set independently via discovery, not a hardcoded count alone).
 
 
 class TestFindingVsChangeSeverityParity:

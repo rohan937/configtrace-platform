@@ -36,6 +36,23 @@
     },
     {
       "blocking": true,
+      "description": "A registered discovery adapter never silently contradicts generic discovery.",
+      "details": "No discovery adapter registered for this provider; generic discovery is authoritative.",
+      "dimension": "adapter_consistency",
+      "evidence": [],
+      "gate_id": "adapter_consistency",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "not_applicable",
+      "title": "Adapter consistency"
+    },
+    {
+      "blocking": true,
       "description": "Provider is dispatchable by sync_service, present in the credential schema literal, and in the security coverage list.",
       "details": "Provider present in sync dispatch, credential schema literal, and security coverage list.",
       "dimension": "backend_registration",
@@ -245,6 +262,113 @@
       ],
       "status": "pass",
       "title": "Credential schema"
+    },
+    {
+      "blocking": true,
+      "description": "Every manifest's maturity/capability declarations agree with the discovered capability matrix.",
+      "details": "All 4 manifest(s) agree with their discovered capability-matrix entry.",
+      "dimension": "cross_manifest_capability_consistency",
+      "evidence": [],
+      "gate_id": "cross_manifest_capability_consistency",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest capability consistency"
+    },
+    {
+      "blocking": true,
+      "description": "Every manifest agrees with backend sync/coverage lists and frontend provider/connectable lists.",
+      "details": "All 4 manifest(s) consistent across backend and frontend catalogs.",
+      "dimension": "cross_manifest_catalog_consistency",
+      "evidence": [],
+      "gate_id": "cross_manifest_catalog_consistency",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest catalog consistency"
+    },
+    {
+      "blocking": true,
+      "description": "No Security Finding rule ID is declared by more than one registered manifest.",
+      "details": "126 Finding IDs declared across 4 manifest(s); no cross-provider collisions.",
+      "dimension": "cross_manifest_finding_uniqueness",
+      "evidence": [
+        {
+          "discovered_symbol": "security_rule_registry.KNOWN_RULE_KEYS",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "126",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "cross_manifest_finding_uniqueness",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest Finding-ID uniqueness"
+    },
+    {
+      "blocking": true,
+      "description": "Every registered manifest has a unique provider_id; no alias variant is double-registered.",
+      "details": "4 manifest(s) registered with unique provider_ids: ['entra', 'okta', 'sentry', 'snowflake'].",
+      "dimension": "cross_manifest_identity",
+      "evidence": [
+        {
+          "discovered_symbol": null,
+          "evidence_type": "manifest_declaration",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "['entra', 'okta', 'sentry', 'snowflake']",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "cross_manifest_identity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest identity uniqueness"
+    },
+    {
+      "blocking": true,
+      "description": "Every Live-declared manifest is absent from every future-provider queue.",
+      "details": "All 4 Live-declared manifest(s) absent from both future-provider queues.",
+      "dimension": "cross_manifest_live_freeze",
+      "evidence": [],
+      "gate_id": "cross_manifest_live_freeze",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest Live-freeze consistency"
     },
     {
       "blocking": false,
@@ -757,8 +881,8 @@
   "summary": {
     "deferred": 4,
     "failed": 0,
-    "not_applicable": 0,
-    "passed": 24,
+    "not_applicable": 1,
+    "passed": 29,
     "unknown": 0,
     "warnings": 1
   }

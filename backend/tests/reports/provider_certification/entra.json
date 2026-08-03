@@ -63,7 +63,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "snowflake",
+          "observed_value": "entra",
           "report": null,
           "test_node_id": null
         },
@@ -73,7 +73,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "snowflake",
+          "observed_value": "entra",
           "report": null,
           "test_node_id": null
         }
@@ -120,7 +120,7 @@
     {
       "blocking": true,
       "description": "Real compute_diff-pipeline parity tests are referenced as evidence (never claimed from static discovery alone).",
-      "details": "7 evidence test file(s) referenced.",
+      "details": "9 evidence test file(s) referenced.",
       "dimension": "change_classification_exhaustive_proof",
       "evidence": [],
       "gate_id": "change_classification_exhaustive_proof",
@@ -137,16 +137,16 @@
     {
       "blocking": true,
       "description": "risk_service dispatches this provider's prefix; every expected record type is handled explicitly.",
-      "details": "Dispatch branch exists; 21/21 expected record types have an explicit record_type == check in risk_rules/snowflake.py.",
+      "details": "Dispatch branch exists; 19/19 expected record types have an explicit record_type == check in risk_rules/entra.py.",
       "dimension": "change_classifier_coverage",
       "evidence": [
         {
-          "discovered_symbol": "risk_rules.snowflake.classify_snowflake_change",
+          "discovered_symbol": "risk_rules.entra.classify_entra_change",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "21",
+          "observed_value": "19",
           "report": null,
           "test_node_id": null
         }
@@ -165,7 +165,7 @@
     {
       "blocking": true,
       "description": "Manifest declares family/per-parent completeness scopes backed by real evidence files.",
-      "details": "5 completeness scope(s) declared.",
+      "details": "4 completeness scope(s) declared.",
       "dimension": "completeness_model",
       "evidence": [],
       "gate_id": "completeness_model",
@@ -182,11 +182,11 @@
     {
       "blocking": true,
       "description": "Connector class exists and exposes a credential-mapping method.",
-      "details": "SnowflakeConnector imported successfully; _credentials() present: True.",
+      "details": "EntraConnector imported successfully; _credentials() present: True.",
       "dimension": "connector_contract",
       "evidence": [
         {
-          "discovered_symbol": "app.connectors.snowflake.SnowflakeConnector",
+          "discovered_symbol": "app.connectors.entra.EntraConnector",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -210,11 +210,11 @@
     {
       "blocking": true,
       "description": "Synchronous validate-before-persist dispatch function exists.",
-      "details": "integration_service._create_snowflake_integration exists: True",
+      "details": "integration_service._create_entra_integration exists: True",
       "dimension": "creation_validation",
       "evidence": [
         {
-          "discovered_symbol": "integration_service._create_snowflake_integration",
+          "discovered_symbol": "integration_service._create_entra_integration",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -238,7 +238,7 @@
     {
       "blocking": true,
       "description": "Every manifest credential field exists on the backend schema; secret fields are marked sensitive.",
-      "details": "All 4 manifest credential fields found on backend schema.",
+      "details": "All 3 manifest credential fields found on backend schema.",
       "dimension": "credential_schema",
       "evidence": [
         {
@@ -247,7 +247,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "['snowflake_account_identifier', 'snowflake_programmatic_access_token', 'snowflake_role', 'snowflake_username']",
+          "observed_value": "['entra_client_id', 'entra_client_secret', 'entra_tenant_id']",
           "report": null,
           "test_node_id": null
         }
@@ -390,7 +390,7 @@
     {
       "blocking": true,
       "description": "No prohibited dependency in requirements.txt; no prohibited global env var referenced by the connector.",
-      "details": "None of 3 prohibited dependencies and 4 prohibited env vars were found.",
+      "details": "None of 4 prohibited dependencies and 4 prohibited env vars were found.",
       "dimension": "dependency_env_audit",
       "evidence": [],
       "gate_id": "dependency_env_audit",
@@ -407,16 +407,16 @@
     {
       "blocking": true,
       "description": "Every expected record type has a non-empty tracked-field entry in diff_service.py.",
-      "details": "All 21 expected record types have tracked-field dict entries.",
+      "details": "All 19 expected record types have tracked-field dict entries.",
       "dimension": "diff_tracked_fields",
       "evidence": [
         {
-          "discovered_symbol": "diff_service._SNOWFLAKE_TRACKED_FIELDS_BY_TYPE",
+          "discovered_symbol": "diff_service._ENTRA_TRACKED_FIELDS_BY_TYPE",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "21",
+          "observed_value": "19",
           "report": null,
           "test_node_id": null
         }
@@ -435,11 +435,11 @@
     {
       "blocking": true,
       "description": "diff_service._<provider>_removal_suppressed exists and covers every declared false-removal scope.",
-      "details": "_snowflake_removal_suppressed exists: True; 5 scope(s) declared: ['account_wide_family_completeness', 'per_database_completeness', 'per_role_completeness', 'per_detail_integration_policy_family_completeness', 'derived_privilege_records']",
+      "details": "_entra_removal_suppressed exists: True; 4 scope(s) declared: ['tenant_wide_family_completeness', 'per_group_membership_completeness', 'per_service_principal_assignment_completeness', 'derived_privileged_identity_group_service_principal_completeness']",
       "dimension": "false_removal_protection",
       "evidence": [
         {
-          "discovered_symbol": "diff_service._snowflake_removal_suppressed",
+          "discovered_symbol": "diff_service._entra_removal_suppressed",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -508,7 +508,7 @@
     {
       "blocking": true,
       "description": "Provider ID/label/category is internally consistent.",
-      "details": "provider_id/category match discovered capability entry: snowflake/database_backend.",
+      "details": "provider_id/category match discovered capability entry: entra/auth.",
       "dimension": "identity",
       "evidence": [
         {
@@ -517,7 +517,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "snowflake/database_backend",
+          "observed_value": "entra/auth",
           "report": null,
           "test_node_id": null
         }
@@ -536,7 +536,7 @@
     {
       "blocking": true,
       "description": "Manifest declares known limitations for a launched provider.",
-      "details": "9 known limitation(s) declared.",
+      "details": "10 known limitation(s) declared.",
       "dimension": "known_limitations",
       "evidence": [],
       "gate_id": "known_limitations",
@@ -609,11 +609,11 @@
     {
       "blocking": true,
       "description": "Reconnect dispatch function, router branch, and schema fields exist.",
-      "details": "Reconnect fully wired: function, router branch, and 4 schema field(s).",
+      "details": "Reconnect fully wired: function, router branch, and 3 schema field(s).",
       "dimension": "reconnect_rotation",
       "evidence": [
         {
-          "discovered_symbol": "integration_service.reconnect_credentials_snowflake",
+          "discovered_symbol": "integration_service.reconnect_credentials_entra",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -637,16 +637,16 @@
     {
       "blocking": true,
       "description": "Manifest expected_record_types == discovered schema record-type constants.",
-      "details": "All 21 expected record types discovered.",
+      "details": "All 19 expected record types discovered.",
       "dimension": "record_inventory",
       "evidence": [
         {
-          "discovered_symbol": "app.connectors.snowflake_schema",
+          "discovered_symbol": "app.connectors.entra_schema",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "21",
+          "observed_value": "19",
           "report": null,
           "test_node_id": null
         }
@@ -699,7 +699,7 @@
     {
       "blocking": true,
       "description": "Exact set equality across registry/confidence/pack/coverage (and frontend catalog if the tree is mounted).",
-      "details": "All 31 declared Finding IDs match registry/confidence/pack/coverage exactly.",
+      "details": "All 45 declared Finding IDs match registry/confidence/pack/coverage exactly.",
       "dimension": "security_finding_registry_parity",
       "evidence": [
         {
@@ -708,7 +708,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "31",
+          "observed_value": "45",
           "report": null,
           "test_node_id": null
         }
@@ -761,14 +761,14 @@
     {
       "blocking": true,
       "description": "Every referenced evidence test file/report exists on disk.",
-      "details": "All 11 referenced evidence file(s) exist on disk.",
+      "details": "All 13 referenced evidence file(s) exist on disk.",
       "dimension": "test_evidence",
       "evidence": [
         {
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_snowflake_change_classification.py",
+          "file": "tests/test_entra_change_classification.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -778,7 +778,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_snowflake_change_parity.py",
+          "file": "tests/test_entra_change_parity.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -788,7 +788,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_snowflake_partial_sync.py",
+          "file": "tests/test_entra_partial_sync.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -798,7 +798,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_snowflake_sql_api_reliability.py",
+          "file": "tests/test_entra_pagination_reliability.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -808,7 +808,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_snowflake_scale_reliability.py",
+          "file": "tests/test_entra_scale_reliability.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -818,7 +818,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_snowflake_provider_depth_qa.py",
+          "file": "tests/test_entra_security_finding_parity.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -828,7 +828,27 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_snowflake_integration_creation.py",
+          "file": "tests/test_entra_security_findings_reachability.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        },
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_entra_provider_depth_qa.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        },
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_entra_integration_creation.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -866,7 +886,7 @@
   ],
   "maturity": "partial",
   "overall_status": "pass",
-  "provider_id": "snowflake",
+  "provider_id": "entra",
   "schema_version": 1,
   "summary": {
     "deferred": 4,

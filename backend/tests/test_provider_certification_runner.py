@@ -36,13 +36,13 @@ class TestCertifyOneProvider:
         """A provider absent from the manifest registry must raise, not
         return some default-passing result."""
         with pytest.raises(runner.MissingManifestError):
-            runner.certify_provider("okta")  # launched provider, but no message-1 manifest
+            runner.certify_provider("kubernetes")  # launched provider, but no manifest as of message 2
 
 
 class TestCertifyAllProviders:
     def test_certify_all_pilot_providers(self):
         results = runner.certify_all_providers()
-        assert set(results) == {"sentry", "snowflake"}
+        assert set(results) == {"sentry", "snowflake", "okta", "entra"}
         for pid, result in results.items():
             assert result.provider_id == pid
             assert result.overall_status == "pass"
@@ -57,7 +57,7 @@ class TestCertifyAllProviders:
         assert first == second == sorted(first)
 
     def test_pilot_providers_constant_matches_task_scope(self):
-        assert runner.PILOT_PROVIDERS == ("sentry", "snowflake")
+        assert runner.PILOT_PROVIDERS == ("sentry", "snowflake", "okta", "entra")
 
 
 class TestDeterminism:

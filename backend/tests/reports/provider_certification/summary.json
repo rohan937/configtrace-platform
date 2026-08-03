@@ -1,0 +1,62 @@
+{
+  "all_pass": true,
+  "providers": {
+    "entra": {
+      "finding_count": 45,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "record_count": 19,
+      "summary": {
+        "deferred": 4,
+        "failed": 0,
+        "not_applicable": 1,
+        "passed": 30,
+        "unknown": 0,
+        "warnings": 0
+      }
+    },
+    "okta": {
+      "finding_count": 30,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "record_count": 16,
+      "summary": {
+        "deferred": 4,
+        "failed": 0,
+        "not_applicable": 1,
+        "passed": 30,
+        "unknown": 0,
+        "warnings": 0
+      }
+    },
+    "sentry": {
+      "finding_count": 20,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "record_count": 18,
+      "summary": {
+        "deferred": 4,
+        "failed": 0,
+        "not_applicable": 1,
+        "passed": 29,
+        "unknown": 0,
+        "warnings": 1
+      }
+    },
+    "snowflake": {
+      "finding_count": 31,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "record_count": 21,
+      "summary": {
+        "deferred": 4,
+        "failed": 0,
+        "not_applicable": 1,
+        "passed": 30,
+        "unknown": 0,
+        "warnings": 0
+      }
+    }
+  },
+  "schema_version": 1
+}

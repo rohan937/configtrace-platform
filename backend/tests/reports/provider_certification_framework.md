@@ -1,4 +1,9 @@
-# Provider Certification Framework (Message 1)
+# Provider Certification Framework (Message 1 + Message 2)
+
+**Message 2 update**: see §17-21 below for Okta/Entra manifests, the
+discovery-adapter model, cross-manifest global gates, and the
+consolidation performed. Sections 1-16 are message 1's original content,
+left unmodified except where explicitly noted.
 
 Provider expansion is frozen. This message does not launch, migrate, or
 add any provider — it converts the repeated certification patterns from
@@ -237,7 +242,7 @@ trimmed in favor of framework-driven evidence — never before message 1's
 explicit "do not delete existing tests" boundary is lifted by a future
 message.
 
-## 16. Certification status of the framework itself
+## 16. Certification status after message 1
 
 | Gate | Result |
 |---|---|
@@ -251,6 +256,109 @@ message.
 | No network/DB/credential access during certification | PASS |
 | Deterministic JSON output | PASS |
 | Framework matrix ≥ 140 rows | PASS (212 rows) |
+| Full backend test suite has no framework-caused regression | PASS |
+
+## 17. Message 2 — Okta and Entra manifests
+
+`manifests/okta.py` (`OKTA_MANIFEST`) and `manifests/entra.py`
+(`ENTRA_MANIFEST`) were added, proving the framework generalizes to two
+more authentication/API shapes beyond Sentry's org-token REST and
+Snowflake's PAT-based SQL API:
+
+- **Okta** — REST identity provider, `api_token` auth
+  (`okta_org_url` + `okta_api_token`, the token marked sensitive). 16
+  record types (2 derived: `okta_privileged_identity`,
+  `okta_privileged_group`), 30 Security Finding rule IDs — every count
+  independently re-derived via discovery, not copied from
+  `okta_provider_certification.md` or memory (see
+  `test_provider_certification_okta.py::TestOktaDiscoveryIndependentlyConfirmsManifest`).
+- **Entra** — Microsoft Graph identity provider, `oauth2_client_credentials`
+  auth (`entra_tenant_id` + `entra_client_id` + `entra_client_secret`,
+  the secret marked sensitive; tenant/client IDs are GUIDs, not secrets).
+  Canonical `provider_id="entra"` confirmed via
+  `provider_capability_matrix_service.get_provider_capability("entra")`
+  — this repository has no `microsoft_entra_id`/`azure_ad` alias. 19
+  record types (3 derived: `entra_privileged_identity`,
+  `entra_privileged_group`, `entra_privileged_service_principal`), 45
+  Security Finding rule IDs.
+
+Both manifests certify `pass` with the EXISTING gate/discovery code from
+message 1 — no discovery-precision bug was found for either provider
+(generic discovery already handled Okta's literal `record_type ==`
+dispatch and Entra's mixed literal/constant dispatch correctly, matching
+the pattern already proven for Sentry/Snowflake respectively).
+
+## 18. Discovery adapter model (message 2)
+
+`adapters.py` adds `ProviderDiscoveryAdapter` — a typed, optionally
+registered, per-provider augmentation hook for the rare case where
+generic discovery genuinely cannot follow a provider's pattern (dispatch
+via a shared registration helper, generated metadata, frontend
+indirection). **No pilot provider needs one** — Sentry, Snowflake, Okta,
+and Entra all follow the same naming conventions generic discovery
+already expects. The mechanism is proven with synthetic adapters in
+`test_provider_certification_adapters.py`: `adapt.resolve_set()`
+distinguishes agreement, augmentation (adapter is a strict superset —
+the union is used), and CONTRADICTION (adapter and generic disagree in
+any other way — the generic result is kept as the safe default and the
+disagreement is surfaced, never silently resolved by picking a side).
+`gate_adapter_consistency` wires this into the per-provider gate set,
+resolving `not_applicable` for all four pilots today.
+
+## 19. Cross-manifest global gates (message 2)
+
+`cross_manifest.py` adds five gates that operate over every registered
+manifest at once (attached to every provider's result, the same pattern
+`gate_provider_expansion_freeze` already established in message 1):
+`cross_manifest_identity` (unique provider IDs, no alias/case-variant
+collisions — audited against real repository state: this codebase has
+no `microsoft_entra_id`/`azure_ad` alias for Entra, so no
+alias-normalization mechanism was built, per the explicit
+"only if the repository already has real aliases" instruction),
+`cross_manifest_capability_consistency` (maturity + dual-stack
+capability flags agree with the discovered capability-matrix entry for
+every manifest), `cross_manifest_finding_uniqueness` (no Security
+Finding rule ID declared by more than one manifest), `cross_manifest_catalog_consistency`
+(every manifest agrees with backend sync/coverage lists and frontend
+provider/connectable lists), and `cross_manifest_live_freeze` (every
+Live-declared manifest absent from both future-provider queues).
+
+## 20. Consolidation performed (message 2)
+
+12 duplicated static parity assertions were removed — 6 from
+`test_sentry_security_finding_parity.py` and 6 from
+`test_snowflake_security_finding_parity.py` (both files' `TestRegistryParity`
+and `TestFullCrossLayerParity` classes, plus the two frontend-catalog
+set-equality checks in each `TestFrontendParity` class). Every removed
+assertion was a pure module/registry/frontend-catalog SET-EQUALITY check
+now proven, against real discovery (not just the manifest reflecting
+itself), by `gate_security_finding_registry_parity` — see
+`test_provider_certification_consolidation.py` for proof the gate still
+fails under the exact drift the removed assertions used to catch, and
+that every provider-specific semantic test (confidence values, guard
+reasons, pack severities, frontend wording guards, Finding-vs-Change
+severity parity) was left untouched. Okta's and Entra's equivalent
+legacy duplication was deliberately NOT touched this message — see
+`tests/reports/provider_certification_duplication_inventory.md` (80
+rows) for the full audit and the message-3 recommendation.
+
+## 21. Certification status after message 2
+
+| Gate | Result |
+|---|---|
+| Sentry pilot manifest certifies PASS | PASS |
+| Snowflake pilot manifest certifies PASS | PASS |
+| Okta pilot manifest certifies PASS | PASS |
+| Entra pilot manifest certifies PASS | PASS |
+| `certify_all_providers()` deterministic ordering (4 providers) | PASS |
+| Global provider-expansion-freeze gate passes for all 4 | PASS |
+| Cross-manifest global gates (identity/capability/finding/catalog/live-freeze) all PASS | PASS |
+| Discovery adapter mechanism proven via synthetic adapters | PASS |
+| Consolidation: 12 assertions removed, all proven safe | PASS |
+| No network/DB/credential access during certification (4 providers) | PASS |
+| Deterministic JSON output (same process, separate process, shuffled registration) | PASS |
+| Framework matrix ≥ 220 rows | PASS (336 rows) |
+| Duplication inventory ≥ 80 rows | PASS (80 rows) |
 | Full backend test suite has no framework-caused regression | PASS |
 
 **FRAMEWORK CERTIFICATION STATUS: PASS.**

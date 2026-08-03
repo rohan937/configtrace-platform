@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.provider_certification import adapters as adapt
 from app.provider_certification import discovery as disc
 from app.provider_certification.models import (
     PARTIAL_ALLOWED_DEFERRED_DIMENSIONS,
@@ -892,6 +893,43 @@ def gate_change_classification_exhaustive_proof(manifest: ProviderCertificationM
     )
 
 
+# ── Adapter consistency ────────────────────────────────────────────────────────
+
+
+def gate_adapter_consistency(manifest: ProviderCertificationManifest) -> CertificationGate:
+    """If a discovery adapter is registered for this provider, verify it
+    never silently contradicts generic discovery for the record-type
+    dimension (the one dimension with the clearest ground truth: the
+    manifest's own expected_record_types). No pilot provider currently
+    registers an adapter — generic discovery is sufficient for all four
+    (Sentry, Snowflake, Okta, Entra) — so this resolves not_applicable for
+    them today; see test_provider_certification_adapters.py for the
+    synthetic-adapter tests that exercise agreement/augmentation/
+    contradiction directly against the adapter module."""
+    adapter = adapt.get_adapter(manifest.provider_id)
+    if adapter is None:
+        return _gate(
+            "adapter_consistency", "adapter_consistency", "Adapter consistency",
+            "A registered discovery adapter never silently contradicts generic discovery.",
+            manifest, "not_applicable", "No discovery adapter registered for this provider; generic discovery is authoritative.",
+        )
+    generic = disc.discover_schema_record_type_constants(manifest.provider_id)
+    resolved = adapt.resolve_set(generic, adapter.discover_record_types)
+    if resolved.contradiction_note and not resolved.augmented:
+        return _gate(
+            "adapter_consistency", "adapter_consistency", "Adapter consistency",
+            "A registered discovery adapter never silently contradicts generic discovery.",
+            manifest, "fail", resolved.contradiction_note,
+            remediation="Reconcile the adapter's discover_record_types() with generic schema discovery.",
+        )
+    note = resolved.contradiction_note or "Adapter agrees with generic discovery."
+    return _gate(
+        "adapter_consistency", "adapter_consistency", "Adapter consistency",
+        "A registered discovery adapter never silently contradicts generic discovery.",
+        manifest, "pass", note,
+    )
+
+
 # ── Global gate: provider-expansion freeze ────────────────────────────────────
 
 
@@ -965,4 +1003,5 @@ ALL_PROVIDER_GATE_FUNCS = (
     gate_risk_activity_correlations,
     gate_demo_case_reporting,
     gate_change_classification_exhaustive_proof,
+    gate_adapter_consistency,
 )

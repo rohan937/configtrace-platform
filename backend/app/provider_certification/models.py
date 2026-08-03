@@ -104,6 +104,12 @@ DIMENSIONS: dict[str, str] = {
     "demo_case_reporting": "Demo seed/case/report/timeline/graph (dual-stack, optional)",
     "change_classification_exhaustive_proof": "Exhaustive change-classification transition proof",
     "provider_expansion_freeze": "Global: provider expansion freeze state",
+    "adapter_consistency": "Provider discovery adapter agrees with (or has no contradiction against) generic discovery",
+    "cross_manifest_identity": "Global: no duplicate provider IDs/aliases across registered manifests",
+    "cross_manifest_capability_consistency": "Global: maturity/capability declarations agree with the discovered capability matrix across all registered manifests",
+    "cross_manifest_finding_uniqueness": "Global: no Security Finding rule-ID collisions across registered manifests",
+    "cross_manifest_catalog_consistency": "Global: every registered manifest agrees with backend/frontend/capability-matrix/security-coverage catalogs",
+    "cross_manifest_live_freeze": "Global: every Live-declared manifest is absent from every future-provider queue",
 }
 
 
