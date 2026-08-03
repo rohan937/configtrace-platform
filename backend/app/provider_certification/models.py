@@ -17,6 +17,32 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 
+# ── Evidence quality taxonomy (message 4) ──────────────────────────────────────
+# "deferred" is intentionally excluded — it is not a property an evidence
+# entry can carry; it is what the gate reports when NO evidence/exceptions
+# are declared at all.
+_EVIDENCE_QUALITIES = frozenset({"direct", "grouped", "static_only"})
+
+# ── Completeness-scope taxonomy (message 4) ────────────────────────────────────
+# Generic granularities only — never a provider name. Extend this set as
+# genuinely new granularities are needed by future providers; do not add
+# a value that only one provider will ever use without checking whether
+# an existing value already covers it.
+COMPLETENESS_SCOPE_GRANULARITIES = frozenset({
+    "family",
+    "account",
+    "organization",
+    "project",
+    "repository",
+    "group",
+    "cluster",
+    "namespace",
+    "zone",
+    "parent_resource",
+    "detail",
+    "derived_dependency",
+})
+
 # ── Maturity taxonomy ─────────────────────────────────────────────────────────
 #
 # Mirrors app.services.provider_capability_matrix_service.MATURITY_LEVELS
@@ -272,6 +298,14 @@ class FindingReachabilityEvidence:
     real_connector_path_required: bool = True
     minimum_test_count: int = 1
     note: str = ""
+    quality: str = "direct"
+    """Evidence quality (message 4): one of ``_EVIDENCE_QUALITIES``.
+    ``direct``/``grouped`` evidence can satisfy PASS on their own.
+    ``static_only`` evidence requires a corresponding
+    ``ReachabilityExemption`` to be non-blocking — it proves predicates
+    can evaluate handcrafted records, not that a real connector path
+    reaches the evaluator. ``deferred`` is not valid on evidence itself
+    (deferred is the ABSENCE of evidence, expressed by declaring none)."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -284,6 +318,7 @@ class FindingReachabilityEvidence:
             "real_connector_path_required": self.real_connector_path_required,
             "minimum_test_count": self.minimum_test_count,
             "note": self.note,
+            "quality": self.quality,
         }
 
 
@@ -328,9 +363,11 @@ class FindingChangeParityEvidence:
     transition_record_types: tuple[str, ...] = field(default_factory=tuple)
     minimum_test_count: int = 1
     note: str = ""
+    quality: str = "direct"
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "quality": self.quality,
             "provider_id": self.provider_id,
             "test_file": self.test_file,
             "test_selector": self.test_selector,
@@ -367,6 +404,42 @@ class ParityException:
             "transition_severity": self.transition_severity,
             "rationale": self.rationale,
             "evidence_test": self.evidence_test,
+        }
+
+
+# ── Typed completeness-scope declaration (message 4) ───────────────────────────
+
+
+@dataclass(frozen=True)
+class CompletenessScopeDeclaration:
+    """A single typed completeness/false-removal scope.
+
+    Replaces the message-1/2/3 free-form ``completeness_scopes`` /
+    ``false_removal_scopes`` string tuples with a structured
+    declaration for NEW usage — those string fields remain for
+    backward compatibility and are not removed. A provider may declare
+    both, or only the typed form, or only the legacy strings.
+    """
+
+    scope_id: str
+    record_types: tuple[str, ...]
+    granularity: str
+    parent_record_type: str | None = None
+    status_field: str | None = None
+    suppression_symbol: str | None = None
+    derived_dependents: tuple[str, ...] = field(default_factory=tuple)
+    note: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "scope_id": self.scope_id,
+            "record_types": sorted(self.record_types),
+            "granularity": self.granularity,
+            "parent_record_type": self.parent_record_type,
+            "status_field": self.status_field,
+            "suppression_symbol": self.suppression_symbol,
+            "derived_dependents": sorted(self.derived_dependents),
+            "note": self.note,
         }
 
 
@@ -426,6 +499,12 @@ class ProviderCertificationManifest:
     reachability_exemptions: tuple[ReachabilityExemption, ...] = field(default_factory=tuple)
     change_parity_evidence: tuple[FindingChangeParityEvidence, ...] = field(default_factory=tuple)
     change_parity_exceptions: tuple[ParityException, ...] = field(default_factory=tuple)
+
+    completeness_scope_declarations: tuple[CompletenessScopeDeclaration, ...] = field(default_factory=tuple)
+    """Typed completeness declarations (message 4) — additive, optional.
+    See CompletenessScopeDeclaration. Legacy completeness_scopes /
+    false_removal_scopes strings remain the primary declaration surface;
+    this field is for new, structured detail where a provider wants it."""
 
     certification_owner: str = "provider-certification-framework"
     manifest_version: int = 1
@@ -612,6 +691,44 @@ class ProviderCertificationManifest:
             if exc.transition_severity not in _VALID_SEVERITIES:
                 errors.append(f"change_parity_exceptions for {exc.rule_id!r} has invalid transition_severity {exc.transition_severity!r}")
 
+        # ── evidence quality validation (message 4) ─────────────────────────────
+        for ev in self.reachability_evidence:
+            if ev.quality not in _EVIDENCE_QUALITIES:
+                errors.append(f"reachability_evidence quality must be one of {sorted(_EVIDENCE_QUALITIES)}, got {ev.quality!r}")
+        for ev in self.change_parity_evidence:
+            if ev.quality not in _EVIDENCE_QUALITIES:
+                errors.append(f"change_parity_evidence quality must be one of {sorted(_EVIDENCE_QUALITIES)}, got {ev.quality!r}")
+
+        # ── typed completeness-scope declaration validation (message 4) ────────
+        known_record_types = set(self.expected_record_types) | set(self.derived_record_types)
+        seen_scope_ids: set[str] = set()
+        for scope in self.completeness_scope_declarations:
+            if scope.scope_id in seen_scope_ids:
+                errors.append(f"duplicate completeness_scope_declarations scope_id: {scope.scope_id!r}")
+            seen_scope_ids.add(scope.scope_id)
+            if scope.granularity not in COMPLETENESS_SCOPE_GRANULARITIES:
+                errors.append(
+                    f"completeness_scope_declarations[{scope.scope_id!r}].granularity must be one of "
+                    f"{sorted(COMPLETENESS_SCOPE_GRANULARITIES)}, got {scope.granularity!r}"
+                )
+            unknown_rt = set(scope.record_types) - known_record_types
+            if unknown_rt:
+                errors.append(
+                    f"completeness_scope_declarations[{scope.scope_id!r}].record_types references "
+                    f"unknown record type(s): {sorted(unknown_rt)}"
+                )
+            if scope.parent_record_type is not None and scope.parent_record_type not in known_record_types:
+                errors.append(
+                    f"completeness_scope_declarations[{scope.scope_id!r}].parent_record_type "
+                    f"{scope.parent_record_type!r} is not a known record type"
+                )
+            unknown_dd = set(scope.derived_dependents) - set(self.derived_record_types)
+            if unknown_dd:
+                errors.append(
+                    f"completeness_scope_declarations[{scope.scope_id!r}].derived_dependents references "
+                    f"unknown derived record type(s): {sorted(unknown_dd)}"
+                )
+
         if errors:
             raise ManifestValidationError(
                 f"Invalid certification manifest for provider {self.provider_id!r}:\n"
@@ -650,6 +767,7 @@ class ProviderCertificationManifest:
             "reachability_exemptions": [e.as_dict() for e in sorted(self.reachability_exemptions, key=lambda e: sorted(e.rule_ids))],
             "change_parity_evidence": [e.as_dict() for e in sorted(self.change_parity_evidence, key=lambda e: (e.test_file, e.test_selector))],
             "change_parity_exceptions": [e.as_dict() for e in sorted(self.change_parity_exceptions, key=lambda e: e.rule_id)],
+            "completeness_scope_declarations": [e.as_dict() for e in sorted(self.completeness_scope_declarations, key=lambda e: e.scope_id)],
             "certification_owner": self.certification_owner,
             "manifest_version": self.manifest_version,
         }

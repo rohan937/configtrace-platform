@@ -1,15 +1,56 @@
 {
   "all_pass": true,
   "providers": {
+    "cloudflare": {
+      "category": "edge_network",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gates": [],
+      "display_name": "Cloudflare",
+      "exemption_count": 0,
+      "finding_count": 12,
+      "live": true,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 12,
+        "declared": 12,
+        "excepted": 0
+      },
+      "provider_id": "cloudflare",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 12,
+        "declared": 12,
+        "exempted": 0
+      },
+      "record_count": 8,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 2,
+        "passed": 29,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
     "entra": {
+      "category": "auth",
+      "completeness_scope_count": 4,
+      "connectable": true,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
         "demo_case_reporting",
         "risk_activity_correlations"
       ],
+      "display_name": "Microsoft Entra ID",
       "exemption_count": 0,
       "finding_count": 45,
+      "live": true,
       "maturity": "partial",
       "overall_status": "pass",
       "parity_evidence_coverage": {
@@ -17,6 +58,8 @@
         "declared": 45,
         "excepted": 0
       },
+      "provider_id": "entra",
+      "public": true,
       "reachability_evidence_coverage": {
         "covered": 45,
         "declared": 45,
@@ -26,17 +69,60 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 1,
+        "not_applicable": 2,
         "passed": 32,
         "unknown": 0,
         "warnings": 0
       },
+      "supported_capability_count": 1,
+      "unsupported_capability_count": 4,
       "warnings": 0
     },
-    "github": {
+    "firebase": {
+      "category": "database_backend",
+      "completeness_scope_count": 0,
+      "connectable": true,
       "deferred_gates": [],
+      "display_name": "Firebase",
+      "exemption_count": 0,
+      "finding_count": 8,
+      "live": true,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 8,
+        "declared": 8,
+        "excepted": 0
+      },
+      "provider_id": "firebase",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 8,
+        "declared": 8,
+        "exempted": 0
+      },
+      "record_count": 13,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 3,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "github": {
+      "category": "devops",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gates": [],
+      "display_name": "GitHub",
       "exemption_count": 0,
       "finding_count": 25,
+      "live": true,
       "maturity": "complete",
       "overall_status": "pass",
       "parity_evidence_coverage": {
@@ -44,6 +130,8 @@
         "declared": 25,
         "excepted": 0
       },
+      "provider_id": "github",
+      "public": true,
       "reachability_evidence_coverage": {
         "covered": 25,
         "declared": 25,
@@ -53,19 +141,26 @@
       "summary": {
         "deferred": 0,
         "failed": 0,
-        "not_applicable": 1,
+        "not_applicable": 2,
         "passed": 29,
         "unknown": 0,
         "warnings": 7
       },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
       "warnings": 7
     },
     "gitlab": {
+      "category": "devops",
+      "completeness_scope_count": 0,
+      "connectable": true,
       "deferred_gates": [
         "finding_change_parity"
       ],
+      "display_name": "GitLab",
       "exemption_count": 0,
       "finding_count": 25,
+      "live": false,
       "maturity": "partial",
       "overall_status": "pass",
       "parity_evidence_coverage": {
@@ -73,6 +168,8 @@
         "declared": 25,
         "excepted": 0
       },
+      "provider_id": "gitlab",
+      "public": true,
       "reachability_evidence_coverage": {
         "covered": 25,
         "declared": 25,
@@ -82,22 +179,29 @@
       "summary": {
         "deferred": 1,
         "failed": 0,
-        "not_applicable": 3,
+        "not_applicable": 4,
         "passed": 26,
         "unknown": 0,
         "warnings": 7
       },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
       "warnings": 7
     },
     "kubernetes": {
+      "category": "cloud",
+      "completeness_scope_count": 2,
+      "connectable": true,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
         "demo_case_reporting",
         "risk_activity_correlations"
       ],
+      "display_name": "Kubernetes",
       "exemption_count": 0,
       "finding_count": 59,
+      "live": true,
       "maturity": "partial",
       "overall_status": "pass",
       "parity_evidence_coverage": {
@@ -105,6 +209,8 @@
         "declared": 59,
         "excepted": 0
       },
+      "provider_id": "kubernetes",
+      "public": true,
       "reachability_evidence_coverage": {
         "covered": 59,
         "declared": 59,
@@ -114,22 +220,29 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 0,
+        "not_applicable": 1,
         "passed": 31,
         "unknown": 0,
         "warnings": 2
       },
+      "supported_capability_count": 1,
+      "unsupported_capability_count": 4,
       "warnings": 2
     },
     "okta": {
+      "category": "auth",
+      "completeness_scope_count": 6,
+      "connectable": true,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
         "demo_case_reporting",
         "risk_activity_correlations"
       ],
+      "display_name": "Okta",
       "exemption_count": 0,
       "finding_count": 30,
+      "live": true,
       "maturity": "partial",
       "overall_status": "pass",
       "parity_evidence_coverage": {
@@ -137,6 +250,8 @@
         "declared": 30,
         "excepted": 0
       },
+      "provider_id": "okta",
+      "public": true,
       "reachability_evidence_coverage": {
         "covered": 30,
         "declared": 30,
@@ -146,22 +261,29 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 1,
+        "not_applicable": 2,
         "passed": 32,
         "unknown": 0,
         "warnings": 0
       },
+      "supported_capability_count": 1,
+      "unsupported_capability_count": 4,
       "warnings": 0
     },
     "sentry": {
+      "category": "observability",
+      "completeness_scope_count": 5,
+      "connectable": true,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
         "demo_case_reporting",
         "risk_activity_correlations"
       ],
+      "display_name": "Sentry",
       "exemption_count": 0,
       "finding_count": 20,
+      "live": true,
       "maturity": "partial",
       "overall_status": "pass",
       "parity_evidence_coverage": {
@@ -169,6 +291,8 @@
         "declared": 20,
         "excepted": 0
       },
+      "provider_id": "sentry",
+      "public": true,
       "reachability_evidence_coverage": {
         "covered": 20,
         "declared": 20,
@@ -178,22 +302,29 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 1,
+        "not_applicable": 2,
         "passed": 31,
         "unknown": 0,
         "warnings": 1
       },
+      "supported_capability_count": 1,
+      "unsupported_capability_count": 4,
       "warnings": 1
     },
     "snowflake": {
+      "category": "database_backend",
+      "completeness_scope_count": 5,
+      "connectable": true,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
         "demo_case_reporting",
         "risk_activity_correlations"
       ],
+      "display_name": "Snowflake",
       "exemption_count": 0,
       "finding_count": 31,
+      "live": true,
       "maturity": "partial",
       "overall_status": "pass",
       "parity_evidence_coverage": {
@@ -201,6 +332,8 @@
         "declared": 31,
         "excepted": 0
       },
+      "provider_id": "snowflake",
+      "public": true,
       "reachability_evidence_coverage": {
         "covered": 31,
         "declared": 31,
@@ -210,12 +343,86 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 1,
+        "not_applicable": 2,
         "passed": 32,
         "unknown": 0,
         "warnings": 0
       },
+      "supported_capability_count": 1,
+      "unsupported_capability_count": 4,
       "warnings": 0
+    },
+    "stripe": {
+      "category": "payments_commerce",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gates": [],
+      "display_name": "Stripe",
+      "exemption_count": 0,
+      "finding_count": 8,
+      "live": true,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 8,
+        "declared": 8,
+        "excepted": 0
+      },
+      "provider_id": "stripe",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 8,
+        "declared": 8,
+        "exempted": 0
+      },
+      "record_count": 6,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 3,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "supabase": {
+      "category": "database_backend",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gates": [],
+      "display_name": "Supabase",
+      "exemption_count": 0,
+      "finding_count": 10,
+      "live": true,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 10,
+        "declared": 10,
+        "excepted": 0
+      },
+      "provider_id": "supabase",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 10,
+        "declared": 10,
+        "exempted": 0
+      },
+      "record_count": 10,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 3,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
     }
   },
   "schema_version": 1

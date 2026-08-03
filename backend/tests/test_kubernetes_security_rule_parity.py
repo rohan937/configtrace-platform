@@ -69,18 +69,14 @@ class TestModuleDispatchReachable:
         assert len(keys) == len(set(keys)), "duplicate kubernetes_* rule key value found"
 
 
-class TestRegistryParity:
-    def test_module_keys_subset_of_registry(self):
-        module_keys = _module_rule_keys()
-        registry_keys = _registry_kubernetes_keys()
-        missing = module_keys - registry_keys
-        assert not missing, f"rule keys missing from security_rule_registry: {sorted(missing)}"
-
-    def test_registry_has_no_extra_kubernetes_keys(self):
-        module_keys = _module_rule_keys()
-        registry_keys = _registry_kubernetes_keys()
-        extra = registry_keys - module_keys
-        assert not extra, f"registry has kubernetes_* keys with no matching rule: {sorted(extra)}"
+# NOTE (Provider Certification Framework message 4): TestRegistryParity's
+# module-keys-vs-registry set-equality checks (2 assertions) were removed
+# here — they are now proven by the framework's
+# gate_security_finding_registry_parity against independently discovered
+# state (not merely the module reflecting itself), with a dedicated
+# negative-mutation test. See
+# test_provider_certification_kubernetes.py::TestKubernetesDiscoveryIndependentlyConfirmsManifest
+# and tests/reports/provider_certification_duplication_inventory.md.
 
 
 class TestConfidenceParity:
@@ -172,17 +168,10 @@ class TestFrontendParity:
     def test_frontend_catalog_file_exists(self):
         assert _FRONTEND_CATALOG.exists()
 
-    def test_every_registered_kubernetes_rule_in_frontend_catalog(self):
-        registry_keys = _registry_kubernetes_keys()
-        frontend_keys = _frontend_kubernetes_keys()
-        missing = registry_keys - frontend_keys
-        assert not missing, f"missing frontend catalog entries: {sorted(missing)}"
-
-    def test_no_frontend_only_kubernetes_rules(self):
-        registry_keys = _registry_kubernetes_keys()
-        frontend_keys = _frontend_kubernetes_keys()
-        extra = frontend_keys - registry_keys
-        assert not extra, f"frontend catalog has kubernetes_* keys with no backend rule: {sorted(extra)}"
+    # NOTE (message 4): the frontend-catalog == registry set-equality
+    # checks (2 assertions) were removed here — proven by
+    # gate_security_finding_registry_parity's frontend_catalog branch
+    # against independently discovered state.
 
     def test_frontend_entries_have_provider_kubernetes(self):
         text = _FRONTEND_CATALOG.read_text()
@@ -193,31 +182,10 @@ class TestFrontendParity:
             assert 'provider: "kubernetes"' in window, f"{m.group(1)} missing provider field nearby"
 
 
-class TestFullCrossLayerParity:
-    def test_all_layers_have_identical_kubernetes_key_sets(self):
-        module_keys = _module_rule_keys()
-        registry_keys = _registry_kubernetes_keys()
-        confidence_keys = _confidence_kubernetes_keys()
-        pack_keys = _pack_kubernetes_keys()
-        coverage_keys = _coverage_kubernetes_keys()
-        frontend_keys = _frontend_kubernetes_keys()
-
-        layers = {
-            "module": module_keys,
-            "registry": registry_keys,
-            "confidence": confidence_keys,
-            "pack": pack_keys,
-            "coverage": coverage_keys,
-            "frontend": frontend_keys,
-        }
-        reference = layers["registry"]
-        for name, keys in layers.items():
-            assert keys == reference, (
-                f"{name} layer diverges from registry — "
-                f"missing={sorted(reference - keys)} extra={sorted(keys - reference)}"
-            )
-
-    def test_expected_rule_count_is_59(self):
-        # Pinned count — update deliberately if the taxonomy changes; a
-        # silent drift here should fail loudly rather than pass unnoticed.
-        assert len(_registry_kubernetes_keys()) == 59
+# NOTE (message 4): TestFullCrossLayerParity's all-layers-identical
+# check and its pinned rule-count assertion (2 assertions) were removed
+# here — the "all layers identical" invariant is exactly what
+# gate_security_finding_registry_parity independently re-derives and
+# proves (with a negative-mutation test showing it can actually fail),
+# and the manifest's own security_finding_rule_ids count (59) is pinned
+# by test_provider_certification_kubernetes.py::TestKubernetesManifestShape::test_manifest_declares_59_finding_ids.

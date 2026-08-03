@@ -12,10 +12,12 @@ import json
 import pytest
 
 from app.provider_certification.models import (
+    COMPLETENESS_SCOPE_GRANULARITIES,
     SCHEMA_VERSION,
     CertificationEvidence,
     CertificationGate,
     CertificationResult,
+    CompletenessScopeDeclaration,
     ManifestValidationError,
     ProviderCertificationManifest,
 )
@@ -304,3 +306,57 @@ class TestCertificationResult:
     def test_invalid_overall_status_rejected(self):
         with pytest.raises(ValueError):
             CertificationResult(provider_id="x", maturity="partial", overall_status="vibes", gates=())
+
+
+class TestCompletenessScopeDeclarationModel:
+    """Model-level tests for CompletenessScopeDeclaration (message 4) —
+    distinct from the manifest-integration tests in
+    test_provider_certification_completeness.py, which exercise it only
+    through ProviderCertificationManifest construction."""
+
+    def test_minimal_declaration_defaults(self):
+        scope = CompletenessScopeDeclaration(
+            scope_id="minimal", record_types=("x_widget",), granularity="family",
+        )
+        assert scope.parent_record_type is None
+        assert scope.status_field is None
+        assert scope.suppression_symbol is None
+        assert scope.derived_dependents == ()
+        assert scope.note == ""
+
+    def test_as_dict_contains_all_fields(self):
+        scope = CompletenessScopeDeclaration(
+            scope_id="full", record_types=("x_widget", "x_gadget"), granularity="zone",
+            parent_record_type="x_widget", status_field="status", suppression_symbol="_x_removal_suppressed",
+            derived_dependents=("x_widget_summary",), note="a note",
+        )
+        d = scope.as_dict()
+        assert d["scope_id"] == "full"
+        assert d["record_types"] == ["x_gadget", "x_widget"]
+        assert d["granularity"] == "zone"
+        assert d["parent_record_type"] == "x_widget"
+        assert d["status_field"] == "status"
+        assert d["suppression_symbol"] == "_x_removal_suppressed"
+        assert d["derived_dependents"] == ["x_widget_summary"]
+        assert d["note"] == "a note"
+
+    def test_as_dict_sorts_record_types(self):
+        scope = CompletenessScopeDeclaration(
+            scope_id="sorted_test", record_types=("z_type", "a_type", "m_type"), granularity="family",
+        )
+        assert scope.as_dict()["record_types"] == ["a_type", "m_type", "z_type"]
+
+    def test_multiple_record_types_accepted(self):
+        scope = CompletenessScopeDeclaration(
+            scope_id="multi", record_types=("a", "b", "c"), granularity="account",
+        )
+        assert len(scope.record_types) == 3
+
+    def test_frozen_immutability(self):
+        scope = CompletenessScopeDeclaration(scope_id="frozen", record_types=("a",), granularity="family")
+        with pytest.raises(Exception):
+            scope.scope_id = "changed"
+
+    def test_all_twelve_granularities_are_distinct_strings(self):
+        assert len(COMPLETENESS_SCOPE_GRANULARITIES) == 12
+        assert all(isinstance(g, str) for g in COMPLETENESS_SCOPE_GRANULARITIES)

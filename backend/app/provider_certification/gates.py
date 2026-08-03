@@ -968,14 +968,51 @@ def gate_false_removal_protection(manifest: ProviderCertificationManifest) -> Ce
             "Manifest declares no false-removal scopes.",
         )
     exists = disc.discover_removal_suppression_exists(manifest.provider_id)
+    wired = disc.discover_removal_suppression_wired(manifest.provider_id)
+    status = "pass" if wired else ("warning" if exists else "fail")
     return _gate(
         "false_removal_protection", "false_removal_protection", "False-removal protection",
         "diff_service._<provider>_removal_suppressed exists and covers every declared false-removal scope.",
-        manifest, "pass" if exists else "fail",
-        f"_{manifest.provider_id}_removal_suppressed exists: {exists}; "
+        manifest, status,
+        f"_{manifest.provider_id}_removal_suppressed exists: {exists}, wired (called beyond its own def): {wired}; "
         f"{len(manifest.false_removal_scopes)} scope(s) declared: {list(manifest.false_removal_scopes)}",
-        remediation="Implement the false-removal suppression function." if not exists else "",
-        evidence=(_ev_symbol(f"diff_service._{manifest.provider_id}_removal_suppressed", observed=str(exists)),),
+        remediation="Dispatch the suppression function from the main removal path." if exists and not wired else (
+            "Implement the false-removal suppression function." if not exists else ""
+        ),
+        evidence=(_ev_symbol(f"diff_service._{manifest.provider_id}_removal_suppressed", observed=f"exists={exists} wired={wired}"),),
+    )
+
+
+def gate_completeness_scope_declarations(manifest: ProviderCertificationManifest) -> CertificationGate:
+    """Message 4: checks the typed ``completeness_scope_declarations``
+    (construction-time validation already checked record-type/parent/
+    derived-dependent structural correctness) for the one thing it
+    cannot check without discovery: whether each declared
+    ``suppression_symbol`` actually resolves on ``diff_service``."""
+    if not manifest.completeness_scope_declarations:
+        return _gate(
+            "completeness_scope_declarations", "completeness_model", "Typed completeness-scope declarations",
+            "Every typed completeness scope's suppression_symbol (if declared) is discoverable on diff_service.",
+            manifest, "not_applicable", "Manifest declares no typed completeness_scope_declarations.",
+            blocking=False,
+        )
+    missing = []
+    for scope in manifest.completeness_scope_declarations:
+        if scope.suppression_symbol and not hasattr(__import__("app.services.diff_service", fromlist=["x"]), scope.suppression_symbol):
+            missing.append((scope.scope_id, scope.suppression_symbol))
+    if missing:
+        return _gate(
+            "completeness_scope_declarations", "completeness_model", "Typed completeness-scope declarations",
+            "Every typed completeness scope's suppression_symbol (if declared) is discoverable on diff_service.",
+            manifest, "fail",
+            f"suppression_symbol not found on diff_service for scope(s): {missing}",
+            remediation="Fix the declared suppression_symbol name, or implement the missing function.",
+        )
+    return _gate(
+        "completeness_scope_declarations", "completeness_model", "Typed completeness-scope declarations",
+        "Every typed completeness scope's suppression_symbol (if declared) is discoverable on diff_service.",
+        manifest, "pass",
+        f"{len(manifest.completeness_scope_declarations)} typed completeness scope(s) declared, all suppression symbols resolve.",
     )
 
 
@@ -1209,4 +1246,5 @@ ALL_PROVIDER_GATE_FUNCS = (
     gate_adapter_consistency,
     gate_security_finding_reachability,
     gate_finding_change_parity,
+    gate_completeness_scope_declarations,
 )

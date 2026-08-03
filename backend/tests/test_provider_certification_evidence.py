@@ -12,7 +12,15 @@ count via empty selector, class-scoped count, boundary at next class).
 
 from __future__ import annotations
 
+import pytest
+
 from app.provider_certification.gates import _count_matching_tests
+from app.provider_certification.models import (
+    FindingChangeParityEvidence,
+    FindingReachabilityEvidence,
+    ManifestValidationError,
+    ProviderCertificationManifest,
+)
 
 
 class TestCountMatchingTestsNonexistentFile:
@@ -211,3 +219,125 @@ class TestManifestEvidenceValidationStrengthening:
                     ),
                 ),
             )
+
+
+class TestEvidenceQuality:
+    """Message 4: typed evidence-quality status (direct/grouped/
+    static_only). Descriptive metadata validated against a fixed enum —
+    "deferred" is intentionally not a valid value ON evidence itself,
+    since deferred describes the ABSENCE of evidence."""
+
+    def _base_kwargs(self):
+        return dict(
+            provider_id="ghostprov5",
+            display_name="Ghost Provider 5",
+            category="observability",
+            maturity="partial",
+            expected_public=True,
+            expected_connectable=True,
+            expected_live=False,
+            credential_fields=("ghostprov5_api_token",),
+            sensitive_credential_fields=("ghostprov5_api_token",),
+            authentication_model="api_token",
+            expected_record_types=("ghostprov5_widget",),
+            expected_frontend_form="GhostProv5IntegrationForm.tsx",
+            expected_reconnect=False,
+            supported_capabilities=("security_findings",),
+            security_finding_rule_ids=("ghostprov5_rule_a",),
+        )
+
+    def test_default_quality_is_direct(self):
+        ev = FindingReachabilityEvidence(
+            provider_id="ghostprov5", test_file="tests/test_provider_certification_evidence.py",
+            test_selector="", covered_rule_ids=("ghostprov5_rule_a",), minimum_test_count=1,
+        )
+        assert ev.quality == "direct"
+
+    def test_grouped_quality_accepted(self):
+        m = ProviderCertificationManifest(
+            **self._base_kwargs(),
+            reachability_evidence=(
+                FindingReachabilityEvidence(
+                    provider_id="ghostprov5", test_file="tests/test_provider_certification_evidence.py",
+                    test_selector="", covered_rule_ids=("ghostprov5_rule_a",), minimum_test_count=1,
+                    quality="grouped",
+                ),
+            ),
+        )
+        assert m.reachability_evidence[0].quality == "grouped"
+
+    def test_static_only_quality_accepted(self):
+        m = ProviderCertificationManifest(
+            **self._base_kwargs(),
+            reachability_evidence=(
+                FindingReachabilityEvidence(
+                    provider_id="ghostprov5", test_file="tests/test_provider_certification_evidence.py",
+                    test_selector="", covered_rule_ids=("ghostprov5_rule_a",), minimum_test_count=1,
+                    quality="static_only",
+                ),
+            ),
+        )
+        assert m.reachability_evidence[0].quality == "static_only"
+
+    def test_invalid_reachability_quality_rejected(self):
+        with pytest.raises(ManifestValidationError, match="reachability_evidence quality must be one of"):
+            ProviderCertificationManifest(
+                **self._base_kwargs(),
+                reachability_evidence=(
+                    FindingReachabilityEvidence(
+                        provider_id="ghostprov5", test_file="tests/test_provider_certification_evidence.py",
+                        test_selector="", covered_rule_ids=("ghostprov5_rule_a",), minimum_test_count=1,
+                        quality="deferred",
+                    ),
+                ),
+            )
+
+    def test_invalid_parity_quality_rejected(self):
+        with pytest.raises(ManifestValidationError, match="change_parity_evidence quality must be one of"):
+            ProviderCertificationManifest(
+                **self._base_kwargs(),
+                reachability_evidence=(
+                    FindingReachabilityEvidence(
+                        provider_id="ghostprov5", test_file="tests/test_provider_certification_evidence.py",
+                        test_selector="", covered_rule_ids=("ghostprov5_rule_a",), minimum_test_count=1,
+                    ),
+                ),
+                change_parity_evidence=(
+                    FindingChangeParityEvidence(
+                        provider_id="ghostprov5", test_file="tests/test_provider_certification_evidence.py",
+                        test_selector="", covered_rule_ids=("ghostprov5_rule_a",), minimum_test_count=1,
+                        quality="bogus_quality_value",
+                    ),
+                ),
+            )
+
+    def test_quality_appears_in_as_dict(self):
+        m = ProviderCertificationManifest(
+            **self._base_kwargs(),
+            reachability_evidence=(
+                FindingReachabilityEvidence(
+                    provider_id="ghostprov5", test_file="tests/test_provider_certification_evidence.py",
+                    test_selector="", covered_rule_ids=("ghostprov5_rule_a",), minimum_test_count=1,
+                    quality="grouped",
+                ),
+            ),
+        )
+        d = m.as_dict()
+        assert d["reachability_evidence"][0]["quality"] == "grouped"
+
+    def test_all_eleven_providers_use_only_valid_quality_values(self):
+        from app.provider_certification import runner
+
+        valid = {"direct", "grouped", "static_only"}
+        for pid in runner.known_provider_ids():
+            manifest = runner.get_manifest(pid)
+            for ev in manifest.reachability_evidence:
+                assert ev.quality in valid, f"{pid} reachability evidence has invalid quality {ev.quality!r}"
+            for ev in manifest.change_parity_evidence:
+                assert ev.quality in valid, f"{pid} parity evidence has invalid quality {ev.quality!r}"
+
+    def test_cloudflare_evidence_declared_as_direct_quality(self):
+        from app.provider_certification.manifests.cloudflare import CLOUDFLARE_MANIFEST
+
+        assert CLOUDFLARE_MANIFEST.reachability_evidence[0].quality == "direct"
+        assert CLOUDFLARE_MANIFEST.change_parity_evidence[0].quality == "direct"

@@ -377,3 +377,151 @@ class TestCapabilityMatrixPartialListMembership:
     def test_sentry_membership_is_complete_not_partial(self):
         in_complete, in_partial = disc.discover_capability_matrix_membership("sentry")
         assert in_complete is True
+
+
+# ── Message 4: canonical identity verified across all eleven providers ────────
+# Item 3 of the message-4 spec requires deriving/verifying exact provider
+# IDs across every real surface and rejecting alias drift. One test per
+# provider (rather than a single loop) so a failure names the exact
+# provider and surface that drifted.
+
+_ALL_ELEVEN_PROVIDER_IDS = (
+    "cloudflare", "entra", "firebase", "github", "gitlab", "kubernetes",
+    "okta", "sentry", "snowflake", "stripe", "supabase",
+)
+
+
+class TestElevenProviderCanonicalIdentity:
+    def test_cloudflare_id_consistent_across_surfaces(self):
+        assert "cloudflare" in disc.discover_backend_sync_provider_ids()
+        assert "cloudflare" in disc.discover_frontend_provider_ids()
+        assert "cloudflare" in disc.discover_frontend_connectable_ids()
+
+    def test_supabase_id_consistent_across_surfaces(self):
+        assert "supabase" in disc.discover_backend_sync_provider_ids()
+        assert "supabase" in disc.discover_frontend_provider_ids()
+        assert "supabase" in disc.discover_frontend_connectable_ids()
+
+    def test_firebase_id_consistent_across_surfaces(self):
+        assert "firebase" in disc.discover_backend_sync_provider_ids()
+        assert "firebase" in disc.discover_frontend_provider_ids()
+        assert "firebase" in disc.discover_frontend_connectable_ids()
+
+    def test_stripe_id_consistent_across_surfaces(self):
+        assert "stripe" in disc.discover_backend_sync_provider_ids()
+        assert "stripe" in disc.discover_frontend_provider_ids()
+        assert "stripe" in disc.discover_frontend_connectable_ids()
+
+    def test_no_alias_drift_across_all_eleven_providers(self):
+        # Every provider's canonical ID must be the SAME literal string on
+        # both the backend sync list and the frontend provider list — no
+        # provider uses a differently-cased or differently-named alias.
+        backend_ids = disc.discover_backend_sync_provider_ids()
+        frontend_ids = disc.discover_frontend_provider_ids()
+        for pid in _ALL_ELEVEN_PROVIDER_IDS:
+            assert pid in backend_ids, f"{pid} missing from backend sync ids"
+            assert pid in frontend_ids, f"{pid} missing from frontend provider ids"
+
+
+# ── Message 4: strengthened false-removal discovery ───────────────────────────
+
+
+class TestRemovalSuppressionWired:
+    def test_sentry_suppression_is_wired_not_just_defined(self):
+        assert disc.discover_removal_suppression_exists("sentry") is True
+        assert disc.discover_removal_suppression_wired("sentry") is True
+
+    def test_snowflake_suppression_is_wired_not_just_defined(self):
+        assert disc.discover_removal_suppression_exists("snowflake") is True
+        assert disc.discover_removal_suppression_wired("snowflake") is True
+
+    def test_okta_suppression_is_wired_not_just_defined(self):
+        assert disc.discover_removal_suppression_exists("okta") is True
+        assert disc.discover_removal_suppression_wired("okta") is True
+
+    def test_entra_suppression_is_wired_not_just_defined(self):
+        assert disc.discover_removal_suppression_exists("entra") is True
+        assert disc.discover_removal_suppression_wired("entra") is True
+
+    def test_kubernetes_suppression_is_wired_not_just_defined(self):
+        assert disc.discover_removal_suppression_exists("kubernetes") is True
+        assert disc.discover_removal_suppression_wired("kubernetes") is True
+
+    def test_cloudflare_has_no_suppression_function_at_all(self):
+        assert disc.discover_removal_suppression_exists("cloudflare") is False
+        assert disc.discover_removal_suppression_wired("cloudflare") is False
+
+    def test_supabase_has_no_suppression_function_at_all(self):
+        assert disc.discover_removal_suppression_exists("supabase") is False
+        assert disc.discover_removal_suppression_wired("supabase") is False
+
+    def test_firebase_has_no_suppression_function_at_all(self):
+        assert disc.discover_removal_suppression_exists("firebase") is False
+        assert disc.discover_removal_suppression_wired("firebase") is False
+
+    def test_stripe_has_no_suppression_function_at_all(self):
+        assert disc.discover_removal_suppression_exists("stripe") is False
+        assert disc.discover_removal_suppression_wired("stripe") is False
+
+    def test_wired_check_returns_false_for_a_symbol_that_does_not_exist(self):
+        assert disc.discover_removal_suppression_wired("not_a_real_provider_at_all") is False
+
+
+class TestFourNewProvidersFrontendFormsExist:
+    def test_cloudflare_form_file_exists(self):
+        if disc.frontend_root() is None:
+            import pytest
+            pytest.skip("frontend tree not mounted")
+        assert disc.discover_frontend_form_file_exists("CloudflareIntegrationForm.tsx")
+
+    def test_supabase_form_file_exists(self):
+        if disc.frontend_root() is None:
+            import pytest
+            pytest.skip("frontend tree not mounted")
+        assert disc.discover_frontend_form_file_exists("SupabaseIntegrationForm.tsx")
+
+    def test_firebase_form_file_exists(self):
+        if disc.frontend_root() is None:
+            import pytest
+            pytest.skip("frontend tree not mounted")
+        assert disc.discover_frontend_form_file_exists("FirebaseIntegrationForm.tsx")
+
+    def test_stripe_form_file_exists(self):
+        if disc.frontend_root() is None:
+            import pytest
+            pytest.skip("frontend tree not mounted")
+        assert disc.discover_frontend_form_file_exists("StripeIntegrationForm.tsx")
+
+
+class TestFourNewProvidersReconnectSchemaFields:
+    def test_supabase_reconnect_schema_field_matches_credential_field(self):
+        assert disc.discover_reconnect_schema_fields("supabase") == {"supabase_access_token"}
+
+    def test_firebase_reconnect_schema_field_matches_credential_field(self):
+        assert disc.discover_reconnect_schema_fields("firebase") == {"firebase_service_account_json"}
+
+    def test_stripe_reconnect_schema_field_matches_credential_field(self):
+        assert disc.discover_reconnect_schema_fields("stripe") == {"stripe_api_key"}
+
+    def test_cloudflare_reconnect_schema_field_is_empty_due_to_unprefixed_naming(self):
+        # Confirms the same unprefixed-naming discovery gap documented for
+        # credential fields also applies to the reconnect schema — the
+        # adapter only augments credential_fields, not reconnect fields,
+        # since gate_reconnect_rotation doesn't consult reconnect schema
+        # fields directly (it checks function/dispatch existence instead).
+        assert disc.discover_reconnect_schema_fields("cloudflare") == frozenset()
+
+
+class TestFourNewProvidersCapabilityCategories:
+    def test_cloudflare_category_is_edge_network(self):
+        cap = disc.discover_capability_entry("cloudflare")
+        assert cap.category == "edge_network"
+
+    def test_supabase_and_firebase_share_database_backend_category(self):
+        supabase_cap = disc.discover_capability_entry("supabase")
+        firebase_cap = disc.discover_capability_entry("firebase")
+        assert supabase_cap.category == firebase_cap.category == "database_backend"
+
+    def test_stripe_category_is_payments_commerce(self):
+        cap = disc.discover_capability_entry("stripe")
+        assert cap.category == "payments_commerce"

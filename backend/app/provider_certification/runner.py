@@ -39,7 +39,10 @@ _MANIFESTS: dict[str, ProviderCertificationManifest] = {}
 # every other manifest for the rest of the process.
 _manifests_fully_loaded: bool = False
 
-PILOT_PROVIDERS: tuple[str, ...] = ("sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab")
+PILOT_PROVIDERS: tuple[str, ...] = (
+    "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
+    "cloudflare", "supabase", "firebase", "stripe",
+)
 
 
 class UnknownProviderError(ValueError):
@@ -60,13 +63,17 @@ def _ensure_manifests_loaded() -> None:
         return
     # Import triggers each manifest module's module-level
     # register_manifest() call.
+    from app.provider_certification.manifests import cloudflare as _cloudflare_manifest  # noqa: F401
     from app.provider_certification.manifests import entra as _entra_manifest  # noqa: F401
+    from app.provider_certification.manifests import firebase as _firebase_manifest  # noqa: F401
     from app.provider_certification.manifests import github as _github_manifest  # noqa: F401
     from app.provider_certification.manifests import gitlab as _gitlab_manifest  # noqa: F401
     from app.provider_certification.manifests import kubernetes as _kubernetes_manifest  # noqa: F401
     from app.provider_certification.manifests import okta as _okta_manifest  # noqa: F401
     from app.provider_certification.manifests import sentry as _sentry_manifest  # noqa: F401
     from app.provider_certification.manifests import snowflake as _snowflake_manifest  # noqa: F401
+    from app.provider_certification.manifests import stripe as _stripe_manifest  # noqa: F401
+    from app.provider_certification.manifests import supabase as _supabase_manifest  # noqa: F401
     _manifests_fully_loaded = True
 
 
@@ -172,11 +179,20 @@ def certification_summary(results: dict[str, CertificationResult] | None = None)
         parity_excepted = {exc.rule_id for exc in manifest.change_parity_exceptions}
         deferred_gate_ids = sorted(g.gate_id for g in r.gates if g.status == "deferred")
         per_provider[pid] = {
+            "provider_id": manifest.provider_id,
+            "display_name": manifest.display_name,
+            "category": manifest.category,
             "maturity": r.maturity,
             "overall_status": r.overall_status,
             "summary": r.summary,
+            "public": manifest.expected_public,
+            "connectable": manifest.expected_connectable,
+            "live": manifest.expected_live,
             "record_count": len(manifest.expected_record_types),
             "finding_count": len(declared),
+            "supported_capability_count": len(manifest.supported_capabilities),
+            "unsupported_capability_count": len(manifest.unsupported_capabilities),
+            "completeness_scope_count": len(manifest.completeness_scopes) + len(manifest.completeness_scope_declarations),
             "reachability_evidence_coverage": {
                 "covered": len(declared & reachability_covered),
                 "exempted": len(declared & reachability_exempted),

@@ -492,3 +492,94 @@ class TestGateReconnectRotationGenericDispatchFallback:
         monkeypatch.setattr(disc, "discover_generic_reconnect_dispatch", lambda pid: False)
         g = gates.gate_reconnect_rotation(SENTRY_MANIFEST)
         assert g.status == "fail"
+
+
+# ── Message 4: gate_completeness_scope_declarations and gate_false_removal_protection strengthening ──
+
+
+class TestGateCompletenessScopeDeclarationsMultipleScopes:
+    def test_pass_when_all_scopes_have_no_symbol_or_valid_symbol(self):
+        import dataclasses
+
+        from app.provider_certification.models import CompletenessScopeDeclaration
+
+        m = dataclasses.replace(
+            SENTRY_MANIFEST,
+            completeness_scope_declarations=(
+                CompletenessScopeDeclaration(scope_id="a", record_types=(SENTRY_MANIFEST.expected_record_types[0],), granularity="family"),
+                CompletenessScopeDeclaration(
+                    scope_id="b", record_types=(SENTRY_MANIFEST.expected_record_types[0],), granularity="organization",
+                    suppression_symbol="_sentry_removal_suppressed",
+                ),
+            ),
+        )
+        g = gates.gate_completeness_scope_declarations(m)
+        assert g.status == "pass"
+
+    def test_fail_lists_every_scope_with_a_dead_symbol_not_just_the_first(self):
+        import dataclasses
+
+        from app.provider_certification.models import CompletenessScopeDeclaration
+
+        m = dataclasses.replace(
+            SENTRY_MANIFEST,
+            completeness_scope_declarations=(
+                CompletenessScopeDeclaration(
+                    scope_id="dead1", record_types=(SENTRY_MANIFEST.expected_record_types[0],), granularity="family",
+                    suppression_symbol="_dead_symbol_one",
+                ),
+                CompletenessScopeDeclaration(
+                    scope_id="dead2", record_types=(SENTRY_MANIFEST.expected_record_types[0],), granularity="family",
+                    suppression_symbol="_dead_symbol_two",
+                ),
+            ),
+        )
+        g = gates.gate_completeness_scope_declarations(m)
+        assert g.status == "fail"
+        assert "dead1" in g.details and "dead2" in g.details
+
+
+class TestGateFalseRemovalProtectionThreeWayStatus:
+    def test_warning_when_function_exists_but_not_wired(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_removal_suppression_exists", lambda pid: True)
+        monkeypatch.setattr(disc, "discover_removal_suppression_wired", lambda pid: False)
+        g = gates.gate_false_removal_protection(SENTRY_MANIFEST)
+        assert g.status == "warning"
+
+    def test_pass_when_function_exists_and_is_wired(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_removal_suppression_exists", lambda pid: True)
+        monkeypatch.setattr(disc, "discover_removal_suppression_wired", lambda pid: True)
+        g = gates.gate_false_removal_protection(SENTRY_MANIFEST)
+        assert g.status == "pass"
+
+    def test_fail_when_function_does_not_exist_at_all(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_removal_suppression_exists", lambda pid: False)
+        monkeypatch.setattr(disc, "discover_removal_suppression_wired", lambda pid: False)
+        g = gates.gate_false_removal_protection(SENTRY_MANIFEST)
+        assert g.status == "fail"
+
+    def test_details_mention_both_exists_and_wired_flags(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_removal_suppression_exists", lambda pid: True)
+        monkeypatch.setattr(disc, "discover_removal_suppression_wired", lambda pid: False)
+        g = gates.gate_false_removal_protection(SENTRY_MANIFEST)
+        assert "exists" in g.details and "wired" in g.details
+
+
+class TestGateCloudflareSpecificBehavior:
+    def test_cloudflare_connector_contract_gate_passes(self):
+        from app.provider_certification.manifests.cloudflare import CLOUDFLARE_MANIFEST
+
+        g = gates.gate_connector_contract(CLOUDFLARE_MANIFEST)
+        assert g.status in ("pass", "warning")
+
+    def test_cloudflare_capability_matrix_parity_gate_passes(self):
+        from app.provider_certification.manifests.cloudflare import CLOUDFLARE_MANIFEST
+
+        g = gates.gate_capability_matrix_parity(CLOUDFLARE_MANIFEST)
+        assert g.status == "pass"
+
+    def test_cloudflare_public_connectable_live_consistency_gate_passes(self):
+        from app.provider_certification.manifests.cloudflare import CLOUDFLARE_MANIFEST
+
+        g = gates.gate_public_connectable_live_consistency(CLOUDFLARE_MANIFEST)
+        assert g.status == "pass"

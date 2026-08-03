@@ -184,3 +184,99 @@ For a new provider to be added to `PILOT_PROVIDERS` / registered via
 9. Regenerate the provider's JSON report and `summary.json`.
 10. Update the duplication inventory and framework matrix with the new
     provider's rows.
+
+## 9. Message-4 additions: completeness/capability/evidence-quality migration
+
+### 9.1 Manifest onboarding procedure (formalized)
+
+Superseded by the dedicated `provider_certification_onboarding_standard.md`
+document, which is now the single authoritative process reference. This
+migration-policy document retains §1-8 as the historical framework-owned
+vs. provider-owned invariant record; the onboarding STANDARD document is
+the step-by-step checklist to actually follow.
+
+### 9.2 Completeness declaration migration
+
+The legacy free-form `completeness_scopes`/`false_removal_scopes` string
+tuples are NOT deprecated or removed — they remain the primary,
+lightweight declaration surface, and all eleven manifests still use
+them. The new typed `completeness_scope_declarations` field
+(`CompletenessScopeDeclaration`) is strictly additive: a provider MAY
+use it for detail the string form can't express (a specific
+`suppression_symbol`, a `parent_record_type`, `derived_dependents`),
+but is never required to. Migrating an existing manifest from the
+string form to the typed form is optional and may be done incrementally,
+scope by scope, with no schema-version implication (see §9.5).
+
+### 9.3 Capability declaration migration
+
+No migration needed. The five-string capability vocabulary
+(`security_findings`, `activity_ingestion`, `activity_signals`,
+`risk_activity_correlations`, `demo_case_reporting`) established in
+message 1 was audited in message 4 against a much larger candidate list
+(configuration_drift, identity_access, effective_access, alerting,
+ownership_routing, repositories, integrations, database_security,
+network_security, storage_security, application_security,
+event_ingestion, incident_ingestion) and found sufficient for all
+eleven real providers — every one of those concepts already maps onto
+the existing five plus a manifest's `known_limitations`. No manifest
+needs to change its capability declarations because of this audit.
+
+### 9.4 Evidence-quality requirements
+
+`FindingReachabilityEvidence`/`FindingChangeParityEvidence` gained a
+`quality` field (message 4): `direct`, `grouped`, or `static_only`
+(validated against a fixed enum; `deferred` is deliberately excluded —
+it describes the absence of evidence, not a property evidence itself
+can carry). Existing evidence entries default to `quality="direct"`,
+which is accurate for every evidence entry declared by all eleven
+providers as of this message — no existing entry needed reclassifying.
+A future provider whose evidence only proves predicates evaluate
+correctly against HANDCRAFTED records (not real connector-shaped ones)
+should declare `quality="static_only"` and pair it with a
+`ReachabilityExemption`, never leave it as `direct`.
+
+### 9.5 Schema-version migration
+
+Message 4 assessed whether the new `completeness_scope_declarations`
+field and the `quality` field on evidence types constitute a
+"meaningful" schema change requiring `SCHEMA_VERSION = 2`. Decision:
+**no bump**. Both additions are purely additive dataclass fields with
+safe defaults (`completeness_scope_declarations=()`,
+`quality="direct"`) — every one of the seven pre-existing manifests
+constructs and certifies identically with or without referencing the
+new fields, and their persisted JSON reports simply gain new keys
+(`completeness_scope_declarations: []`, `quality: "direct"` on each
+evidence entry) rather than losing or reinterpreting any existing key.
+This is the textbook "cosmetic/additive, don't bump" case the original
+message-3 schema-version guidance anticipated. If a FUTURE change ever
+removes a field, changes a field's meaning, or makes a previously
+optional field required, THAT is when `SCHEMA_VERSION` must become 2,
+with mixed-schema rejection and full seven-manifest (now
+eleven-manifest) migration as described in the original §21 guidance
+this policy inherits from message 3's task spec.
+
+### 9.6 When an adapter is permitted
+
+Unchanged from the Kubernetes/GitHub/GitLab precedent (message 3),
+reaffirmed by message 4's Cloudflare case: an adapter is permitted ONLY
+when generic discovery, run first and confirmed insufficient, cannot
+resolve a genuinely different, verified architectural pattern —
+unprefixed credential fields (Kubernetes, Cloudflare), grouped
+classifier dispatch (Kubernetes), or classifier logic split across two
+risk-rules modules the generic single-module scan can't see
+(Cloudflare's `cloudflare_ruleset` route through
+`risk_rules/cloudflare_dns.py`). An adapter must never be added merely
+to make a gate pass without confirming the underlying pattern is real.
+
+### 9.7 When legacy static assertions may be removed
+
+Unchanged from message 2/3 policy (§4 above): only pure static
+registry/catalog/set-equality duplication with a 1:1 framework gate
+already covering it, never in the same milestone a provider is
+onboarded, always paired with a framework negative-mutation test, and
+capped at a conservative per-message budget (message 4: at most 20
+additional assertions, actually removed: 4, from Kubernetes'
+`test_kubernetes_security_rule_parity.py` — an already-certified
+provider, per the explicit "prefer existing certified providers"
+instruction, not one of the four newly onboarded this message).

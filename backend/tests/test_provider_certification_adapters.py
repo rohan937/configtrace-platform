@@ -106,22 +106,28 @@ class TestAdapterRegistry:
 
 
 class TestNoPilotAdapterNeeded:
-    """Confirms generic discovery is sufficient for six of the seven
-    pilots. Kubernetes (message 3) is the sole exception — it registers
-    a real adapter for two genuinely different architectural patterns
-    (unprefixed credential fields, grouped classifier dispatch) — see
-    ``manifests/kubernetes.py``."""
+    """Confirms generic discovery is sufficient for nine of the eleven
+    pilots. Kubernetes (message 3) and Cloudflare (message 4) are the
+    exceptions — each registers a real adapter for genuinely different
+    architectural patterns (unprefixed credential fields for both;
+    grouped classifier dispatch for Kubernetes, a split-across-two-
+    modules classifier for Cloudflare) — see ``manifests/kubernetes.py``
+    and ``manifests/cloudflare.py``."""
 
     def test_no_adapter_registered_for_non_kubernetes_pilots(self):
         runner._ensure_manifests_loaded()
         for pid in runner.known_provider_ids():
-            if pid == "kubernetes":
+            if pid in ("kubernetes", "cloudflare"):
                 continue
             assert adapt.get_adapter(pid) is None
 
     def test_kubernetes_has_a_registered_adapter(self):
         runner._ensure_manifests_loaded()
         assert adapt.get_adapter("kubernetes") is not None
+
+    def test_cloudflare_has_a_registered_adapter(self):
+        runner._ensure_manifests_loaded()
+        assert adapt.get_adapter("cloudflare") is not None
 
 
 class TestGateAdapterConsistency:

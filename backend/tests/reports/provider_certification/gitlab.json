@@ -180,6 +180,23 @@
       "title": "Completeness model"
     },
     {
+      "blocking": false,
+      "description": "Every typed completeness scope's suppression_symbol (if declared) is discoverable on diff_service.",
+      "details": "Manifest declares no typed completeness_scope_declarations.",
+      "dimension": "completeness_model",
+      "evidence": [],
+      "gate_id": "completeness_scope_declarations",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "not_applicable",
+      "title": "Typed completeness-scope declarations"
+    },
+    {
       "blocking": true,
       "description": "Connector class exists and exposes a credential-mapping method.",
       "details": "GitLabConnector imported successfully; _credentials() present: False.",
@@ -266,7 +283,7 @@
     {
       "blocking": true,
       "description": "Every manifest's maturity/capability declarations agree with the discovered capability matrix.",
-      "details": "All 7 manifest(s) agree with their discovered capability-matrix entry.",
+      "details": "All 11 manifest(s) agree with their discovered capability-matrix entry.",
       "dimension": "cross_manifest_capability_consistency",
       "evidence": [],
       "gate_id": "cross_manifest_capability_consistency",
@@ -283,7 +300,7 @@
     {
       "blocking": true,
       "description": "Every manifest agrees with backend sync/coverage lists and frontend provider/connectable lists.",
-      "details": "All 7 manifest(s) consistent across backend and frontend catalogs.",
+      "details": "All 11 manifest(s) consistent across backend and frontend catalogs.",
       "dimension": "cross_manifest_catalog_consistency",
       "evidence": [],
       "gate_id": "cross_manifest_catalog_consistency",
@@ -300,7 +317,7 @@
     {
       "blocking": true,
       "description": "No Security Finding rule ID is declared by more than one registered manifest.",
-      "details": "235 Finding IDs declared across 7 manifest(s); no cross-provider collisions.",
+      "details": "273 Finding IDs declared across 11 manifest(s); no cross-provider collisions.",
       "dimension": "cross_manifest_finding_uniqueness",
       "evidence": [
         {
@@ -309,7 +326,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "235",
+          "observed_value": "273",
           "report": null,
           "test_node_id": null
         }
@@ -328,7 +345,7 @@
     {
       "blocking": true,
       "description": "Every registered manifest has a unique provider_id; no alias variant is double-registered.",
-      "details": "7 manifest(s) registered with unique provider_ids: ['entra', 'github', 'gitlab', 'kubernetes', 'okta', 'sentry', 'snowflake'].",
+      "details": "11 manifest(s) registered with unique provider_ids: ['cloudflare', 'entra', 'firebase', 'github', 'gitlab', 'kubernetes', 'okta', 'sentry', 'snowflake', 'stripe', 'supabase'].",
       "dimension": "cross_manifest_identity",
       "evidence": [
         {
@@ -337,7 +354,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "['entra', 'github', 'gitlab', 'kubernetes', 'okta', 'sentry', 'snowflake']",
+          "observed_value": "['cloudflare', 'entra', 'firebase', 'github', 'gitlab', 'kubernetes', 'okta', 'sentry', 'snowflake', 'stripe', 'supabase']",
           "report": null,
           "test_node_id": null
         }
@@ -356,7 +373,7 @@
     {
       "blocking": true,
       "description": "Every Live-declared manifest is absent from every future-provider queue.",
-      "details": "All 6 Live-declared manifest(s) absent from both future-provider queues.",
+      "details": "All 10 Live-declared manifest(s) absent from both future-provider queues.",
       "dimension": "cross_manifest_live_freeze",
       "evidence": [],
       "gate_id": "cross_manifest_live_freeze",
@@ -863,7 +880,7 @@
   "summary": {
     "deferred": 1,
     "failed": 0,
-    "not_applicable": 3,
+    "not_applicable": 4,
     "passed": 26,
     "unknown": 0,
     "warnings": 7

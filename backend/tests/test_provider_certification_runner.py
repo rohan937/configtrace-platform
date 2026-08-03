@@ -42,7 +42,10 @@ class TestCertifyOneProvider:
 class TestCertifyAllProviders:
     def test_certify_all_pilot_providers(self):
         results = runner.certify_all_providers()
-        assert set(results) == {"sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab"}
+        assert set(results) == {
+            "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
+            "cloudflare", "supabase", "firebase", "stripe",
+        }
         for pid, result in results.items():
             assert result.provider_id == pid
             assert result.overall_status == "pass"
@@ -57,7 +60,10 @@ class TestCertifyAllProviders:
         assert first == second == sorted(first)
 
     def test_pilot_providers_constant_matches_task_scope(self):
-        assert runner.PILOT_PROVIDERS == ("sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab")
+        assert set(runner.PILOT_PROVIDERS) == {
+            "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
+            "cloudflare", "supabase", "firebase", "stripe",
+        }
 
 
 class TestDeterminism:

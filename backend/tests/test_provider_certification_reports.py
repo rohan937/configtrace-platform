@@ -133,7 +133,10 @@ class TestReportFilesExist:
     def test_summary_json_reports_all_pass(self):
         data = json.loads((_REPORTS_DIR / "summary.json").read_text())
         assert data["all_pass"] is True
-        assert set(data["providers"]) == {"sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab"}
+        assert set(data["providers"]) == {
+            "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
+            "cloudflare", "supabase", "firebase", "stripe",
+        }
 
 
 class TestFrameworkMatrixReport:

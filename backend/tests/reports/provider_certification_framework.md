@@ -1,5 +1,11 @@
-# Provider Certification Framework (Message 1 + Message 2 + Message 3)
+# Provider Certification Framework (Message 1 + Message 2 + Message 3 + Message 4)
 
+**Message 4 update**: see §28-33 below for the Cloudflare/Supabase/
+Firebase/Stripe manifests (bringing the pilot set to eleven providers),
+the typed `CompletenessScopeDeclaration` model and its gate, evidence
+quality typed status, strengthened false-removal-wired discovery, the
+capability-taxonomy audit, the onboarding standard, and the message-4
+certification status.
 **Message 3 update**: see §22-27 below for the Kubernetes/GitHub/GitLab
 manifests (bringing the pilot set to seven providers), the
 `security_finding_reachability` and `finding_change_parity` gates, the
@@ -536,5 +542,125 @@ onboarding checklist.
 | Duplication inventory ≥ 140 rows | PASS (140 rows) |
 | Full framework test suite (544 tests) has no framework-caused regression | PASS |
 | Focused provider regressions (Kubernetes/GitHub/GitLab/Okta/Entra/Sentry/Snowflake depth-QA + security-finding suites, 1029 tests) all pass | PASS |
+
+## 28. Four new pilot providers (message 4): Cloudflare, Supabase, Firebase, Stripe
+
+`manifests/cloudflare.py`, `manifests/supabase.py`, `manifests/firebase.py`,
+`manifests/stripe.py` bring the certified pilot set to eleven providers.
+All four already existed as fully-implemented, launched providers (many
+prior milestone messages) — message 4 only writes their certification
+manifests, exactly like Okta/Entra (message 2) and Kubernetes/GitHub/
+GitLab (message 3):
+
+- **Cloudflare**: 8 record types (the schema-declared `CLOUDFLARE_DNS_RECORD`
+  constant is genuinely never assigned — DNS records are collected and
+  classified, but their `record_type` field holds the raw DNS RR type,
+  e.g. `"A"`/`"CNAME"`, not a fixed constant — confirmed by grep of
+  `_normalize()`), 12 Finding IDs, unprefixed `api_token`/`zone_id`
+  credentials resolved via a dedicated adapter (the same "original-era"
+  pattern as Kubernetes/GitHub), classifier dispatch split across TWO
+  risk-rules modules (`risk_rules/cloudflare.py` for 7 types,
+  `risk_rules/cloudflare_dns.py` for `cloudflare_ruleset` — routed there
+  directly by `risk_service.py`) resolved via the same adapter, honestly
+  empty completeness declarations (no suppression function exists yet).
+- **Supabase**: 10 record types, 10 Finding IDs — generic discovery fully
+  sufficient, no adapter needed. Project-scoped configuration metadata
+  only (no table rows, no auth-user data, no query history).
+- **Firebase**: 13 record types, 8 Finding IDs — generic discovery fully
+  sufficient. Project/service configuration and security-rule TEXT only
+  (no Firestore/Storage document contents, no auth-user records, no
+  function source code).
+- **Stripe**: 6 real record types (11 of 17 schema-declared constants are
+  genuinely unimplemented — confirmed by grep; the classifier module
+  DOES have dispatch entries for all 17, aspirational/dead code on both
+  sides for the 11) — generic discovery fully sufficient. Reconnect via
+  the shared generic dispatcher (not a named function), the same
+  pattern as GitHub/Cloudflare. Configuration-only metadata (webhook
+  endpoints, payment links, billing-portal/account settings) — no
+  payment transactions, customer data, or webhook payload ingestion.
+
+## 29. Typed completeness-scope taxonomy and the completeness_scope_declarations gate
+
+`CompletenessScopeDeclaration` (scope_id, record_types, granularity,
+parent_record_type, status_field, suppression_symbol, derived_dependents,
+note) and a 12-value generic granularity enum
+(`COMPLETENESS_SCOPE_GRANULARITIES`: family, account, organization,
+project, repository, group, cluster, namespace, zone, parent_resource,
+detail, derived_dependency — no provider names encoded) are additive to
+the manifest, alongside the unchanged legacy `completeness_scopes`/
+`false_removal_scopes` string tuples. Construction-time validation
+rejects unknown record types, unknown parent types, unknown derived
+dependents, and duplicate scope IDs. A new gate,
+`gate_completeness_scope_declarations`, checks the one thing
+construction can't: whether a declared `suppression_symbol` actually
+resolves on `diff_service`.
+
+## 30. Strengthened false-removal discovery
+
+`discover_removal_suppression_wired` (message 4) goes beyond
+message 1-3's `discover_removal_suppression_exists` (which only proves
+a `_<provider>_removal_suppressed` function is *defined*) by counting
+textual occurrences of the symbol in `diff_service`'s own source: more
+than one occurrence proves at least one call site exists beyond the
+`def` line itself, i.e. the function is actually dispatched, not dead
+code. Confirmed for all five providers that declare one (Sentry,
+Snowflake, Okta, Entra, Kubernetes) — all wired. `gate_false_removal_protection`
+now resolves three ways: `pass` (exists and wired), `warning` (exists
+but not provably wired — a real, actionable signal), `fail` (doesn't
+exist at all).
+
+## 31. Capability taxonomy audit — no new capability IDs needed
+
+Message 4 audited the five-string capability vocabulary
+(`security_findings`, `activity_ingestion`, `activity_signals`,
+`risk_activity_correlations`, `demo_case_reporting`) against a much
+larger candidate list suggested by the task spec (configuration_drift,
+identity_access, effective_access, alerting, ownership_routing,
+repositories, integrations, database_security, network_security,
+storage_security, application_security, event_ingestion,
+incident_ingestion) across all eleven real manifests. Finding: every
+one of those concepts already maps onto the existing five plus a
+manifest's `known_limitations` — no manifest across all eleven
+providers needed a capability concept the existing vocabulary couldn't
+express, so no new capability IDs were introduced. This is a genuine
+audit finding, not an omission — see
+`test_provider_certification_capabilities.py` for the tests pinning it.
+
+## 32. Consolidation performed (message 4)
+
+4 duplicated static assertions were removed from Kubernetes' own
+`test_kubernetes_security_rule_parity.py` (`TestRegistryParity`'s 2
+module-keys-vs-registry checks, and 2 more from
+`TestFrontendParity`/`TestFullCrossLayerParity`'s set-equality/all-
+layers-identical checks) — the same category removed from Sentry/
+Snowflake (message 2) and Okta/Entra (message 3), now extended to
+Kubernetes, an already-certified provider from message 3, per the
+explicit "prefer existing certified providers, not the four being
+onboarded" instruction. Running consolidation total across the entire
+framework: 28 assertions. Cloudflare/Supabase/Firebase/Stripe's own
+depth-QA/change-classification-QA files were NOT touched this message.
+
+## 33. Certification status after message 4
+
+| Gate | Result |
+|---|---|
+| All eleven providers (Sentry, Snowflake, Okta, Entra, Kubernetes, GitHub, GitLab, Cloudflare, Supabase, Firebase, Stripe) certify PASS | PASS |
+| `certify_all_providers()` deterministic ordering (11 providers) | PASS |
+| Global provider-expansion-freeze gate passes for all 11 | PASS |
+| Cross-manifest global gates all PASS for all 11, plus new eleven-provider-specific invariant tests (item 23) | PASS |
+| `gate_completeness_scope_declarations` proven pass/fail/not_applicable across real and synthetic manifests | PASS |
+| Strengthened `discover_removal_suppression_wired` proven for all 5 providers with a suppression function | PASS |
+| Capability-taxonomy audit: no new capability IDs needed across all 11 providers | PASS |
+| Evidence-quality typed status (`direct`/`grouped`/`static_only`) validated across all 11 providers' evidence | PASS |
+| Schema version: NOT bumped (purely additive fields, decision documented in migration policy §9.5) | PASS |
+| Cloudflare adapter (unprefixed credentials + split-module classifier dispatch) proven | PASS |
+| Onboarding-standard document created and its 20 required sections pinned by tests | PASS |
+| Consolidation: 4 more assertions removed (Kubernetes), all proven safe — 28 total across the framework | PASS |
+| No network/DB/credential access during certification (11 providers) | PASS |
+| Deterministic JSON output for all 11 providers + summary.json (same process, separate process) | PASS |
+| Framework matrix ≥ 750 rows | PASS (751 rows) |
+| Duplication inventory ≥ 220 rows | PASS (220 rows) |
+| Full framework test suite (794 tests) has no framework-caused regression | PASS |
+| Focused provider regressions (all 11 providers' depth-QA/security-finding/change-classification suites, 1949 tests) all pass | PASS |
 
 **FRAMEWORK CERTIFICATION STATUS: PASS.**

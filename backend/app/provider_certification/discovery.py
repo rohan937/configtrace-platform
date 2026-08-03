@@ -448,6 +448,28 @@ def discover_removal_suppression_exists(provider_id: str) -> bool:
     )
 
 
+def discover_removal_suppression_wired(provider_id: str) -> bool:
+    """Message 4 strengthening: a suppression function's mere existence
+    (``discover_removal_suppression_exists``) does not prove it is
+    actually dispatched from the main removal-detection path — a dead,
+    unwired function would still pass that check. This counts textual
+    occurrences of the symbol name in ``diff_service``'s own source: 1
+    occurrence is only the ``def`` site (dead code); >=2 means at least
+    one call site exists elsewhere in the module too.
+
+    This is still a static heuristic, not semantic proof the dispatch
+    is correct for every code path — provider-specific scenario tests
+    remain the real evidence for that."""
+    import inspect
+
+    from app.services import diff_service
+
+    name = f"_{provider_id}_removal_suppressed"
+    if not discover_removal_suppression_exists(provider_id):
+        return False
+    return inspect.getsource(diff_service).count(name) > 1
+
+
 # ── Frontend provider parity ──────────────────────────────────────────────────
 
 
