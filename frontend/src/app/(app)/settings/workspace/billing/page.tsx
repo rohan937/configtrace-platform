@@ -6,8 +6,10 @@ import { useAuth } from "@clerk/nextjs";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   getWorkspaceBilling,
+  getTeamPricingPreview,
   createCheckoutSession,
   createPortalSession,
+  type TeamPricingBreakdown,
 } from "@/lib/api";
 import type { WorkspaceBilling, BillingPlan } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
@@ -32,14 +34,19 @@ const STRIPE_UNAVAILABLE_HELPER_TEXT =
 
 // ── Plan metadata ─────────────────────────────────────────────────────────────
 //
-// M58.25: early-access pricing.
+// M58.25: early-access pricing (Pro). Team pricing was updated in
+// Commercial Infrastructure message 1:
 //   Pro  → $10/month, 14-day trial
-//   Team → $40/month, 14-day trial
+//   Team → $30/month base (up to 20 members) + $5/month per additional
+//          member, 14-day trial. See `app/billing/pricing.py`
+//          (`calculate_team_monthly_price`) for the authoritative formula.
 //
-// Prices, trial length, and limits must stay aligned with
-// `backend/app/services/billing_service.py` PLAN_LIMITS. The backend is the
-// source of truth; the tests in `backend/tests/test_milestone58_25.py`
-// enforce equality.
+// Pro's price, trial length, and limits must stay aligned with
+// `backend/app/services/billing_service.py` PLAN_LIMITS (the tests in
+// `backend/tests/test_milestone58_25.py` enforce equality for Pro). Team's
+// authoritative pricing now lives in `backend/app/billing/pricing.py` and
+// is fetched dynamically via `getTeamPricingPreview()` — this file's Team
+// `monthlyPriceUsd`/`monthlyPriceLabel` describe the FORMULA only.
 //
 // `priceId` is the Stripe price ID for each plan. It comes from
 // `NEXT_PUBLIC_STRIPE_PRICE_*_MONTHLY` env vars at build time — never
@@ -83,13 +90,21 @@ const PLAN_META: Record<BillingPlan, PlanMeta> = {
     priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTHLY ?? null,
   },
   team: {
+    // Commercial Infrastructure message 1: Team pricing is $30/month base
+    // (includes up to 20 billable members) + $5/month for each additional
+    // member beyond 20 — this is a flat base amount, not a per-member unit
+    // price. The backend
+    // GET /workspaces/{id}/billing/pricing-preview endpoint
+    // (app/billing/pricing.py::calculate_team_monthly_price) is the single
+    // source of truth for the exact total for a given workspace; this
+    // static copy only describes the FORMULA, never a computed total.
     name: "Team",
-    monthlyPriceUsd: "$40",
-    monthlyPriceLabel: "Then $40/month",
+    monthlyPriceUsd: "$30",
+    monthlyPriceLabel: "Includes up to 20 members. +$5/month for each additional member.",
     trialDays: 14,
     features: [
       "100 integrations",
-      "25 members",
+      "Up to 20 members included — +$5/month per additional member",
       "Monitoring cadence: every 5 min",
       "365-day history",
       "Workspace audit logs",
@@ -577,6 +592,10 @@ export default function BillingPage() {
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  // Commercial Infrastructure message 1: Team's exact, per-workspace price
+  // comes ONLY from the backend pricing-preview endpoint — never
+  // recomputed client-side.
+  const [teamPricing, setTeamPricing] = useState<TeamPricingBreakdown | null>(null);
 
   // Read Stripe redirect result from query string.
   useEffect(() => {
@@ -608,6 +627,24 @@ export default function BillingPage() {
   }, [selectedWorkspace, getToken]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!selectedWorkspace) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        const preview = await getTeamPricingPreview(selectedWorkspace.id, token);
+        if (!cancelled) setTeamPricing(preview);
+      } catch {
+        // Pricing preview is a non-critical enhancement — silently skip if
+        // it fails (e.g. non-admin caller); the static formula copy in
+        // PLAN_META.team still describes the pricing correctly.
+        if (!cancelled) setTeamPricing(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedWorkspace, getToken]);
 
   async function handleUpgrade(plan: BillingPlan) {
     if (!selectedWorkspace) return;
@@ -935,6 +972,33 @@ export default function BillingPage() {
                 used={billing.usage.members}
                 max={billing.limits.max_members}
               />
+
+              {billing.plan === "team" && teamPricing && (
+                <div
+                  style={{
+                    marginTop: "16px",
+                    paddingTop: "16px",
+                    borderTop: "1px solid #1e2030",
+                  }}
+                >
+                  <div style={{ fontSize: "11px", color: "#565b6e", marginBottom: "8px" }}>
+                    Team pricing breakdown
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#8b90a0", lineHeight: 1.7 }}>
+                    <div>Billable members: {teamPricing.billable_members}</div>
+                    <div>Included in base price: {teamPricing.included_members}</div>
+                    <div>Additional members: {teamPricing.additional_members}</div>
+                    <div>
+                      Base: ${(teamPricing.base_amount_cents / 100).toFixed(2)} + Additional
+                      seats: ${(teamPricing.additional_seat_amount_cents / 100).toFixed(2)}
+                    </div>
+                    <div style={{ color: "#e8eaf0", fontWeight: 600, marginTop: "4px" }}>
+                      Estimated monthly total: $
+                      {(teamPricing.total_amount_cents / 100).toFixed(2)}/{teamPricing.interval}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Read-only limits */}
               <div

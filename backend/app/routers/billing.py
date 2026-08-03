@@ -19,6 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import UUID4, BaseModel
 from sqlalchemy.orm import Session
 
+from app.billing.billable_seats import calculate_billable_member_count
+from app.billing.pricing import calculate_team_monthly_price
 from app.config import settings
 from app.core.auth import get_current_user
 from app.database import get_db
@@ -127,6 +129,26 @@ def get_billing(
         stripe_mode=settings.stripe_mode,
         stripe_events_configured=settings.is_webhook_configured,
     )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/billing/pricing-preview",
+    summary="Provider-neutral Team pricing preview for this workspace",
+)
+def get_team_pricing_preview(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return the current Team pricing breakdown for this workspace's real
+    billable-member count. This is the SINGLE source of truth for Team
+    pricing display — the frontend must never re-implement
+    ``3000 + max(0, members - 20) * 500`` itself (Commercial Infrastructure
+    message-1 spec item 30)."""
+    _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+    billable_members = calculate_billable_member_count(workspace_id, db)  # type: ignore[arg-type]
+    breakdown = calculate_team_monthly_price(billable_members)
+    return breakdown.as_dict()
 
 
 @router.post(

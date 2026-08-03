@@ -104,6 +104,35 @@ class Settings(BaseSettings):
     # Override in development: FRONTEND_URL=http://localhost:3000
     FRONTEND_URL: Optional[str] = None
 
+    # ── Commercial Infrastructure message 1 — provider-neutral billing ──────
+    #
+    # BILLING_PROVIDER selects which adapter app.billing.registry returns.
+    # "stripe" (default) preserves the existing, already-deployed behavior —
+    # message 1 does NOT change any hosted environment's default. Message 2+
+    # changes the deployment default to "paddle" once Paddle checkout is
+    # actually implemented; setting BILLING_PROVIDER=paddle here with no
+    # Paddle price mapping configured fails closed (see
+    # app.billing.registry.get_billing_provider) rather than silently using
+    # Stripe.
+    BILLING_PROVIDER: str = "stripe"
+
+    # Paddle configuration — ALL optional/unset in message 1. No Paddle
+    # product/price is created and no Paddle API is called this message;
+    # these fields exist only so message 2 can populate them without a
+    # settings-schema change.
+    #
+    # "sandbox" | "live" — never assume sandbox and live values are
+    # interchangeable (message-1 spec item 36).
+    PADDLE_ENVIRONMENT: Optional[str] = None
+    # Paddle API key — backend only, NEVER exposed to the frontend, NEVER logged.
+    PADDLE_API_KEY: Optional[str] = None
+    # Paddle webhook/notification signing secret — backend only.
+    PADDLE_WEBHOOK_SECRET: Optional[str] = None
+    # Paddle recurring price ID for the Team base ($30/month, up to 20 seats) item.
+    PADDLE_BASE_PRICE_ID: Optional[str] = None
+    # Paddle recurring price ID for the Team additional-seat ($5/month) item.
+    PADDLE_ADDITIONAL_SEAT_PRICE_ID: Optional[str] = None
+
     # ── Required for Milestone 31 (GitHub App integration) ──────────────────
     # GitHub App numeric ID — shown on the App settings page.
     GITHUB_APP_ID: Optional[str] = None

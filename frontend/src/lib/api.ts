@@ -2259,6 +2259,40 @@ export async function getWorkspaceBilling(
 }
 
 /**
+ * Provider-neutral Team pricing breakdown for this workspace's real
+ * billable-member count (Commercial Infrastructure message 1).
+ *
+ * This is the SINGLE source of truth for Team pricing display — the
+ * frontend must never re-implement `3000 + max(0, members - 20) * 500`
+ * itself. Returns amounts in integer minor units (cents).
+ */
+export interface TeamPricingBreakdown {
+  currency: string;
+  interval: string;
+  billable_members: number;
+  included_members: number;
+  additional_members: number;
+  base_amount_cents: number;
+  additional_seat_amount_cents: number;
+  total_amount_cents: number;
+  components: Array<{
+    component_id: string;
+    unit_amount_cents: number;
+    quantity: number;
+    currency: string;
+    interval: string;
+    subtotal_cents: number;
+  }>;
+}
+
+export async function getTeamPricingPreview(
+  workspaceId: string,
+  token?: string | null,
+): Promise<TeamPricingBreakdown> {
+  return apiFetch(`/workspaces/${workspaceId}/billing/pricing-preview`, { token });
+}
+
+/**
  * Create a Stripe Checkout session to upgrade a workspace.
  * Returns the Stripe-hosted checkout URL.
  * The frontend redirects to this URL; no card details touch our servers.
