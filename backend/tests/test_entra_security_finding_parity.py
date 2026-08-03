@@ -151,10 +151,9 @@ class TestPackParity:
 
 
 class TestCoverageParity:
-    def test_entra_in_connectable_providers_list(self):
-        # Message 8: Entra is now publicly connectable — must appear in the
-        # live connected-integration coverage surface.
-        assert "entra" in security_coverage_service.PROVIDERS
+    # test_entra_in_connectable_providers_list was consolidated in message 5:
+    # exactly superseded by app.provider_certification.gates.gate_security_coverage_parity
+    # (see test_provider_certification_entra.py and provider_certification_duplication_inventory.md).
 
     def test_entra_in_provider_surfaces(self):
         assert "entra" in security_coverage_service.PROVIDER_SURFACES

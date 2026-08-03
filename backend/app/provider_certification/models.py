@@ -139,6 +139,8 @@ DIMENSIONS: dict[str, str] = {
     "security_finding_reachability": "Every declared Finding rule ID has direct evidence, grouped evidence, or an explicit static-only exemption that real connector-shaped records reach the evaluator",
     "finding_change_parity": "Every declared Finding rule ID with a direct Change transition has parity evidence or an explicit, rationale-backed severity exception",
     "cross_manifest_reachability_parity_coverage": "Global: every provider declaring Security Findings has reachability and parity evidence registered",
+    "provider_manifest_coverage": "Global: every launched provider either has a certification manifest or an explicit migration-allowlist entry, and no orphan/duplicate/misidentified manifests exist",
+    "capability_evidence": "Every capability_evidence declaration references real record types/Finding IDs, only covers supported capabilities, and has no duplicates",
 }
 
 
@@ -443,6 +445,65 @@ class CompletenessScopeDeclaration:
         }
 
 
+# ── Capability evidence declaration (message 5) ────────────────────────────────
+
+
+@dataclass(frozen=True)
+class CapabilityEvidenceDeclaration:
+    """Typed evidence that a declared ``supported_capabilities`` entry is
+    backed by real record types, Finding rules, and/or tests — not just
+    a bare string in a tuple. Strengthens capability validation beyond
+    substring matching (message 4's audit found the 5-string vocabulary
+    sufficient; message 5 adds the ability to PROVE a capability claim
+    with typed evidence rather than trusting the declaration alone)."""
+
+    capability: str
+    supporting_record_types: tuple[str, ...] = field(default_factory=tuple)
+    supporting_finding_rule_ids: tuple[str, ...] = field(default_factory=tuple)
+    evidence_tests: tuple[str, ...] = field(default_factory=tuple)
+    limitation_note: str = ""
+    derived_support: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "capability": self.capability,
+            "supporting_record_types": sorted(self.supporting_record_types),
+            "supporting_finding_rule_ids": sorted(self.supporting_finding_rule_ids),
+            "evidence_tests": sorted(self.evidence_tests),
+            "limitation_note": self.limitation_note,
+            "derived_support": self.derived_support,
+        }
+
+
+# ── Migration allowlist (message 5) ────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class UncertifiedProviderMigrationEntry:
+    """A launched provider not yet migrated onto the certification
+    framework. Temporary and explicit — never a silent gap. This
+    project does not track calendar dates for its milestone system (see
+    the message-history convention of "message N", not dates), so this
+    declares a planned FRAMEWORK MESSAGE number instead of a date."""
+
+    provider_id: str
+    reason: str
+    planned_framework_message: int
+    blocking: bool = False
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+    owner: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "reason": self.reason,
+            "planned_framework_message": self.planned_framework_message,
+            "blocking": self.blocking,
+            "evidence": sorted(self.evidence),
+            "owner": self.owner,
+        }
+
+
 # ── Provider certification manifest ───────────────────────────────────────────
 
 
@@ -505,6 +566,13 @@ class ProviderCertificationManifest:
     See CompletenessScopeDeclaration. Legacy completeness_scopes /
     false_removal_scopes strings remain the primary declaration surface;
     this field is for new, structured detail where a provider wants it."""
+
+    capability_evidence: tuple[CapabilityEvidenceDeclaration, ...] = field(default_factory=tuple)
+    """Typed capability evidence (message 5) — additive, optional. Not
+    every supported_capabilities entry requires one; where declared, it
+    is validated (record types/Finding IDs/evidence files must exist,
+    the capability must actually be in supported_capabilities, and an
+    unsupported capability may never carry positive evidence)."""
 
     certification_owner: str = "provider-certification-framework"
     manifest_version: int = 1
@@ -729,6 +797,34 @@ class ProviderCertificationManifest:
                     f"unknown derived record type(s): {sorted(unknown_dd)}"
                 )
 
+        # ── capability evidence validation (message 5) ──────────────────────────
+        seen_capability_evidence: set[str] = set()
+        for ev in self.capability_evidence:
+            if ev.capability in seen_capability_evidence:
+                errors.append(f"duplicate capability_evidence declaration for capability {ev.capability!r}")
+            seen_capability_evidence.add(ev.capability)
+            if ev.capability in self.unsupported_capabilities:
+                errors.append(
+                    f"capability_evidence declares {ev.capability!r}, which is in unsupported_capabilities — "
+                    "an unsupported capability cannot carry positive evidence"
+                )
+            elif ev.capability not in self.supported_capabilities:
+                errors.append(
+                    f"capability_evidence declares {ev.capability!r}, which is not in supported_capabilities"
+                )
+            unknown_rt = set(ev.supporting_record_types) - known_record_types
+            if unknown_rt:
+                errors.append(
+                    f"capability_evidence[{ev.capability!r}].supporting_record_types references "
+                    f"unknown record type(s): {sorted(unknown_rt)}"
+                )
+            unknown_fid = set(ev.supporting_finding_rule_ids) - known_rule_ids
+            if unknown_fid:
+                errors.append(
+                    f"capability_evidence[{ev.capability!r}].supporting_finding_rule_ids references "
+                    f"unknown Finding ID(s): {sorted(unknown_fid)}"
+                )
+
         if errors:
             raise ManifestValidationError(
                 f"Invalid certification manifest for provider {self.provider_id!r}:\n"
@@ -768,6 +864,7 @@ class ProviderCertificationManifest:
             "change_parity_evidence": [e.as_dict() for e in sorted(self.change_parity_evidence, key=lambda e: (e.test_file, e.test_selector))],
             "change_parity_exceptions": [e.as_dict() for e in sorted(self.change_parity_exceptions, key=lambda e: e.rule_id)],
             "completeness_scope_declarations": [e.as_dict() for e in sorted(self.completeness_scope_declarations, key=lambda e: e.scope_id)],
+            "capability_evidence": [e.as_dict() for e in sorted(self.capability_evidence, key=lambda e: e.capability)],
             "certification_owner": self.certification_owner,
             "manifest_version": self.manifest_version,
         }

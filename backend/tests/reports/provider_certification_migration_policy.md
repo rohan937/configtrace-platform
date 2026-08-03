@@ -279,4 +279,68 @@ capped at a conservative per-message budget (message 4: at most 20
 additional assertions, actually removed: 4, from Kubernetes'
 `test_kubernetes_security_rule_parity.py` — an already-certified
 provider, per the explicit "prefer existing certified providers"
-instruction, not one of the four newly onboarded this message).
+instruction, not one of the four newly onboarded this message. Message
+5: at most 24 additional assertions, actually removed: 2 —
+`test_okta_in_connectable_providers_list` /
+`test_entra_in_connectable_providers_list`, each an exact duplicate of
+`gate_security_coverage_parity`'s `security_coverage_service.PROVIDERS`
+membership check, from Okta/Entra — already-certified providers, not
+the six newly onboarded this message. The sibling
+`PROVIDER_SURFACES`-membership assertions were deliberately kept since
+no gate currently proves that distinct invariant.)
+
+## 10. Repository-wide adoption tracking (message 5)
+
+`runner.adoption_report()` / `write_adoption_report()` produce a
+deterministic, timestamp-free JSON snapshot
+(`tests/reports/provider_certification_adoption.json`) of
+launched-vs-certified-vs-allowlisted-vs-orphan provider-ID sets and a
+coverage percentage. This is the authoritative place to check overall
+framework adoption without re-deriving it from individual manifests.
+
+## 11. Migration allowlist exit criteria
+
+A provider leaves `MIGRATION_ALLOWLIST` the moment it receives a
+registered certification manifest — `gate_provider_manifest_coverage`
+actively fails (`certified_and_allowlisted`) if a certified provider's
+allowlist entry is not removed in the same change. There is no grace
+period; the allowlist and the manifest registry are mutually
+exclusive for a given `provider_id`.
+
+## 12. Stale-manifest failure policy
+
+A manifest whose `expected_record_types` or `security_finding_rule_ids`
+drifts from live discovery is not silently tolerated: missing entries
+`fail` (`gate_record_inventory` / `gate_security_finding_registry_parity`),
+undeclared extras `warning` (never silently `pass`). A credential field
+the manifest still declares but the backend schema no longer has
+`fail`s `gate_credential_schema`; a new backend credential field absent
+from the manifest `warning`s it, surfacing the drift without blocking
+an otherwise-passing provider.
+
+## 13. Capability-evidence migration
+
+`CapabilityEvidenceDeclaration` is additive and optional — providers
+certified before message 5 are not required to retroactively add
+evidence declarations for already-declared capabilities. New manifests
+onboarded from message 5 onward are encouraged, not required, to
+declare evidence for `security_findings` at minimum, following the
+AWS/Datadog precedent set this message.
+
+## 14. When provider certification becomes required for PR merge
+
+Not yet — this remains a voluntary, additive framework as of message 5.
+No CI gate currently blocks a PR on `certify_provider()` results. A
+future message may propose wiring this framework into required CI
+checks; that decision is explicitly out of scope for message 5.
+
+## 15. Preserving semantic provider tests
+
+Nothing in this message's staleness-detection or capability-evidence
+work touches a certified provider's own semantic connector tests
+(normalization, pagination/retry, partial-sync/false-removal,
+Change-classification, Finding reachability, reconnect-mismatch) — the
+framework verifies static repository WIRING only, and every
+consolidation this message (§9.7) was scoped to pure registry/catalog
+set-equality duplication with a verified 1:1 framework-gate
+equivalent, never a semantic behavioral test.

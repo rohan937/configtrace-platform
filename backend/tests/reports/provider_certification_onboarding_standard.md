@@ -229,3 +229,65 @@ only an explicit roadmap decision (outside this framework) unfreezes
 expansion for a specific named provider. Following this checklist for a
 provider that hasn't been explicitly greenlit is out of scope, even if
 every other step would otherwise succeed.
+
+## 21. Repository-wide manifest coverage requirement (message 5)
+
+Every provider `discover_launched_provider_ids()` finds MUST have
+either a registered certification manifest or an explicit entry in
+`migration_allowlist.MIGRATION_ALLOWLIST` — `gate_provider_manifest_coverage`
+enforces this as a blocking, repository-wide gate attached to every
+certification result. A provider that is neither certified nor
+allowlisted is a silent gap this gate exists specifically to prevent.
+
+## 22. Migration allowlist rules
+
+`UncertifiedProviderMigrationEntry` requires a non-empty `reason` and a
+`planned_framework_message >= 1` referencing a future message number
+(not a calendar date, matching this project's message-numbered
+convention). Duplicate `provider_id` entries are rejected at import
+time. An entry for a provider `discover_launched_provider_ids()` does
+not recognize as launched is rejected at import time. A provider that
+already has a registered manifest MUST NOT also appear in the
+allowlist — `gate_provider_manifest_coverage` fails this as
+`certified_and_allowlisted`. Once a provider is certified, its
+allowlist entry must be removed in the same message.
+
+## 23. Stale-inventory / Finding-set / credential-drift detection
+
+`gate_record_inventory`, `gate_security_finding_registry_parity`,
+`gate_credential_schema`, and `gate_sensitive_data_controls` already
+detect drift between a manifest's declarations and live repository
+discovery (missing → `fail`, undeclared extra → `warning`). Message 5
+adds regression coverage (`test_provider_certification_staleness.py`)
+proving each of these genuinely catches drift — via monkeypatched
+discovery, not manifest mutation, since expected_record_types and
+security_finding_rule_ids are cross-referenced by other typed
+declarations whose own validation would otherwise fire first.
+
+## 24. Capability evidence declarations
+
+A `supported_capabilities` entry MAY optionally carry a
+`CapabilityEvidenceDeclaration` naming the real record types, Finding
+rule IDs, and test files that back the claim. `gate_capability_evidence`
+is `not_applicable` (non-blocking) when a manifest declares none, and
+otherwise fails if any declared `evidence_tests` file is missing from
+disk. Evidence is optional strengthening, not a requirement for every
+capability — a capability may remain supported without a
+`CapabilityEvidenceDeclaration`.
+
+## 25. Retirement / removal process
+
+Should a certified provider ever be removed from the repository
+(connector deleted, capability-matrix entry removed), its manifest
+must be unregistered in the same change and its provider_id removed
+from `PILOT_PROVIDERS` — leaving a stale manifest for a provider that
+no longer exists would trip `gate_provider_manifest_coverage`'s orphan
+check (`manifest_id_set - launched - planned_ids`).
+
+## 26. Manifest update requirements when record types or Findings change
+
+Any change to a provider's schema record-type constants or Finding
+rule IDs (adding, removing, or renaming) MUST be accompanied by the
+matching manifest update in the same change — `gate_record_inventory`
+and `gate_security_finding_registry_parity` will otherwise report
+drift on the very next certification run.

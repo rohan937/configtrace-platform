@@ -1212,6 +1212,105 @@ def gate_provider_expansion_freeze() -> CertificationGate:
     )
 
 
+def gate_provider_manifest_coverage(
+    manifests: tuple[ProviderCertificationManifest, ...],
+) -> CertificationGate:
+    """Global certification gate — not owned by any single provider.
+
+    Item 11-12 of message 5: computes launched/manifest/missing/orphan
+    provider-ID sets and fails when a launched provider has no manifest
+    AND no migration-allowlist entry, a manifest's provider_id doesn't
+    correspond to a real launched provider (orphan) and isn't itself a
+    ``maturity="planned"`` manifest (which legitimately has no launched
+    presence — see Slack), a manifest is registered twice, or a
+    manifest claims Live status for a provider the future-provider
+    queue would contradict.
+    """
+    from app.provider_certification import migration_allowlist as ma
+
+    launched = disc.discover_launched_provider_ids()
+    manifest_ids = [m.provider_id for m in manifests]
+    manifest_id_set = set(manifest_ids)
+    allowlisted = ma.allowlisted_provider_ids()
+
+    issues: list[str] = []
+
+    duplicates = {pid for pid in manifest_ids if manifest_ids.count(pid) > 1}
+    if duplicates:
+        issues.append(f"manifest(s) registered more than once: {sorted(duplicates)}")
+
+    missing = launched - manifest_id_set - allowlisted
+    if missing:
+        issues.append(f"launched provider(s) with neither a manifest nor a migration-allowlist entry: {sorted(missing)}")
+
+    planned_ids = {m.provider_id for m in manifests if m.maturity == "planned"}
+    orphans = manifest_id_set - launched - planned_ids
+    if orphans:
+        issues.append(f"manifest(s) for a provider not discoverable as launched, and not maturity='planned': {sorted(orphans)}")
+
+    certified_and_allowlisted = manifest_id_set & allowlisted
+    if certified_and_allowlisted:
+        issues.append(f"certified provider(s) still present in the migration allowlist: {sorted(certified_and_allowlisted)}")
+
+    future_queue = disc.discover_recommended_next_providers()
+    live_in_queue = {m.provider_id for m in manifests if m.expected_live} & future_queue
+    if live_in_queue:
+        issues.append(f"manifest(s) claim Live status for a provider still in the future-provider queue: {sorted(live_in_queue)}")
+
+    status = "fail" if issues else "pass"
+    details = (
+        "; ".join(issues) if issues else
+        f"{len(launched)} launched provider(s), {len(manifest_id_set)} manifest(s), "
+        f"{len(allowlisted)} allowlisted, 0 unexpected missing, 0 orphans."
+    )
+    return CertificationGate(
+        gate_id="provider_manifest_coverage",
+        dimension="provider_manifest_coverage",
+        title="Provider manifest coverage",
+        description="Every launched provider has a manifest or an explicit migration-allowlist entry; no orphan/duplicate manifests; no certified provider remains allowlisted.",
+        required_for_maturities=("planned", "partial", "complete"),
+        required_for_live=False,
+        status=status,
+        details=details,
+        remediation="Add a manifest or a migration-allowlist entry for every launched provider; remove orphan/duplicate manifests." if issues else "",
+        blocking=True,
+        evidence=(_ev_symbol("discover_launched_provider_ids()", observed=str(sorted(launched))),),
+    )
+
+
+def gate_capability_evidence(manifest: ProviderCertificationManifest) -> CertificationGate:
+    """Per-provider gate (message 5): checks that every declared
+    ``capability_evidence`` entry's ``evidence_tests`` files actually
+    exist on disk — the one thing construction-time validation cannot
+    check without touching the filesystem (record types/Finding IDs are
+    already validated at construction time)."""
+    if not manifest.capability_evidence:
+        return _gate(
+            "capability_evidence", "capability_evidence", "Capability evidence",
+            "Every capability_evidence declaration's evidence_tests files exist on disk.",
+            manifest, "not_applicable", "Manifest declares no typed capability_evidence.",
+            blocking=False,
+        )
+    missing = []
+    for ev in manifest.capability_evidence:
+        for test_file in ev.evidence_tests:
+            if not (_BACKEND_ROOT / test_file).is_file():
+                missing.append((ev.capability, test_file))
+    if missing:
+        return _gate(
+            "capability_evidence", "capability_evidence", "Capability evidence",
+            "Every capability_evidence declaration's evidence_tests files exist on disk.",
+            manifest, "fail", f"evidence_tests file(s) not found on disk: {missing}",
+            remediation="Fix the evidence_tests path, or add the missing test file.",
+        )
+    return _gate(
+        "capability_evidence", "capability_evidence", "Capability evidence",
+        "Every capability_evidence declaration's evidence_tests files exist on disk.",
+        manifest, "pass",
+        f"{len(manifest.capability_evidence)} capability evidence declaration(s), all evidence files resolve.",
+    )
+
+
 # ── Ordered list of all per-provider gate evaluators ──────────────────────────
 
 ALL_PROVIDER_GATE_FUNCS = (
@@ -1247,4 +1346,5 @@ ALL_PROVIDER_GATE_FUNCS = (
     gate_security_finding_reachability,
     gate_finding_change_parity,
     gate_completeness_scope_declarations,
+    gate_capability_evidence,
 )

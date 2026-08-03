@@ -162,6 +162,15 @@ def gate_cross_manifest_catalog_consistency(manifests: tuple[ProviderCertificati
     sync_ids = disc.discover_backend_sync_provider_ids()
     mismatches: dict[str, list[str]] = {}
     for m in manifests:
+        # A maturity="planned" manifest is explicitly "internal groundwork
+        # only, non-public/non-connectable/non-Live" (see models.py) — by
+        # definition it correctly has zero presence in any launched-
+        # provider catalog. Slack (message 5) is the first real case: it
+        # has no connector/schema/risk-rules module and is absent from
+        # every catalog by design, not by omission. Checking it against
+        # these launched-provider catalogs would be a false positive.
+        if m.maturity == "planned":
+            continue
         issues = []
         if m.provider_id not in sync_ids:
             issues.append("missing from sync_service._SUPPORTED_PROVIDERS")

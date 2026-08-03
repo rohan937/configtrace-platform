@@ -45,6 +45,7 @@ class TestCertifyAllProviders:
         assert set(results) == {
             "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
             "cloudflare", "supabase", "firebase", "stripe",
+            "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
         }
         for pid, result in results.items():
             assert result.provider_id == pid
@@ -63,6 +64,7 @@ class TestCertifyAllProviders:
         assert set(runner.PILOT_PROVIDERS) == {
             "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
             "cloudflare", "supabase", "firebase", "stripe",
+            "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
         }
 
 

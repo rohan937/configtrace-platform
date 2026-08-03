@@ -561,6 +561,35 @@ def discover_frontend_form_wired_into_dispatcher(provider_id: str, form_componen
 # ── Provider-expansion freeze (global gate) ───────────────────────────────────
 
 
+def discover_launched_provider_ids() -> frozenset[str]:
+    """Message 5: repository-wide "launched provider" detection.
+
+    A provider counts as launched, per repository semantics, when it is:
+      * in the backend sync-provider dispatch list, AND
+      * in the frontend CONNECTABLE_PROVIDER_IDS list (or the frontend
+        tree isn't mounted, in which case this check is skipped rather
+        than treated as a hard requirement — matching every other
+        frontend-optional discovery function in this module), AND
+      * registered in either PROVIDER_CAPABILITIES or
+        PROVIDER_CAPABILITIES_PARTIAL (both count — see the message-3
+        PARTIAL-list finding in gates.py).
+
+    This is a pure UNION-of-three-real-lists computation — no network,
+    no DB, no credential access."""
+    sync_ids = discover_backend_sync_provider_ids()
+    fe_connectable = discover_frontend_connectable_ids()
+    from app.services.provider_capability_matrix_service import (
+        PROVIDER_CAPABILITIES,
+        PROVIDER_CAPABILITIES_PARTIAL,
+    )
+
+    cap_ids = {p.provider for p in PROVIDER_CAPABILITIES} | {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
+    launched = sync_ids & cap_ids
+    if fe_connectable is not None:
+        launched = launched & fe_connectable
+    return frozenset(launched)
+
+
 def discover_recommended_next_providers() -> frozenset[str]:
     from app.services.provider_expansion_framework import RECOMMENDED_NEXT_PROVIDERS
 

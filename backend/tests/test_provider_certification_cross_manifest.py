@@ -26,6 +26,7 @@ class TestFourUniquePilotIds:
         assert set(runner.known_provider_ids()) == {
             "entra", "okta", "sentry", "snowflake", "kubernetes", "github", "gitlab",
             "cloudflare", "supabase", "firebase", "stripe",
+            "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
         }
 
     def test_identity_gate_passes_for_real_manifests(self):
@@ -210,7 +211,7 @@ class TestElevenProviderCrossManifestInvariants:
     def test_unique_canonical_ids_across_all_eleven(self):
         manifests = self._all_manifests()
         ids = [m.provider_id for m in manifests]
-        assert len(ids) == len(set(ids)) == 11
+        assert len(ids) == len(set(ids)) == 17
 
     def test_consistent_schema_version_across_all_eleven(self):
         manifests = self._all_manifests()

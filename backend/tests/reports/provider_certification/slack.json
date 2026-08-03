@@ -1,9 +1,9 @@
 {
   "gates": [
     {
-      "blocking": false,
+      "blocking": true,
       "description": "Dual-stack capability 'activity_ingestion' \u2014 optional for maturity=partial.",
-      "details": "'activity_ingestion' not required for maturity='partial'.",
+      "details": "'activity_ingestion' not declared and not required for maturity='planned'.",
       "dimension": "activity_ingestion",
       "evidence": [],
       "gate_id": "activity_ingestion",
@@ -14,13 +14,13 @@
         "partial",
         "complete"
       ],
-      "status": "deferred",
+      "status": "not_applicable",
       "title": "Activity ingestion"
     },
     {
-      "blocking": false,
+      "blocking": true,
       "description": "Dual-stack capability 'activity_signals' \u2014 optional for maturity=partial.",
-      "details": "'activity_signals' not required for maturity='partial'.",
+      "details": "'activity_signals' not declared and not required for maturity='planned'.",
       "dimension": "activity_signals",
       "evidence": [],
       "gate_id": "activity_signals",
@@ -31,7 +31,7 @@
         "partial",
         "complete"
       ],
-      "status": "deferred",
+      "status": "not_applicable",
       "title": "Activity signals"
     },
     {
@@ -54,30 +54,9 @@
     {
       "blocking": true,
       "description": "Provider is dispatchable by sync_service, present in the credential schema literal, and in the security coverage list.",
-      "details": "Provider present in sync dispatch, credential schema literal, and security coverage list.",
+      "details": "planned provider: sync_dispatch=False schema_literal=False coverage_member=False",
       "dimension": "backend_registration",
-      "evidence": [
-        {
-          "discovered_symbol": "sync_service._SUPPORTED_PROVIDERS",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "snowflake",
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": "security_coverage_service.PROVIDERS",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "snowflake",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "backend_registration",
       "remediation": "",
       "required_for_live": false,
@@ -86,7 +65,7 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "deferred",
       "title": "Backend registration"
     },
     {
@@ -109,20 +88,9 @@
     {
       "blocking": true,
       "description": "Provider's maturity/list-membership matches the declared manifest maturity.",
-      "details": "maturity='partial' matches manifest; registered in PROVIDER_CAPABILITIES.",
+      "details": "planned provider in_complete_list=False (expected False)",
       "dimension": "capability_matrix_parity",
-      "evidence": [
-        {
-          "discovered_symbol": "provider_capability_matrix_service.PROVIDER_CAPABILITIES",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "partial",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "capability_matrix_parity",
       "remediation": "",
       "required_for_live": false,
@@ -135,9 +103,9 @@
       "title": "Capability matrix parity"
     },
     {
-      "blocking": true,
+      "blocking": false,
       "description": "Real compute_diff-pipeline parity tests are referenced as evidence (never claimed from static discovery alone).",
-      "details": "7 evidence test file(s) referenced.",
+      "details": "No evidence_test_files referenced; acceptable for maturity=partial.",
       "dimension": "change_classification_exhaustive_proof",
       "evidence": [],
       "gate_id": "change_classification_exhaustive_proof",
@@ -148,26 +116,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "deferred",
       "title": "Exhaustive change-classification proof"
     },
     {
       "blocking": true,
       "description": "risk_service dispatches this provider's prefix; every expected record type is handled explicitly.",
-      "details": "Dispatch branch exists; 21/21 expected record types have an explicit record_type == check in risk_rules/snowflake.py.",
+      "details": "Manifest declares no expected record types.",
       "dimension": "change_classifier_coverage",
-      "evidence": [
-        {
-          "discovered_symbol": "risk_rules.snowflake.classify_snowflake_change",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "21",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "change_classifier_coverage",
       "remediation": "",
       "required_for_live": false,
@@ -176,13 +133,13 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Change classifier coverage"
     },
     {
       "blocking": true,
       "description": "Manifest declares family/per-parent completeness scopes backed by real evidence files.",
-      "details": "5 completeness scope(s) declared.",
+      "details": "Manifest declares no completeness scopes.",
       "dimension": "completeness_model",
       "evidence": [],
       "gate_id": "completeness_model",
@@ -193,7 +150,7 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Completeness model"
     },
     {
@@ -216,48 +173,26 @@
     {
       "blocking": true,
       "description": "Connector class exists and exposes a credential-mapping method.",
-      "details": "SnowflakeConnector imported successfully; _credentials() present: True.",
+      "details": "Could not import class SlackConnector (or any *Connector class matching 'slack') from app.connectors.slack.",
       "dimension": "connector_contract",
-      "evidence": [
-        {
-          "discovered_symbol": "app.connectors.snowflake.SnowflakeConnector",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "imported",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "connector_contract",
-      "remediation": "",
+      "remediation": "Ensure the connector class name follows the <Provider>Connector convention.",
       "required_for_live": false,
       "required_for_maturities": [
         "planned",
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "deferred",
       "title": "Connector contract"
     },
     {
       "blocking": true,
       "description": "Synchronous validate-before-persist dispatch function exists.",
-      "details": "creation dispatch wired (named function or router-inline branch) for 'snowflake': True",
+      "details": "Planned provider is not yet connectable.",
       "dimension": "creation_validation",
-      "evidence": [
-        {
-          "discovered_symbol": "integration_service._create_snowflake_integration (or router-inline)",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "True",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "creation_validation",
       "remediation": "",
       "required_for_live": false,
@@ -266,26 +201,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Creation validation"
     },
     {
       "blocking": true,
       "description": "Every manifest credential field exists on the backend schema; secret fields are marked sensitive.",
-      "details": "All 4 manifest credential fields found on backend schema.",
+      "details": "Manifest declares no credential fields.",
       "dimension": "credential_schema",
-      "evidence": [
-        {
-          "discovered_symbol": "IntegrationCreateRequest.model_fields",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "['snowflake_account_identifier', 'snowflake_programmatic_access_token', 'snowflake_role', 'snowflake_username']",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "credential_schema",
       "remediation": "",
       "required_for_live": false,
@@ -294,7 +218,7 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Credential schema"
     },
     {
@@ -405,9 +329,9 @@
       "title": "Cross-manifest Live-freeze consistency"
     },
     {
-      "blocking": false,
+      "blocking": true,
       "description": "Dual-stack capability 'demo_case_reporting' \u2014 optional for maturity=partial.",
-      "details": "'demo_case_reporting' not required for maturity='partial'.",
+      "details": "'demo_case_reporting' not declared and not required for maturity='planned'.",
       "dimension": "demo_case_reporting",
       "evidence": [],
       "gate_id": "demo_case_reporting",
@@ -418,13 +342,13 @@
         "partial",
         "complete"
       ],
-      "status": "deferred",
+      "status": "not_applicable",
       "title": "Demo/case reporting"
     },
     {
       "blocking": true,
       "description": "No prohibited dependency in requirements.txt; no prohibited global env var referenced by the connector.",
-      "details": "None of 3 prohibited dependencies and 4 prohibited env vars were found.",
+      "details": "Manifest declares no prohibited dependencies or env vars.",
       "dimension": "dependency_env_audit",
       "evidence": [],
       "gate_id": "dependency_env_audit",
@@ -435,26 +359,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Dependency / env-var audit"
     },
     {
       "blocking": true,
       "description": "Every expected record type has a non-empty tracked-field entry in diff_service.py.",
-      "details": "All 21 expected record types have tracked-field dict entries.",
+      "details": "Manifest declares no expected record types.",
       "dimension": "diff_tracked_fields",
-      "evidence": [
-        {
-          "discovered_symbol": "diff_service._SNOWFLAKE_TRACKED_FIELDS_BY_TYPE",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "21",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "diff_tracked_fields",
       "remediation": "",
       "required_for_live": false,
@@ -463,26 +376,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Diff tracked fields"
     },
     {
       "blocking": true,
       "description": "diff_service._<provider>_removal_suppressed exists and covers every declared false-removal scope.",
-      "details": "_snowflake_removal_suppressed exists: True, wired (called beyond its own def): True; 5 scope(s) declared: ['account_wide_family_completeness', 'per_database_completeness', 'per_role_completeness', 'per_detail_integration_policy_family_completeness', 'derived_privilege_records']",
+      "details": "Manifest declares no false-removal scopes.",
       "dimension": "false_removal_protection",
-      "evidence": [
-        {
-          "discovered_symbol": "diff_service._snowflake_removal_suppressed",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "exists=True wired=True",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "false_removal_protection",
       "remediation": "",
       "required_for_live": false,
@@ -491,26 +393,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "False-removal protection"
     },
     {
       "blocking": true,
       "description": "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
-      "details": "31 declared rule ID(s): 31 via parity evidence (1 evidence group(s)), 0 via explicit severity exception.",
+      "details": "Manifest does not declare the security_findings capability.",
       "dimension": "finding_change_parity",
-      "evidence": [
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_change_parity.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "finding_change_parity",
       "remediation": "",
       "required_for_live": false,
@@ -519,13 +410,13 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Finding-vs-Change parity"
     },
     {
       "blocking": true,
       "description": "Provider is registered in security_finding_evaluator._PROVIDER_RULES.",
-      "details": "provider in security_finding_evaluator._PROVIDER_RULES: True",
+      "details": "Manifest does not declare the security_findings capability.",
       "dimension": "finding_reachability",
       "evidence": [],
       "gate_id": "finding_reachability",
@@ -536,26 +427,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Finding reachability"
     },
     {
       "blocking": true,
       "description": "Provider ID/connectable-ID present in frontend providers.ts; form component exists and is wired if required.",
-      "details": "Frontend provider ID, connectable ID, and form wiring all present.",
+      "details": "expected_public=False; provider present in frontend PROVIDER_IDS: False",
       "dimension": "frontend_provider_parity",
-      "evidence": [
-        {
-          "discovered_symbol": "providers.ts PROVIDER_IDS/CONNECTABLE_PROVIDER_IDS",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "present",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "frontend_provider_parity",
       "remediation": "",
       "required_for_live": false,
@@ -570,20 +450,9 @@
     {
       "blocking": true,
       "description": "Provider ID/label/category is internally consistent.",
-      "details": "provider_id/category match discovered capability entry: snowflake/database_backend.",
+      "details": "Planned provider has no launched capability-matrix entry yet \u2014 acceptable.",
       "dimension": "identity",
-      "evidence": [
-        {
-          "discovered_symbol": "provider_capability_matrix_service.get_provider_capability",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "snowflake/database_backend",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "identity",
       "remediation": "",
       "required_for_live": false,
@@ -592,13 +461,13 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Provider identity"
     },
     {
       "blocking": true,
       "description": "Manifest declares known limitations for a launched provider.",
-      "details": "9 known limitation(s) declared.",
+      "details": "Planned provider.",
       "dimension": "known_limitations",
       "evidence": [],
       "gate_id": "known_limitations",
@@ -609,7 +478,7 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Known limitations"
     },
     {
@@ -671,48 +540,26 @@
     {
       "blocking": true,
       "description": "For a Live provider: backend+frontend registration, credential validation, reconnect, sync/worker dispatch, capability-matrix launched state, and absence from the future-provider queue all agree.",
-      "details": "All 10 Live-consistency checks passed.",
+      "details": "Manifest does not declare expected_live=True.",
       "dimension": "public_connectable_live_consistency",
-      "evidence": [
-        {
-          "discovered_symbol": "live_consistency_checks",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "['backend_credential_schema', 'backend_sync_dispatch', 'backend_worker_dispatch', 'capability_matrix_registered', 'create_dispatch', 'frontend_connectable', 'frontend_provider_id', 'not_in_frontend_future_queue', 'not_in_future_queue', 'reconnect_function']",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "public_connectable_live_consistency",
       "remediation": "",
-      "required_for_live": true,
+      "required_for_live": false,
       "required_for_maturities": [
         "planned",
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Public/connectable/Live consistency"
     },
     {
       "blocking": true,
       "description": "Reconnect dispatch function, router branch, and schema fields exist.",
-      "details": "Reconnect fully wired: function, router branch, and 4 schema field(s).",
+      "details": "Manifest does not require reconnect for this provider.",
       "dimension": "reconnect_rotation",
-      "evidence": [
-        {
-          "discovered_symbol": "integration_service.reconnect_credentials_snowflake",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "exists",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "reconnect_rotation",
       "remediation": "",
       "required_for_live": false,
@@ -721,26 +568,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Reconnect / rotation dispatch"
     },
     {
       "blocking": true,
       "description": "Manifest expected_record_types == discovered schema record-type constants.",
-      "details": "All 21 expected record types discovered.",
+      "details": "Manifest declares no expected record types.",
       "dimension": "record_inventory",
-      "evidence": [
-        {
-          "discovered_symbol": "app.connectors.snowflake_schema",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "21",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "record_inventory",
       "remediation": "",
       "required_for_live": false,
@@ -749,13 +585,13 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Record inventory"
     },
     {
-      "blocking": false,
+      "blocking": true,
       "description": "Dual-stack capability 'risk_activity_correlations' \u2014 optional for maturity=partial.",
-      "details": "'risk_activity_correlations' not required for maturity='partial'.",
+      "details": "'risk_activity_correlations' not declared and not required for maturity='planned'.",
       "dimension": "risk_activity_correlations",
       "evidence": [],
       "gate_id": "risk_activity_correlations",
@@ -766,13 +602,13 @@
         "partial",
         "complete"
       ],
-      "status": "deferred",
+      "status": "not_applicable",
       "title": "Risk x activity correlations"
     },
     {
       "blocking": true,
       "description": "Provider is present in security_coverage_service.PROVIDERS.",
-      "details": "provider in security_coverage_service.PROVIDERS: True",
+      "details": "planned provider coverage membership: False",
       "dimension": "security_coverage_parity",
       "evidence": [],
       "gate_id": "security_coverage_parity",
@@ -783,26 +619,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "deferred",
       "title": "Security coverage parity"
     },
     {
       "blocking": true,
       "description": "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
-      "details": "31 declared rule ID(s): 31 via reachability evidence (1 evidence group(s)), 0 via exemption (0 blocking).",
+      "details": "Manifest does not declare the security_findings capability.",
       "dimension": "security_finding_reachability",
-      "evidence": [
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_security_findings_reachability.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "security_finding_reachability",
       "remediation": "",
       "required_for_live": false,
@@ -811,26 +636,15 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Security Finding reachability"
     },
     {
       "blocking": true,
       "description": "Exact set equality across registry/confidence/pack/coverage (and frontend catalog if the tree is mounted).",
-      "details": "All 31 declared Finding IDs match registry/confidence/pack/coverage exactly.",
+      "details": "Manifest does not declare the security_findings capability.",
       "dimension": "security_finding_registry_parity",
-      "evidence": [
-        {
-          "discovered_symbol": "security_rule_registry.KNOWN_RULE_KEYS",
-          "evidence_type": "discovered_symbol",
-          "expected_value": null,
-          "file": null,
-          "note": "",
-          "observed_value": "31",
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "security_finding_registry_parity",
       "remediation": "",
       "required_for_live": false,
@@ -839,13 +653,13 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Security Finding registry parity"
     },
     {
       "blocking": true,
       "description": "Sensitive credential fields are masked in the frontend form and never referenced by a global env var.",
-      "details": "1 sensitive field(s) masked; no prohibited global env var reads found.",
+      "details": "Manifest declares no sensitive credential fields.",
       "dimension": "sensitive_data_controls",
       "evidence": [],
       "gate_id": "sensitive_data_controls",
@@ -856,13 +670,13 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Sensitive-data controls"
     },
     {
       "blocking": true,
       "description": "Provider is present in sync_service's supported-provider set.",
-      "details": "provider in sync_service._SUPPORTED_PROVIDERS: True",
+      "details": "Planned provider \u2014 sync dispatch may not exist yet.",
       "dimension": "sync_dispatch",
       "evidence": [],
       "gate_id": "sync_dispatch",
@@ -873,101 +687,30 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "deferred",
       "title": "Sync service dispatch"
     },
     {
       "blocking": true,
       "description": "Every referenced evidence test file/report exists on disk.",
-      "details": "All 11 referenced evidence file(s) exist on disk.",
+      "details": "Manifest declares no evidence_test_files or evidence_reports.",
       "dimension": "test_evidence",
-      "evidence": [
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_change_classification.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_change_parity.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_partial_sync.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_sql_api_reliability.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_scale_reliability.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_provider_depth_qa.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_snowflake_integration_creation.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        }
-      ],
+      "evidence": [],
       "gate_id": "test_evidence",
-      "remediation": "",
+      "remediation": "Reference the real provider-specific test files and reports backing this certification.",
       "required_for_live": false,
       "required_for_maturities": [
         "planned",
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "not_applicable",
       "title": "Test evidence"
     },
     {
       "blocking": true,
       "description": "sync_task.py dispatches this provider to its connector.",
-      "details": "sync_task.py provider dispatch branch present: True",
+      "details": "Planned provider \u2014 worker dispatch may not exist yet.",
       "dimension": "worker_dispatch",
       "evidence": [],
       "gate_id": "worker_dispatch",
@@ -978,19 +721,19 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "deferred",
       "title": "Worker dispatch"
     }
   ],
-  "maturity": "partial",
+  "maturity": "planned",
   "overall_status": "pass",
-  "provider_id": "snowflake",
+  "provider_id": "slack",
   "schema_version": 1,
   "summary": {
-    "deferred": 4,
+    "deferred": 6,
     "failed": 0,
-    "not_applicable": 3,
-    "passed": 33,
+    "not_applicable": 25,
+    "passed": 9,
     "unknown": 0,
     "warnings": 0
   }

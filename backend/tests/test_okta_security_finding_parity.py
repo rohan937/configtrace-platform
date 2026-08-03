@@ -148,10 +148,9 @@ class TestPackParity:
 
 
 class TestCoverageParity:
-    def test_okta_in_connectable_providers_list(self):
-        # Okta became connectable in message 8 — it must appear in the live
-        # connected-integration coverage surface.
-        assert "okta" in security_coverage_service.PROVIDERS
+    # test_okta_in_connectable_providers_list was consolidated in message 5:
+    # exactly superseded by app.provider_certification.gates.gate_security_coverage_parity
+    # (see test_provider_certification_okta.py and provider_certification_duplication_inventory.md).
 
     def test_okta_in_provider_surfaces(self):
         assert "okta" in security_coverage_service.PROVIDER_SURFACES

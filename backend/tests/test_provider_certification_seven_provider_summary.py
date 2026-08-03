@@ -13,7 +13,11 @@ import json
 
 from app.provider_certification import runner
 
-_ALL_SEVEN = ("cloudflare", "entra", "firebase", "github", "gitlab", "kubernetes", "okta", "sentry", "snowflake", "stripe", "supabase")
+_ALL_SEVEN = (
+    "aws", "cloudflare", "datadog", "entra", "firebase", "github", "gitlab",
+    "jira", "kubernetes", "okta", "pagerduty", "sentry", "slack", "snowflake",
+    "stripe", "supabase", "vercel",
+)
 
 
 class TestCertifyAllSevenProviders:

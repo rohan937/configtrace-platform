@@ -42,6 +42,7 @@ _manifests_fully_loaded: bool = False
 PILOT_PROVIDERS: tuple[str, ...] = (
     "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
     "cloudflare", "supabase", "firebase", "stripe",
+    "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
 )
 
 
@@ -63,17 +64,23 @@ def _ensure_manifests_loaded() -> None:
         return
     # Import triggers each manifest module's module-level
     # register_manifest() call.
+    from app.provider_certification.manifests import aws as _aws_manifest  # noqa: F401
     from app.provider_certification.manifests import cloudflare as _cloudflare_manifest  # noqa: F401
+    from app.provider_certification.manifests import datadog as _datadog_manifest  # noqa: F401
     from app.provider_certification.manifests import entra as _entra_manifest  # noqa: F401
     from app.provider_certification.manifests import firebase as _firebase_manifest  # noqa: F401
     from app.provider_certification.manifests import github as _github_manifest  # noqa: F401
     from app.provider_certification.manifests import gitlab as _gitlab_manifest  # noqa: F401
+    from app.provider_certification.manifests import jira as _jira_manifest  # noqa: F401
     from app.provider_certification.manifests import kubernetes as _kubernetes_manifest  # noqa: F401
     from app.provider_certification.manifests import okta as _okta_manifest  # noqa: F401
+    from app.provider_certification.manifests import pagerduty as _pagerduty_manifest  # noqa: F401
     from app.provider_certification.manifests import sentry as _sentry_manifest  # noqa: F401
+    from app.provider_certification.manifests import slack as _slack_manifest  # noqa: F401
     from app.provider_certification.manifests import snowflake as _snowflake_manifest  # noqa: F401
     from app.provider_certification.manifests import stripe as _stripe_manifest  # noqa: F401
     from app.provider_certification.manifests import supabase as _supabase_manifest  # noqa: F401
+    from app.provider_certification.manifests import vercel as _vercel_manifest  # noqa: F401
     _manifests_fully_loaded = True
 
 
@@ -135,6 +142,7 @@ def certify_provider(provider_id: str) -> CertificationResult:
     # repository-wide invariants, not per-provider capabilities.
     gates.append(gate_module.gate_provider_expansion_freeze())
     all_manifests = tuple(_MANIFESTS[pid] for pid in sorted(_MANIFESTS))
+    gates.append(gate_module.gate_provider_manifest_coverage(all_manifests))
     gates.extend(cross_manifest_module.run_cross_manifest_gates(all_manifests))
 
     gates_tuple = tuple(sorted(gates, key=lambda g: g.gate_id))
@@ -206,6 +214,7 @@ def certification_summary(results: dict[str, CertificationResult] | None = None)
             "exemption_count": len(manifest.reachability_exemptions) + len(manifest.change_parity_exceptions),
             "warnings": sum(1 for g in r.gates if g.status == "warning"),
             "deferred_gates": deferred_gate_ids,
+            "deferred_gate_count": len(deferred_gate_ids),
         }
     return {
         "schema_version": 1,
@@ -223,4 +232,45 @@ def write_summary_report(output_dir: Path | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "summary.json"
     path.write_text(json.dumps(certification_summary(), sort_keys=True, indent=2) + "\n")
+    return path
+
+
+def adoption_report() -> dict:
+    """Repository-wide certification adoption coverage (message 5):
+    launched vs. certified vs. allowlisted vs. missing vs. orphan
+    provider-ID sets, deterministic and timestamp-free."""
+    from app.provider_certification import discovery as disc
+    from app.provider_certification import migration_allowlist as ma
+
+    launched = disc.discover_launched_provider_ids()
+    certified = set(known_provider_ids())
+    allowlisted = ma.allowlisted_provider_ids()
+    planned_ids = {pid for pid in certified if get_manifest(pid).maturity == "planned"}
+    missing = launched - certified - allowlisted
+    orphans = certified - launched - planned_ids
+    coverage_pct = round(100.0 * len(certified & (launched | planned_ids)) / len(launched | planned_ids), 2) if (launched | planned_ids) else 100.0
+    return {
+        "schema_version": 1,
+        "launched_provider_count": len(launched),
+        "certified_provider_count": len(certified),
+        "allowlisted_provider_count": len(allowlisted),
+        "missing_unexpected_count": len(missing),
+        "orphan_manifest_count": len(orphans),
+        "coverage_percentage": coverage_pct,
+        "certified_provider_ids": sorted(certified),
+        "allowlisted_provider_ids": sorted(allowlisted),
+        "unexpected_missing_provider_ids": sorted(missing),
+        "orphan_manifest_provider_ids": sorted(orphans),
+    }
+
+
+def write_adoption_report(output_dir: Path | None = None) -> Path:
+    """Write the deterministic certification adoption report to
+    backend/tests/reports/provider_certification_adoption.json."""
+    import json
+
+    out_dir = output_dir or (_BACKEND_ROOT / "tests" / "reports")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "provider_certification_adoption.json"
+    path.write_text(json.dumps(adoption_report(), sort_keys=True, indent=2) + "\n")
     return path

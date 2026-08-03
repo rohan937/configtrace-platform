@@ -1,10 +1,48 @@
 {
   "all_pass": true,
   "providers": {
+    "aws": {
+      "category": "cloud",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "AWS",
+      "exemption_count": 0,
+      "finding_count": 9,
+      "live": true,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 9,
+        "declared": 9,
+        "excepted": 0
+      },
+      "provider_id": "aws",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 9,
+        "declared": 9,
+        "exempted": 0
+      },
+      "record_count": 87,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 3,
+        "passed": 30,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
     "cloudflare": {
       "category": "edge_network",
       "completeness_scope_count": 0,
       "connectable": true,
+      "deferred_gate_count": 0,
       "deferred_gates": [],
       "display_name": "Cloudflare",
       "exemption_count": 0,
@@ -28,8 +66,45 @@
       "summary": {
         "deferred": 0,
         "failed": 0,
-        "not_applicable": 2,
-        "passed": 29,
+        "not_applicable": 3,
+        "passed": 30,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "datadog": {
+      "category": "observability",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Datadog",
+      "exemption_count": 0,
+      "finding_count": 31,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 31,
+        "declared": 31,
+        "excepted": 0
+      },
+      "provider_id": "datadog",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 31,
+        "declared": 31,
+        "exempted": 0
+      },
+      "record_count": 10,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
         "unknown": 0,
         "warnings": 7
       },
@@ -41,6 +116,7 @@
       "category": "auth",
       "completeness_scope_count": 4,
       "connectable": true,
+      "deferred_gate_count": 4,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
@@ -69,8 +145,8 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 2,
-        "passed": 32,
+        "not_applicable": 3,
+        "passed": 33,
         "unknown": 0,
         "warnings": 0
       },
@@ -82,6 +158,7 @@
       "category": "database_backend",
       "completeness_scope_count": 0,
       "connectable": true,
+      "deferred_gate_count": 0,
       "deferred_gates": [],
       "display_name": "Firebase",
       "exemption_count": 0,
@@ -105,8 +182,8 @@
       "summary": {
         "deferred": 0,
         "failed": 0,
-        "not_applicable": 3,
-        "passed": 28,
+        "not_applicable": 4,
+        "passed": 29,
         "unknown": 0,
         "warnings": 7
       },
@@ -118,6 +195,7 @@
       "category": "devops",
       "completeness_scope_count": 0,
       "connectable": true,
+      "deferred_gate_count": 0,
       "deferred_gates": [],
       "display_name": "GitHub",
       "exemption_count": 0,
@@ -141,8 +219,8 @@
       "summary": {
         "deferred": 0,
         "failed": 0,
-        "not_applicable": 2,
-        "passed": 29,
+        "not_applicable": 3,
+        "passed": 30,
         "unknown": 0,
         "warnings": 7
       },
@@ -154,6 +232,7 @@
       "category": "devops",
       "completeness_scope_count": 0,
       "connectable": true,
+      "deferred_gate_count": 1,
       "deferred_gates": [
         "finding_change_parity"
       ],
@@ -179,8 +258,45 @@
       "summary": {
         "deferred": 1,
         "failed": 0,
-        "not_applicable": 4,
-        "passed": 26,
+        "not_applicable": 5,
+        "passed": 27,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "jira": {
+      "category": "devops",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Jira",
+      "exemption_count": 0,
+      "finding_count": 81,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 81,
+        "declared": 81,
+        "excepted": 0
+      },
+      "provider_id": "jira",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 81,
+        "declared": 81,
+        "exempted": 0
+      },
+      "record_count": 12,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 6,
+        "passed": 27,
         "unknown": 0,
         "warnings": 7
       },
@@ -192,6 +308,7 @@
       "category": "cloud",
       "completeness_scope_count": 2,
       "connectable": true,
+      "deferred_gate_count": 4,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
@@ -220,8 +337,8 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 1,
-        "passed": 31,
+        "not_applicable": 2,
+        "passed": 32,
         "unknown": 0,
         "warnings": 2
       },
@@ -233,6 +350,7 @@
       "category": "auth",
       "completeness_scope_count": 6,
       "connectable": true,
+      "deferred_gate_count": 4,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
@@ -261,8 +379,8 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 2,
-        "passed": 32,
+        "not_applicable": 3,
+        "passed": 33,
         "unknown": 0,
         "warnings": 0
       },
@@ -270,10 +388,48 @@
       "unsupported_capability_count": 4,
       "warnings": 0
     },
+    "pagerduty": {
+      "category": "incident_management",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "PagerDuty",
+      "exemption_count": 0,
+      "finding_count": 40,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 40,
+        "declared": 40,
+        "excepted": 0
+      },
+      "provider_id": "pagerduty",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 40,
+        "declared": 40,
+        "exempted": 0
+      },
+      "record_count": 8,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 6,
+        "passed": 27,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
     "sentry": {
       "category": "observability",
       "completeness_scope_count": 5,
       "connectable": true,
+      "deferred_gate_count": 4,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
@@ -302,8 +458,8 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 2,
-        "passed": 31,
+        "not_applicable": 3,
+        "passed": 32,
         "unknown": 0,
         "warnings": 1
       },
@@ -311,10 +467,55 @@
       "unsupported_capability_count": 4,
       "warnings": 1
     },
+    "slack": {
+      "category": "communication",
+      "completeness_scope_count": 0,
+      "connectable": false,
+      "deferred_gate_count": 6,
+      "deferred_gates": [
+        "backend_registration",
+        "change_classification_exhaustive_proof",
+        "connector_contract",
+        "security_coverage_parity",
+        "sync_dispatch",
+        "worker_dispatch"
+      ],
+      "display_name": "Slack",
+      "exemption_count": 0,
+      "finding_count": 0,
+      "live": false,
+      "maturity": "planned",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 0,
+        "declared": 0,
+        "excepted": 0
+      },
+      "provider_id": "slack",
+      "public": false,
+      "reachability_evidence_coverage": {
+        "covered": 0,
+        "declared": 0,
+        "exempted": 0
+      },
+      "record_count": 0,
+      "summary": {
+        "deferred": 6,
+        "failed": 0,
+        "not_applicable": 25,
+        "passed": 9,
+        "unknown": 0,
+        "warnings": 0
+      },
+      "supported_capability_count": 0,
+      "unsupported_capability_count": 0,
+      "warnings": 0
+    },
     "snowflake": {
       "category": "database_backend",
       "completeness_scope_count": 5,
       "connectable": true,
+      "deferred_gate_count": 4,
       "deferred_gates": [
         "activity_ingestion",
         "activity_signals",
@@ -343,8 +544,8 @@
       "summary": {
         "deferred": 4,
         "failed": 0,
-        "not_applicable": 2,
-        "passed": 32,
+        "not_applicable": 3,
+        "passed": 33,
         "unknown": 0,
         "warnings": 0
       },
@@ -356,6 +557,7 @@
       "category": "payments_commerce",
       "completeness_scope_count": 0,
       "connectable": true,
+      "deferred_gate_count": 0,
       "deferred_gates": [],
       "display_name": "Stripe",
       "exemption_count": 0,
@@ -379,8 +581,8 @@
       "summary": {
         "deferred": 0,
         "failed": 0,
-        "not_applicable": 3,
-        "passed": 28,
+        "not_applicable": 4,
+        "passed": 29,
         "unknown": 0,
         "warnings": 7
       },
@@ -392,6 +594,7 @@
       "category": "database_backend",
       "completeness_scope_count": 0,
       "connectable": true,
+      "deferred_gate_count": 0,
       "deferred_gates": [],
       "display_name": "Supabase",
       "exemption_count": 0,
@@ -415,7 +618,44 @@
       "summary": {
         "deferred": 0,
         "failed": 0,
-        "not_applicable": 3,
+        "not_applicable": 4,
+        "passed": 29,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "vercel": {
+      "category": "devops",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Vercel",
+      "exemption_count": 0,
+      "finding_count": 7,
+      "live": false,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 7,
+        "declared": 7,
+        "excepted": 0
+      },
+      "provider_id": "vercel",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 7,
+        "declared": 7,
+        "exempted": 0
+      },
+      "record_count": 5,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
         "passed": 28,
         "unknown": 0,
         "warnings": 7

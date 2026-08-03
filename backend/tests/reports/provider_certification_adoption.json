@@ -1,0 +1,41 @@
+{
+  "allowlisted_provider_count": 9,
+  "allowlisted_provider_ids": [
+    "auth0",
+    "azure",
+    "clerk",
+    "google_cloud",
+    "linear",
+    "sendgrid",
+    "shopify",
+    "terraform_cloud",
+    "twilio"
+  ],
+  "certified_provider_count": 17,
+  "certified_provider_ids": [
+    "aws",
+    "cloudflare",
+    "datadog",
+    "entra",
+    "firebase",
+    "github",
+    "gitlab",
+    "jira",
+    "kubernetes",
+    "okta",
+    "pagerduty",
+    "sentry",
+    "slack",
+    "snowflake",
+    "stripe",
+    "supabase",
+    "vercel"
+  ],
+  "coverage_percentage": 65.38,
+  "launched_provider_count": 25,
+  "missing_unexpected_count": 0,
+  "orphan_manifest_count": 0,
+  "orphan_manifest_provider_ids": [],
+  "schema_version": 1,
+  "unexpected_missing_provider_ids": []
+}
