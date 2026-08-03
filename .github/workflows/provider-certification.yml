@@ -1,0 +1,166 @@
+name: Provider Certification
+
+# Enforces the Provider Certification Framework (backend/app/provider_certification/)
+# on every pull request into main and on every push to main. See
+# backend/app/provider_certification/README.md for the full architecture and
+# backend/tests/reports/provider_certification_message7.md for the design
+# rationale behind this workflow's job structure.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# fetch-depth: 0 on checkout below is deliberate: changed-provider impact
+# analysis needs real git history to compute a merge base. A shallow clone
+# (or any git failure) is treated conservatively by
+# app.provider_certification.impact.analyze_impact_from_git — it falls
+# back to full-catalog certification rather than skipping certification.
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  provider-certification-impact:
+    name: Changed-provider impact analysis
+    runs-on: ubuntu-latest
+    outputs:
+      full_catalog: ${{ steps.impact.outputs.full_catalog }}
+      providers: ${{ steps.impact.outputs.providers }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Determine base/head SHAs
+        id: refs
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "head=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+            echo "head=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run changed-provider impact analysis
+        id: impact
+        working-directory: backend
+        run: |
+          set -e
+          python -m app.provider_certification.cli affected \
+            --base "${{ steps.refs.outputs.base }}" \
+            --head "${{ steps.refs.outputs.head }}" \
+            --format json > impact.json || true
+          cat impact.json
+
+          FULL=$(python -c "import json,sys; d=json.load(open('impact.json')); print('true' if d.get('overall_status') == 'error' or d.get('full_catalog_required') else 'false')")
+          PROVIDERS=$(python -c "import json; d=json.load(open('impact.json')); print(','.join(d.get('directly_affected_providers', [])))")
+          echo "full_catalog=$FULL" >> "$GITHUB_OUTPUT"
+          echo "providers=$PROVIDERS" >> "$GITHUB_OUTPUT"
+
+      - name: Upload impact report
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-certification-impact
+          path: backend/impact.json
+
+  provider-certification:
+    name: Provider certification
+    needs: provider-certification-impact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run certification (focused or full-catalog)
+        working-directory: backend
+        env:
+          FULL_CATALOG: ${{ needs.provider-certification-impact.outputs.full_catalog }}
+          PROVIDERS: ${{ needs.provider-certification-impact.outputs.providers }}
+        run: |
+          set -e
+          if [ "$FULL_CATALOG" = "true" ]; then
+            echo "Running full-catalog certification (shared/global or uncertain-impact change detected)."
+            python -m app.provider_certification.cli certify-all --format json | tee certification.json
+          elif [ -n "$PROVIDERS" ]; then
+            echo "Running focused certification for: $PROVIDERS"
+            rc=0
+            IFS=',' read -ra IDS <<< "$PROVIDERS"
+            : > certification.json
+            for pid in "${IDS[@]}"; do
+              python -m app.provider_certification.cli certify-provider "$pid" --format json >> certification.json || rc=$?
+            done
+            exit $rc
+          else
+            echo "No provider-affecting or shared/global paths changed; certification not required for this diff."
+          fi
+
+      - name: Upload certification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-certification-result
+          path: backend/certification.json
+          if-no-files-found: ignore
+
+  provider-certification-reports:
+    name: Report drift + framework self-test
+    needs: provider-certification
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: configtrace
+          POSTGRES_USER: configtrace
+          POSTGRES_PASSWORD: configtrace
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U configtrace"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://configtrace:configtrace@localhost:5432/configtrace
+      SECRET_KEY: ci-test-secret-key-not-for-production-use
+      CLERK_SECRET_KEY: sk_test_ci_placeholder
+      ENCRYPTION_KEY: 1W0Cbrb6MVEIMCm9I+4U6OkBX9gozULnlMqoz6Jnkwc=
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Check generated certification reports for drift
+        working-directory: backend
+        run: python -m app.provider_certification.cli check-reports
+
+      - name: Run Provider Certification Framework tests
+        working-directory: backend
+        run: python -m pytest tests/ -k "provider_certification" -q

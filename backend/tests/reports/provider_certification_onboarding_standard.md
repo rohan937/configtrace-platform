@@ -331,3 +331,38 @@ retry, partial-sync/false-removal, Change-classification, Finding
 reachability, reconnect-mismatch) remain mandatory and are never
 superseded by the certification framework, which only proves static
 repository WIRING.
+
+## 35. CI enforcement pull-request checklist (message 7)
+
+Message 7 wires this framework into CI (see
+`.github/workflows/provider-certification.yml` and
+`backend/app/provider_certification/README.md`). Before opening or
+updating any pull request that touches a provider-affecting or shared
+certification-relevant file, run:
+
+1. **Impact analysis** — `python -m app.provider_certification.cli affected --base <base-sha> --head <head-sha>`
+   to see which providers are directly affected and whether the diff
+   forces full-catalog certification.
+2. **Focused or full certification** — `certify-provider <id>` for each
+   directly affected provider, or `certify-all` if impact analysis (or
+   CI) says full-catalog is required. Never skip this because "it's a
+   small change."
+3. **Update the manifest** the moment a provider's record types,
+   Finding IDs, credential fields, capabilities, completeness model, or
+   launch state (public/connectable/live/reconnect) change — in the
+   SAME change, never a follow-up.
+4. **Regenerate reports** — `python -m app.provider_certification.cli generate-reports`
+   — and commit the resulting diff. `check-reports` is what CI runs to
+   catch a forgotten regeneration; running `generate-reports` yourself
+   first avoids a CI round-trip.
+5. **Run provider-specific semantic tests** for anything touched (see
+   §34) — the certification framework only proves static wiring, never
+   a substitute for real connector/Finding/diff tests.
+6. **Never weaken a gate to make CI pass.** A failing gate means the
+   manifest, the implementation, or both are out of sync with reality —
+   fix the actual drift, don't loosen the check.
+
+CI (`provider-certification-impact` → `provider-certification` →
+`provider-certification-reports`) re-runs impact analysis, certification,
+and report-drift checking independently of local runs — it is the
+source of truth, not a formality.

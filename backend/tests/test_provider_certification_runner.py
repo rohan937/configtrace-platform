@@ -186,3 +186,39 @@ class TestNoProductionSideEffects:
         monkeypatch.setattr(encryption, "decrypt_credentials", lambda *a, **k: calls.append(1))
         runner.certify_all_providers()
         assert calls == []
+
+    def test_cli_certify_all_never_opens_a_db_session(self, monkeypatch):
+        """message 7: the CLI entry point wraps the same pure runner —
+        pin that no new DB/network side effect was introduced by cli.py."""
+        from sqlalchemy.orm import Session
+
+        from app.provider_certification import cli as cli_module
+
+        created = []
+        original_init = Session.__init__
+
+        def _tracking_init(self, *args, **kwargs):
+            created.append((args, kwargs))
+            return original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(Session, "__init__", _tracking_init)
+        cli_module.main(["certify-all", "--format", "json"])
+        assert created == [], "cli certify-all must never open a DB session"
+
+    def test_impact_analysis_never_opens_a_db_session(self, monkeypatch):
+        """message 7: impact analysis is pure string/path classification
+        plus (optionally) a local git subprocess — never DB access."""
+        from sqlalchemy.orm import Session
+
+        from app.provider_certification import impact as impact_module
+
+        created = []
+        original_init = Session.__init__
+
+        def _tracking_init(self, *args, **kwargs):
+            created.append((args, kwargs))
+            return original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(Session, "__init__", _tracking_init)
+        impact_module.analyze_impact(["backend/app/connectors/sentry.py", "README.md"])
+        assert created == [], "impact analysis must never open a DB session"
