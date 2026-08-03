@@ -9,7 +9,11 @@ checked against discovered repository reality by
 
 from __future__ import annotations
 
-from app.provider_certification.models import ProviderCertificationManifest
+from app.provider_certification.models import (
+    FindingChangeParityEvidence,
+    FindingReachabilityEvidence,
+    ProviderCertificationManifest,
+)
 from app.provider_certification.runner import register_manifest
 
 _EXPECTED_RECORD_TYPES = (
@@ -147,6 +151,26 @@ SNOWFLAKE_MANIFEST = ProviderCertificationManifest(
         "tests/reports/snowflake_provider_certification.md",
         "tests/reports/snowflake_provider_depth_matrix.md",
         "tests/reports/snowflake_access_requirement_matrix.md",
+    ),
+    reachability_evidence=(
+        FindingReachabilityEvidence(
+            provider_id="snowflake",
+            test_file="tests/test_snowflake_security_findings_reachability.py",
+            test_selector="",
+            covered_rule_ids=_SECURITY_FINDING_RULE_IDS,
+            minimum_test_count=13,
+            note="Grouped evidence: connector-shaped fixture -> normalize -> derive -> evaluate, across all 31 rules.",
+        ),
+    ),
+    change_parity_evidence=(
+        FindingChangeParityEvidence(
+            provider_id="snowflake",
+            test_file="tests/test_snowflake_change_parity.py",
+            test_selector="",
+            covered_rule_ids=_SECURITY_FINDING_RULE_IDS,
+            minimum_test_count=20,
+            note="Grouped evidence: compute_diff()-pipeline severity parity across all 31 rules.",
+        ),
     ),
 )
 

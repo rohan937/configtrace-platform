@@ -37,7 +37,7 @@
     {
       "blocking": true,
       "description": "A registered discovery adapter never silently contradicts generic discovery.",
-      "details": "No discovery adapter registered for this provider; generic discovery is authoritative.",
+      "details": "Adapter agrees with generic discovery.",
       "dimension": "adapter_consistency",
       "evidence": [],
       "gate_id": "adapter_consistency",
@@ -48,7 +48,7 @@
         "partial",
         "complete"
       ],
-      "status": "not_applicable",
+      "status": "pass",
       "title": "Adapter consistency"
     },
     {
@@ -63,7 +63,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "entra",
+          "observed_value": "kubernetes",
           "report": null,
           "test_node_id": null
         },
@@ -73,7 +73,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "entra",
+          "observed_value": "kubernetes",
           "report": null,
           "test_node_id": null
         }
@@ -120,7 +120,7 @@
     {
       "blocking": true,
       "description": "Real compute_diff-pipeline parity tests are referenced as evidence (never claimed from static discovery alone).",
-      "details": "9 evidence test file(s) referenced.",
+      "details": "7 evidence test file(s) referenced.",
       "dimension": "change_classification_exhaustive_proof",
       "evidence": [],
       "gate_id": "change_classification_exhaustive_proof",
@@ -137,16 +137,16 @@
     {
       "blocking": true,
       "description": "risk_service dispatches this provider's prefix; every expected record type is handled explicitly.",
-      "details": "Dispatch branch exists; 19/19 expected record types have an explicit record_type == check in risk_rules/entra.py.",
+      "details": "Dispatch branch exists; 36/36 expected record types have an explicit record_type == check in risk_rules/kubernetes.py.",
       "dimension": "change_classifier_coverage",
       "evidence": [
         {
-          "discovered_symbol": "risk_rules.entra.classify_entra_change",
+          "discovered_symbol": "risk_rules.kubernetes.classify_kubernetes_change",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "19",
+          "observed_value": "36",
           "report": null,
           "test_node_id": null
         }
@@ -165,7 +165,7 @@
     {
       "blocking": true,
       "description": "Manifest declares family/per-parent completeness scopes backed by real evidence files.",
-      "details": "4 completeness scope(s) declared.",
+      "details": "2 completeness scope(s) declared.",
       "dimension": "completeness_model",
       "evidence": [],
       "gate_id": "completeness_model",
@@ -182,11 +182,11 @@
     {
       "blocking": true,
       "description": "Connector class exists and exposes a credential-mapping method.",
-      "details": "EntraConnector imported successfully; _credentials() present: True.",
+      "details": "KubernetesConnector imported successfully; _credentials() present: False.",
       "dimension": "connector_contract",
       "evidence": [
         {
-          "discovered_symbol": "app.connectors.entra.EntraConnector",
+          "discovered_symbol": "app.connectors.kubernetes.KubernetesConnector",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -204,17 +204,17 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "warning",
       "title": "Connector contract"
     },
     {
       "blocking": true,
       "description": "Synchronous validate-before-persist dispatch function exists.",
-      "details": "creation dispatch wired (named function or router-inline branch) for 'entra': True",
+      "details": "creation dispatch wired (named function or router-inline branch) for 'kubernetes': True",
       "dimension": "creation_validation",
       "evidence": [
         {
-          "discovered_symbol": "integration_service._create_entra_integration (or router-inline)",
+          "discovered_symbol": "integration_service._create_kubernetes_integration (or router-inline)",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -238,7 +238,7 @@
     {
       "blocking": true,
       "description": "Every manifest credential field exists on the backend schema; secret fields are marked sensitive.",
-      "details": "All 3 manifest credential fields found on backend schema.",
+      "details": "All 4 manifest credential fields found on backend schema.",
       "dimension": "credential_schema",
       "evidence": [
         {
@@ -247,7 +247,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "['entra_client_id', 'entra_client_secret', 'entra_tenant_id']",
+          "observed_value": "['cluster_name', 'context', 'kubeconfig', 'namespace_allowlist']",
           "report": null,
           "test_node_id": null
         }
@@ -390,7 +390,7 @@
     {
       "blocking": true,
       "description": "No prohibited dependency in requirements.txt; no prohibited global env var referenced by the connector.",
-      "details": "None of 4 prohibited dependencies and 4 prohibited env vars were found.",
+      "details": "None of 0 prohibited dependencies and 2 prohibited env vars were found.",
       "dimension": "dependency_env_audit",
       "evidence": [],
       "gate_id": "dependency_env_audit",
@@ -407,16 +407,16 @@
     {
       "blocking": true,
       "description": "Every expected record type has a non-empty tracked-field entry in diff_service.py.",
-      "details": "All 19 expected record types have tracked-field dict entries.",
+      "details": "All 36 expected record types have tracked-field dict entries. Declared with zero tracked fields (diagnostic-only, not silently dropped): ['kubernetes_api_capability'].",
       "dimension": "diff_tracked_fields",
       "evidence": [
         {
-          "discovered_symbol": "diff_service._ENTRA_TRACKED_FIELDS_BY_TYPE",
+          "discovered_symbol": "diff_service._KUBERNETES_TRACKED_FIELDS_BY_TYPE",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "19",
+          "observed_value": "36",
           "report": null,
           "test_node_id": null
         }
@@ -429,17 +429,17 @@
         "partial",
         "complete"
       ],
-      "status": "pass",
+      "status": "warning",
       "title": "Diff tracked fields"
     },
     {
       "blocking": true,
       "description": "diff_service._<provider>_removal_suppressed exists and covers every declared false-removal scope.",
-      "details": "_entra_removal_suppressed exists: True; 4 scope(s) declared: ['tenant_wide_family_completeness', 'per_group_membership_completeness', 'per_service_principal_assignment_completeness', 'derived_privileged_identity_group_service_principal_completeness']",
+      "details": "_kubernetes_removal_suppressed exists: True; 2 scope(s) declared: ['cluster_wide_family_completeness', 'namespace_allowlist_scope_change_suppression']",
       "dimension": "false_removal_protection",
       "evidence": [
         {
-          "discovered_symbol": "diff_service._entra_removal_suppressed",
+          "discovered_symbol": "diff_service._kubernetes_removal_suppressed",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -463,14 +463,14 @@
     {
       "blocking": true,
       "description": "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
-      "details": "45 declared rule ID(s): 45 via parity evidence (1 evidence group(s)), 0 via explicit severity exception.",
+      "details": "59 declared rule ID(s): 59 via parity evidence (1 evidence group(s)), 0 via explicit severity exception.",
       "dimension": "finding_change_parity",
       "evidence": [
         {
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_change_parity.py",
+          "file": "tests/test_kubernetes_change_finding_parity.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -536,7 +536,7 @@
     {
       "blocking": true,
       "description": "Provider ID/label/category is internally consistent.",
-      "details": "provider_id/category match discovered capability entry: entra/auth.",
+      "details": "provider_id/category match discovered capability entry: kubernetes/cloud.",
       "dimension": "identity",
       "evidence": [
         {
@@ -545,7 +545,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "entra/auth",
+          "observed_value": "kubernetes/cloud",
           "report": null,
           "test_node_id": null
         }
@@ -564,7 +564,7 @@
     {
       "blocking": true,
       "description": "Manifest declares known limitations for a launched provider.",
-      "details": "10 known limitation(s) declared.",
+      "details": "7 known limitation(s) declared.",
       "dimension": "known_limitations",
       "evidence": [],
       "gate_id": "known_limitations",
@@ -637,11 +637,11 @@
     {
       "blocking": true,
       "description": "Reconnect dispatch function, router branch, and schema fields exist.",
-      "details": "Reconnect fully wired: function, router branch, and 3 schema field(s).",
+      "details": "Reconnect fully wired: function, router branch, and 4 schema field(s).",
       "dimension": "reconnect_rotation",
       "evidence": [
         {
-          "discovered_symbol": "integration_service.reconnect_credentials_entra",
+          "discovered_symbol": "integration_service.reconnect_credentials_kubernetes",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -665,16 +665,16 @@
     {
       "blocking": true,
       "description": "Manifest expected_record_types == discovered schema record-type constants.",
-      "details": "All 19 expected record types discovered.",
+      "details": "All 36 expected record types discovered.",
       "dimension": "record_inventory",
       "evidence": [
         {
-          "discovered_symbol": "app.connectors.entra_schema",
+          "discovered_symbol": "app.connectors.kubernetes_schema",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "19",
+          "observed_value": "36",
           "report": null,
           "test_node_id": null
         }
@@ -727,14 +727,14 @@
     {
       "blocking": true,
       "description": "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
-      "details": "45 declared rule ID(s): 45 via reachability evidence (1 evidence group(s)), 0 via exemption (0 blocking).",
+      "details": "59 declared rule ID(s): 59 via reachability evidence (1 evidence group(s)), 0 via exemption (0 blocking).",
       "dimension": "security_finding_reachability",
       "evidence": [
         {
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_security_findings_reachability.py",
+          "file": "tests/test_kubernetes_security_finding_reachability.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -755,7 +755,7 @@
     {
       "blocking": true,
       "description": "Exact set equality across registry/confidence/pack/coverage (and frontend catalog if the tree is mounted).",
-      "details": "All 45 declared Finding IDs match registry/confidence/pack/coverage exactly.",
+      "details": "All 59 declared Finding IDs match registry/confidence/pack/coverage exactly.",
       "dimension": "security_finding_registry_parity",
       "evidence": [
         {
@@ -764,7 +764,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "45",
+          "observed_value": "59",
           "report": null,
           "test_node_id": null
         }
@@ -817,14 +817,14 @@
     {
       "blocking": true,
       "description": "Every referenced evidence test file/report exists on disk.",
-      "details": "All 13 referenced evidence file(s) exist on disk.",
+      "details": "All 9 referenced evidence file(s) exist on disk.",
       "dimension": "test_evidence",
       "evidence": [
         {
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_change_classification.py",
+          "file": "tests/test_kubernetes_change_classification.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -834,7 +834,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_change_parity.py",
+          "file": "tests/test_kubernetes_change_finding_parity.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -844,7 +844,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_partial_sync.py",
+          "file": "tests/test_kubernetes_partial_sync.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -854,7 +854,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_pagination_reliability.py",
+          "file": "tests/test_kubernetes_security_finding_reachability.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -864,7 +864,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_scale_reliability.py",
+          "file": "tests/test_kubernetes_provider_depth_qa.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -874,7 +874,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_security_finding_parity.py",
+          "file": "tests/test_kubernetes_integration_creation.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -884,27 +884,7 @@
           "discovered_symbol": null,
           "evidence_type": "test_file",
           "expected_value": null,
-          "file": "tests/test_entra_security_findings_reachability.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_entra_provider_depth_qa.py",
-          "note": "",
-          "observed_value": null,
-          "report": null,
-          "test_node_id": null
-        },
-        {
-          "discovered_symbol": null,
-          "evidence_type": "test_file",
-          "expected_value": null,
-          "file": "tests/test_entra_integration_creation.py",
+          "file": "tests/test_kubernetes_multi_cluster.py",
           "note": "",
           "observed_value": null,
           "report": null,
@@ -942,14 +922,14 @@
   ],
   "maturity": "partial",
   "overall_status": "pass",
-  "provider_id": "entra",
+  "provider_id": "kubernetes",
   "schema_version": 1,
   "summary": {
     "deferred": 4,
     "failed": 0,
-    "not_applicable": 1,
-    "passed": 32,
+    "not_applicable": 0,
+    "passed": 31,
     "unknown": 0,
-    "warnings": 0
+    "warnings": 2
   }
 }

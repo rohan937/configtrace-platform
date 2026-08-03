@@ -28,7 +28,18 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 # fails clearly rather than silently returning nothing.
 _MANIFESTS: dict[str, ProviderCertificationManifest] = {}
 
-PILOT_PROVIDERS: tuple[str, ...] = ("sentry", "snowflake", "okta", "entra")
+# A separate "have we run the FULL import block" flag — NOT simply
+# `bool(_MANIFESTS)`. If some other module imports one specific manifest
+# directly (``from app.provider_certification.manifests.entra import
+# ENTRA_MANIFEST``, a real pattern several test files use), that
+# manifest's own module-level ``register_manifest()`` call populates
+# ``_MANIFESTS`` as a side effect BEFORE ``_ensure_manifests_loaded()``
+# ever runs — a dict-truthiness guard would then wrongly treat that
+# partial, incidental population as "fully loaded" and skip importing
+# every other manifest for the rest of the process.
+_manifests_fully_loaded: bool = False
+
+PILOT_PROVIDERS: tuple[str, ...] = ("sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab")
 
 
 class UnknownProviderError(ValueError):
@@ -44,14 +55,19 @@ def register_manifest(manifest: ProviderCertificationManifest) -> None:
 
 
 def _ensure_manifests_loaded() -> None:
-    if _MANIFESTS:
+    global _manifests_fully_loaded
+    if _manifests_fully_loaded:
         return
     # Import triggers each manifest module's module-level
     # register_manifest() call.
     from app.provider_certification.manifests import entra as _entra_manifest  # noqa: F401
+    from app.provider_certification.manifests import github as _github_manifest  # noqa: F401
+    from app.provider_certification.manifests import gitlab as _gitlab_manifest  # noqa: F401
+    from app.provider_certification.manifests import kubernetes as _kubernetes_manifest  # noqa: F401
     from app.provider_certification.manifests import okta as _okta_manifest  # noqa: F401
     from app.provider_certification.manifests import sentry as _sentry_manifest  # noqa: F401
     from app.provider_certification.manifests import snowflake as _snowflake_manifest  # noqa: F401
+    _manifests_fully_loaded = True
 
 
 def known_provider_ids() -> tuple[str, ...]:
@@ -149,12 +165,31 @@ def certification_summary(results: dict[str, CertificationResult] | None = None)
     for pid in sorted(results):
         r = results[pid]
         manifest = get_manifest(pid)
+        declared = set(manifest.security_finding_rule_ids)
+        reachability_covered = {rid for ev in manifest.reachability_evidence for rid in ev.covered_rule_ids}
+        reachability_exempted = {rid for ex in manifest.reachability_exemptions for rid in ex.rule_ids}
+        parity_covered = {rid for ev in manifest.change_parity_evidence for rid in ev.covered_rule_ids}
+        parity_excepted = {exc.rule_id for exc in manifest.change_parity_exceptions}
+        deferred_gate_ids = sorted(g.gate_id for g in r.gates if g.status == "deferred")
         per_provider[pid] = {
             "maturity": r.maturity,
             "overall_status": r.overall_status,
             "summary": r.summary,
             "record_count": len(manifest.expected_record_types),
-            "finding_count": len(manifest.security_finding_rule_ids),
+            "finding_count": len(declared),
+            "reachability_evidence_coverage": {
+                "covered": len(declared & reachability_covered),
+                "exempted": len(declared & reachability_exempted),
+                "declared": len(declared),
+            },
+            "parity_evidence_coverage": {
+                "covered": len(declared & parity_covered),
+                "excepted": len(declared & parity_excepted),
+                "declared": len(declared),
+            },
+            "exemption_count": len(manifest.reachability_exemptions) + len(manifest.change_parity_exceptions),
+            "warnings": sum(1 for g in r.gates if g.status == "warning"),
+            "deferred_gates": deferred_gate_ids,
         }
     return {
         "schema_version": 1,

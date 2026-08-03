@@ -15,6 +15,16 @@ import sys
 from pathlib import Path
 
 from app.provider_certification import runner
+
+# Force the FULL manifest set to load before the direct per-manifest
+# imports below run. Those direct imports each call register_manifest()
+# as an import-time side effect, independent of
+# runner._ensure_manifests_loaded()'s "already loaded" guard — if they
+# ran first, _MANIFESTS would end up permanently pinned to only these 4
+# entries for the rest of this test module's process (its lazy-loader
+# would see a non-empty dict and never import github/gitlab/kubernetes).
+runner._ensure_manifests_loaded()
+
 from app.provider_certification.manifests.entra import ENTRA_MANIFEST
 from app.provider_certification.manifests.okta import OKTA_MANIFEST
 from app.provider_certification.manifests.sentry import SENTRY_MANIFEST
@@ -123,7 +133,7 @@ class TestReportFilesExist:
     def test_summary_json_reports_all_pass(self):
         data = json.loads((_REPORTS_DIR / "summary.json").read_text())
         assert data["all_pass"] is True
-        assert set(data["providers"]) == {"sentry", "snowflake", "okta", "entra"}
+        assert set(data["providers"]) == {"sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab"}
 
 
 class TestFrameworkMatrixReport:

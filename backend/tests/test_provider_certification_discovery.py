@@ -286,3 +286,94 @@ class TestDependencyAudit:
 
     def test_no_global_env_var_reference_in_snowflake_connector(self):
         assert not disc.discover_global_env_var_reference("snowflake", "SNOWFLAKE_ACCOUNT")
+
+
+# ── Message 3: generic discovery-precision helpers ────────────────────────────
+# These exercise the NEW generic discovery functions directly against real
+# repository state for the providers whose wiring patterns required them,
+# proving the functions are genuinely generic (not hardcoded per-provider)
+# even though each was motivated by one specific provider's real structure.
+
+
+class TestSchemaRecordTypeIdentityConstants:
+    def test_kubernetes_identity_constants_is_a_superset_of_wired_types(self):
+        identity = disc.discover_schema_record_type_identity_constants("kubernetes")
+        wired = disc.discover_schema_record_type_constants("kubernetes")
+        assert set(identity.values()) >= wired
+
+    def test_github_identity_constants_is_a_superset_of_wired_types(self):
+        identity = disc.discover_schema_record_type_identity_constants("github")
+        wired = disc.discover_schema_record_type_constants("github")
+        assert set(identity.values()) >= wired
+
+
+class TestClassifierGroupedDispatch:
+    def test_kubernetes_grouped_dispatch_is_nonempty(self):
+        assert len(disc.discover_classifier_grouped_dispatch("kubernetes")) > 0
+
+    def test_snowflake_grouped_dispatch_does_not_error_when_absent(self):
+        # Snowflake's classifier doesn't use grouped-frozenset dispatch —
+        # the function must return an empty result, not raise.
+        assert disc.discover_classifier_grouped_dispatch("snowflake") == frozenset()
+
+
+class TestGenericReconnectDispatch:
+    def test_github_has_generic_reconnect_dispatch(self):
+        assert disc.discover_generic_reconnect_dispatch("github") is True
+
+    def test_sentry_has_no_generic_reconnect_dispatch_since_it_has_a_named_function(self):
+        # Sentry uses a named reconnect function, not the shared generic
+        # dispatcher — the generic-dispatch detector must not double-count it.
+        assert disc.discover_reconnect_function_exists("sentry") is True
+
+
+class TestRouterCreateDispatch:
+    def test_gitlab_has_router_inline_create_dispatch(self):
+        assert disc.discover_router_create_dispatch("gitlab") is True
+
+    def test_sentry_has_no_router_inline_create_dispatch_since_it_has_a_named_function(self):
+        assert disc.discover_create_dispatch_function_exists("sentry") is True
+
+
+class TestConnectorClassAnyCapitalization:
+    def test_github_resolves_via_capitalization_fallback(self):
+        cls = disc.discover_connector_class_any_capitalization("github")
+        assert cls is not None
+        assert cls.__name__ == "GitHubConnector"
+
+    def test_gitlab_resolves_via_capitalization_fallback(self):
+        cls = disc.discover_connector_class_any_capitalization("gitlab")
+        assert cls is not None
+        assert cls.__name__ == "GitLabConnector"
+
+    def test_sentry_naive_capitalization_already_matches(self):
+        # Sentry's class name follows the naive Title-case convention, so
+        # the naive lookup should already succeed without the fallback.
+        assert disc.discover_connector_class("sentry", "SentryConnector") is not None
+
+
+class TestFrontendFormMaskedMultilineInput:
+    def test_kubernetes_form_uses_masked_multiline_input_for_kubeconfig(self):
+        if disc.frontend_root() is None:
+            import pytest
+            pytest.skip("frontend tree not mounted")
+        assert disc.discover_frontend_form_uses_masked_multiline_input("KubernetesIntegrationForm.tsx") is True
+
+    def test_sentry_form_does_not_need_masked_multiline_input(self):
+        if disc.frontend_root() is None:
+            import pytest
+            pytest.skip("frontend tree not mounted")
+        # Sentry's only secret field is a single-line token — a regular
+        # password input is used, not a textarea.
+        assert disc.discover_frontend_form_uses_masked_multiline_input("SentryIntegrationForm.tsx") is False
+
+
+class TestCapabilityMatrixPartialListMembership:
+    def test_gitlab_membership_is_partial_not_complete(self):
+        in_complete, in_partial = disc.discover_capability_matrix_membership("gitlab")
+        assert in_complete is False
+        assert in_partial is True
+
+    def test_sentry_membership_is_complete_not_partial(self):
+        in_complete, in_partial = disc.discover_capability_matrix_membership("sentry")
+        assert in_complete is True

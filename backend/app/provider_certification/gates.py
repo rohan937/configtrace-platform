@@ -13,6 +13,7 @@ credential" tests in ``test_provider_certification_runner.py``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from app.provider_certification import adapters as adapt
@@ -40,6 +41,66 @@ def _ev_symbol(symbol: str, expected: str | None = None, observed: str | None = 
 
 def _ev_file(file: str, note: str = "") -> CertificationEvidence:
     return CertificationEvidence(evidence_type="test_file", file=file, note=note)
+
+
+def _credential_fields_for(provider_id: str) -> frozenset[str]:
+    """Adapter-aware credential-field discovery.
+
+    Generic discovery filters IntegrationCreateRequest fields by a
+    ``<provider>_`` name prefix — true for every provider except
+    Kubernetes, whose credential fields (``kubeconfig``, ``context``,
+    ``cluster_name``, ``namespace_allowlist``) carry no such prefix. If
+    a discovery adapter is registered and declares credential fields,
+    its result AUGMENTS (never silently overrides) the generic result —
+    see ``adapters.resolve_set``."""
+    generic = disc.discover_credential_schema_fields(provider_id)
+    adapter = adapt.get_adapter(provider_id)
+    if adapter is None or adapter.discover_credential_fields is None:
+        return generic
+    resolved = adapt.resolve_set(generic, adapter.discover_credential_fields)
+    return resolved.value
+
+
+def _reconnect_wired_for(provider_id: str) -> bool:
+    """True if reconnect is wired via EITHER the per-provider
+    ``reconnect_credentials_<provider>()`` function OR the shared
+    generic ``reconnect_credentials()`` dispatcher's inline branch (the
+    pattern some original-8-era providers, e.g. GitHub, still use)."""
+    return disc.discover_reconnect_function_exists(provider_id) or disc.discover_generic_reconnect_dispatch(provider_id)
+
+
+def _count_matching_tests(test_file: str, selector: str) -> int:
+    """Count ``def test_...`` functions "under" a selector (typically a
+    class name) inside a real test file — pure static text parsing, NO
+    pytest invocation, no subprocess, no collection machinery. Bounded
+    to the block between the selector's occurrence and the next
+    top-level ``class ``/``def `` declaration (or EOF), so this counts
+    only tests belonging to that one class/section, not the whole file.
+    Returns 0 if the file or selector isn't found."""
+    path = _BACKEND_ROOT / test_file
+    if not path.is_file():
+        return 0
+    text = path.read_text()
+    if not selector:
+        # Empty selector means "the whole file is the evidence" — count
+        # every test in it, not just one class's worth.
+        return len(re.findall(r"^\s+def test_", text, re.MULTILINE))
+    idx = text.find(selector)
+    if idx == -1:
+        return 0
+    rest = text[idx + len(selector):]
+    boundary = re.search(r"^(class |def )\w", rest, re.MULTILINE)
+    block = rest[: boundary.start()] if boundary else rest
+    return len(re.findall(r"^\s+def test_", block, re.MULTILINE))
+
+
+def _create_dispatch_wired_for(provider_id: str) -> bool:
+    """True if creation validation is wired via EITHER a named
+    ``_create_<provider>_integration()`` function OR an inline
+    ``elif body.provider == "<provider>":`` branch in the POST
+    /integrations router handler (the pattern some original-8-era
+    providers, e.g. GitLab, still use)."""
+    return disc.discover_create_dispatch_function_exists(provider_id) or disc.discover_router_create_dispatch(provider_id)
 
 
 def _gate(
@@ -166,7 +227,7 @@ def gate_credential_schema(manifest: ProviderCertificationManifest) -> Certifica
             "Every manifest credential field exists on the backend schema; secret fields are marked sensitive.",
             manifest, "not_applicable", "Manifest declares no credential fields.",
         )
-    discovered = disc.discover_credential_schema_fields(manifest.provider_id)
+    discovered = _credential_fields_for(manifest.provider_id)
     expected = set(manifest.credential_fields)
     missing = expected - discovered
     extra = discovered - expected
@@ -202,15 +263,15 @@ def gate_creation_validation(manifest: ProviderCertificationManifest) -> Certifi
             "Synchronous validate-before-persist dispatch function exists.",
             manifest, "not_applicable", "Planned provider is not yet connectable.",
         )
-    exists = disc.discover_create_dispatch_function_exists(manifest.provider_id)
+    exists = _create_dispatch_wired_for(manifest.provider_id)
     status = "pass" if exists else "fail"
     return _gate(
         "creation_validation", "creation_validation", "Creation validation",
         "Synchronous validate-before-persist dispatch function exists.",
         manifest, status,
-        f"integration_service._create_{manifest.provider_id}_integration exists: {exists}",
-        remediation="Implement the synchronous create-dispatch function." if not exists else "",
-        evidence=(_ev_symbol(f"integration_service._create_{manifest.provider_id}_integration", observed=str(exists)),),
+        f"creation dispatch wired (named function or router-inline branch) for {manifest.provider_id!r}: {exists}",
+        remediation="Implement the synchronous create-dispatch function (named or router-inline)." if not exists else "",
+        evidence=(_ev_symbol(f"integration_service._create_{manifest.provider_id}_integration (or router-inline)", observed=str(exists)),),
     )
 
 
@@ -225,12 +286,12 @@ def gate_reconnect_rotation(manifest: ProviderCertificationManifest) -> Certific
             manifest, "not_applicable", "Manifest does not require reconnect for this provider.",
         )
     pid = manifest.provider_id
-    fn_exists = disc.discover_reconnect_function_exists(pid)
+    fn_exists = _reconnect_wired_for(pid)
     router_exists = disc.discover_reconnect_router_dispatch(pid)
-    schema_fields = disc.discover_reconnect_schema_fields(pid)
+    schema_fields = disc.discover_reconnect_schema_fields(pid) or _credential_fields_for(pid)
     missing = []
     if not fn_exists:
-        missing.append(f"integration_service.reconnect_credentials_{pid}")
+        missing.append(f"integration_service.reconnect_credentials_{pid} (or generic reconnect_credentials() dispatch branch)")
     if not router_exists:
         missing.append("routers/integrations.py reconnect branch")
     if not schema_fields:
@@ -296,13 +357,19 @@ def gate_connector_contract(manifest: ProviderCertificationManifest) -> Certific
     class_name = "".join(part.capitalize() for part in pid.split("_")) + "Connector"
     connector_cls = disc.discover_connector_class(pid, class_name)
     if connector_cls is None:
+        connector_cls = disc.discover_connector_class_any_capitalization(pid)
+        fallback_used = connector_cls is not None
+    else:
+        fallback_used = False
+    if connector_cls is None:
         return _gate(
             "connector_contract", "connector_contract", "Connector contract",
             "Connector class exists and exposes a credential-mapping method.",
             manifest, "fail" if manifest.maturity != "planned" else "deferred",
-            f"Could not import class {class_name} from app.connectors.{pid}.",
+            f"Could not import class {class_name} (or any *Connector class matching {pid!r}) from app.connectors.{pid}.",
             remediation="Ensure the connector class name follows the <Provider>Connector convention.",
         )
+    class_name = connector_cls.__name__ if fallback_used else class_name
     has_credentials = hasattr(connector_cls, "_credentials")
     status = "pass" if has_credentials else "warning"
     return _gate(
@@ -414,7 +481,12 @@ def gate_change_classifier_coverage(manifest: ProviderCertificationManifest) -> 
             f"risk_service.classify_change() has no dispatch branch for '{pid}_' record types.",
             remediation="Add a record_type.startswith(f'{provider}_') branch to risk_service.classify_change().",
         )
-    handled = disc.discover_classifier_record_type_dispatch(pid)
+    generic_handled = disc.discover_classifier_record_type_dispatch(pid)
+    adapter = adapt.get_adapter(pid)
+    if adapter is not None and adapter.discover_classifier_record_types is not None:
+        handled = adapt.resolve_set(generic_handled, adapter.discover_classifier_record_types).value
+    else:
+        handled = generic_handled
     expected = set(manifest.expected_record_types)
     unhandled = expected - handled
     status = "warning" if unhandled else "pass"
@@ -509,6 +581,119 @@ def gate_finding_reachability(manifest: ProviderCertificationManifest) -> Certif
     )
 
 
+# ── Generalized Finding-reachability + Finding-vs-Change parity (message 3) ───
+
+
+def gate_security_finding_reachability(manifest: ProviderCertificationManifest) -> CertificationGate:
+    """Requires that every declared Finding rule ID has REAL evidence —
+    direct or grouped reachability evidence, or an explicit, non-silent
+    static-only exemption — that connector-shaped records (not
+    handcrafted ones) reach the evaluator. Manifest construction already
+    rejects a rule ID covered by neither; this gate additionally checks
+    that every referenced evidence file actually exists on disk (a
+    filesystem fact construction-time validation cannot check)."""
+    if "security_findings" not in manifest.supported_capabilities or not manifest.security_finding_rule_ids:
+        return _gate(
+            "security_finding_reachability", "security_finding_reachability", "Security Finding reachability",
+            "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
+            manifest, "not_applicable", "Manifest does not declare the security_findings capability.",
+        )
+    missing_files = [ev.test_file for ev in manifest.reachability_evidence if not (_BACKEND_ROOT / ev.test_file).is_file()]
+    if missing_files:
+        return _gate(
+            "security_finding_reachability", "security_finding_reachability", "Security Finding reachability",
+            "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
+            manifest, "fail", f"Reachability evidence file(s) not found on disk: {missing_files}",
+            remediation="Fix the evidence test_file path, or add the missing test file.",
+        )
+    for ev in manifest.reachability_evidence:
+        min_count = _count_matching_tests(ev.test_file, ev.test_selector)
+        if min_count < ev.minimum_test_count:
+            return _gate(
+                "security_finding_reachability", "security_finding_reachability", "Security Finding reachability",
+                "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
+                manifest, "fail",
+                f"{ev.test_file}::{ev.test_selector!r} matched {min_count} test(s), below declared minimum_test_count={ev.minimum_test_count}",
+                remediation="Add more tests matching the selector, or correct minimum_test_count.",
+            )
+    covered = {rid for ev in manifest.reachability_evidence for rid in ev.covered_rule_ids}
+    exempted = {rid for ex in manifest.reachability_exemptions for rid in ex.rule_ids}
+    blocking_exempted = {rid for ex in manifest.reachability_exemptions if ex.blocking for rid in ex.rule_ids}
+    status = "warning" if blocking_exempted else "pass"
+    details = (
+        f"{len(manifest.security_finding_rule_ids)} declared rule ID(s): "
+        f"{len(covered)} via reachability evidence ({len(manifest.reachability_evidence)} evidence group(s)), "
+        f"{len(exempted)} via exemption ({len(blocking_exempted)} blocking)."
+    )
+    return _gate(
+        "security_finding_reachability", "security_finding_reachability", "Security Finding reachability",
+        "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
+        manifest, status, details,
+        evidence=tuple(_ev_file(ev.test_file, note=ev.test_selector) for ev in manifest.reachability_evidence),
+    )
+
+
+def gate_finding_change_parity(manifest: ProviderCertificationManifest) -> CertificationGate:
+    """Requires that every declared Finding rule ID has parity evidence
+    (a real ``compute_diff()``-pipeline test proving Change severity is
+    at least as severe) or an explicit, rationale-backed severity
+    exception. Manifest construction rejects unknown rule IDs / missing
+    rationale / missing evidence_test; this gate checks the referenced
+    evidence files exist and meet their declared minimum test count."""
+    if "security_findings" not in manifest.supported_capabilities or not manifest.security_finding_rule_ids:
+        return _gate(
+            "finding_change_parity", "finding_change_parity", "Finding-vs-Change parity",
+            "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+            manifest, "not_applicable", "Manifest does not declare the security_findings capability.",
+        )
+    if not manifest.change_parity_evidence and not manifest.change_parity_exceptions:
+        return _gate(
+            "finding_change_parity", "finding_change_parity", "Finding-vs-Change parity",
+            "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+            manifest, "deferred", "No change_parity_evidence or change_parity_exceptions declared.", blocking=False,
+        )
+    missing_files = [ev.test_file for ev in manifest.change_parity_evidence if not (_BACKEND_ROOT / ev.test_file).is_file()]
+    if missing_files:
+        return _gate(
+            "finding_change_parity", "finding_change_parity", "Finding-vs-Change parity",
+            "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+            manifest, "fail", f"Parity evidence file(s) not found on disk: {missing_files}",
+            remediation="Fix the evidence test_file path, or add the missing test file.",
+        )
+    for ev in manifest.change_parity_evidence:
+        min_count = _count_matching_tests(ev.test_file, ev.test_selector)
+        if min_count < ev.minimum_test_count:
+            return _gate(
+                "finding_change_parity", "finding_change_parity", "Finding-vs-Change parity",
+                "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+                manifest, "fail",
+                f"{ev.test_file}::{ev.test_selector!r} matched {min_count} test(s), below declared minimum_test_count={ev.minimum_test_count}",
+                remediation="Add more tests matching the selector, or correct minimum_test_count.",
+            )
+    for exc in manifest.change_parity_exceptions:
+        exc_test_file = exc.evidence_test.split("::")[0]
+        if not (_BACKEND_ROOT / exc_test_file).is_file():
+            return _gate(
+                "finding_change_parity", "finding_change_parity", "Finding-vs-Change parity",
+                "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+                manifest, "fail", f"change_parity_exceptions evidence_test not found on disk: {exc.evidence_test!r}",
+                remediation="Fix the exception's evidence_test path.",
+            )
+    covered = {rid for ev in manifest.change_parity_evidence for rid in ev.covered_rule_ids}
+    excepted = {exc.rule_id for exc in manifest.change_parity_exceptions}
+    details = (
+        f"{len(manifest.security_finding_rule_ids)} declared rule ID(s): "
+        f"{len(covered)} via parity evidence ({len(manifest.change_parity_evidence)} evidence group(s)), "
+        f"{len(excepted)} via explicit severity exception."
+    )
+    return _gate(
+        "finding_change_parity", "finding_change_parity", "Finding-vs-Change parity",
+        "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+        manifest, "pass", details,
+        evidence=tuple(_ev_file(ev.test_file, note=ev.test_selector) for ev in manifest.change_parity_evidence),
+    )
+
+
 # ── W/X. Capability matrix + security coverage parity ─────────────────────────
 
 
@@ -533,10 +718,17 @@ def gate_capability_matrix_parity(manifest: ProviderCertificationManifest) -> Ce
     mismatches = []
     if cap.maturity != manifest.maturity:
         mismatches.append(f"maturity mismatch: manifest={manifest.maturity!r} discovered={cap.maturity!r}")
-    if not in_complete:
-        mismatches.append("provider must be in the canonical PROVIDER_CAPABILITIES list, not PROVIDER_CAPABILITIES_PARTIAL")
-    if in_partial:
-        mismatches.append("provider must not remain in PROVIDER_CAPABILITIES_PARTIAL after launch")
+    # NOTE (message 3): PROVIDER_CAPABILITIES_PARTIAL is NOT a "not really
+    # launched" staging list — get_provider_capability() merges both
+    # PROVIDER_CAPABILITIES and PROVIDER_CAPABILITIES_PARTIAL into one
+    # lookup (_BY_KEY), and a dozen fully-launched, connectable
+    # providers (Azure, Twilio, Auth0, Jira, GitLab, etc.) live
+    # permanently in the PARTIAL list. Requiring exclusive
+    # PROVIDER_CAPABILITIES membership (message 1/2's original check)
+    # was a genuine framework gate defect, surfaced by certifying
+    # GitLab — fixed here to require membership in EITHER list.
+    if not (in_complete or in_partial):
+        mismatches.append("provider must be registered in either PROVIDER_CAPABILITIES or PROVIDER_CAPABILITIES_PARTIAL")
     if mismatches:
         return _gate(
             "capability_matrix_parity", "capability_matrix_parity", "Capability matrix parity",
@@ -544,11 +736,12 @@ def gate_capability_matrix_parity(manifest: ProviderCertificationManifest) -> Ce
             manifest, "fail", "; ".join(mismatches),
             remediation="Reconcile the capability matrix entry with the manifest's declared maturity.",
         )
+    list_name = "PROVIDER_CAPABILITIES" if in_complete else "PROVIDER_CAPABILITIES_PARTIAL"
     return _gate(
         "capability_matrix_parity", "capability_matrix_parity", "Capability matrix parity",
         "Provider's maturity/list-membership matches the declared manifest maturity.",
-        manifest, "pass", f"maturity={cap.maturity!r} matches manifest; in canonical PROVIDER_CAPABILITIES list.",
-        evidence=(_ev_symbol("provider_capability_matrix_service.PROVIDER_CAPABILITIES", observed=cap.maturity),),
+        manifest, "pass", f"maturity={cap.maturity!r} matches manifest; registered in {list_name}.",
+        evidence=(_ev_symbol(f"provider_capability_matrix_service.{list_name}", observed=cap.maturity),),
     )
 
 
@@ -604,7 +797,7 @@ def gate_frontend_provider_parity(manifest: ProviderCertificationManifest) -> Ce
     form_ok = True
     if manifest.expected_frontend_form:
         form_exists = disc.discover_frontend_form_file_exists(manifest.expected_frontend_form)
-        form_wired = disc.discover_frontend_form_wired_into_dispatcher(pid)
+        form_wired = disc.discover_frontend_form_wired_into_dispatcher(pid, manifest.expected_frontend_form)
         if not form_exists:
             missing.append(f"form file {manifest.expected_frontend_form}")
             form_ok = False
@@ -612,8 +805,11 @@ def gate_frontend_provider_parity(manifest: ProviderCertificationManifest) -> Ce
             missing.append("form dispatcher wiring in integrations/page.tsx")
             form_ok = False
         if form_ok and manifest.sensitive_credential_fields:
-            if not disc.discover_frontend_form_uses_password_input(manifest.expected_frontend_form):
-                missing.append("masked (type=password) input for sensitive credential field")
+            if not (
+                disc.discover_frontend_form_uses_password_input(manifest.expected_frontend_form)
+                or disc.discover_frontend_form_uses_masked_multiline_input(manifest.expected_frontend_form)
+            ):
+                missing.append("masked input (type=password or textarea) for sensitive credential field")
 
     if missing:
         return _gate(
@@ -638,13 +834,17 @@ def gate_public_connectable_live_consistency(manifest: ProviderCertificationMani
             manifest, "not_applicable", "Manifest does not declare expected_live=True.",
         )
     pid = manifest.provider_id
+    in_complete, in_partial = disc.discover_capability_matrix_membership(pid)
     checks = {
         "backend_sync_dispatch": pid in disc.discover_backend_sync_provider_ids(),
         "backend_worker_dispatch": disc.discover_worker_dispatch(pid),
-        "backend_credential_schema": bool(disc.discover_credential_schema_fields(pid)),
-        "reconnect_function": disc.discover_reconnect_function_exists(pid),
-        "create_dispatch": disc.discover_create_dispatch_function_exists(pid),
-        "capability_matrix_complete_list": disc.discover_capability_matrix_membership(pid)[0],
+        "backend_credential_schema": bool(_credential_fields_for(pid)),
+        "reconnect_function": _reconnect_wired_for(pid),
+        "create_dispatch": _create_dispatch_wired_for(pid),
+        # NOTE (message 3): registration in EITHER capability-matrix list
+        # counts — PROVIDER_CAPABILITIES_PARTIAL is not a "not really
+        # launched" list, see gate_capability_matrix_parity.
+        "capability_matrix_registered": in_complete or in_partial,
         "not_in_future_queue": pid not in disc.discover_recommended_next_providers(),
     }
     root = disc.frontend_root()
@@ -685,8 +885,11 @@ def gate_sensitive_data_controls(manifest: ProviderCertificationManifest) -> Cer
     pid = manifest.provider_id
     issues = []
     if manifest.expected_frontend_form:
-        if not disc.discover_frontend_form_uses_password_input(manifest.expected_frontend_form):
-            issues.append(f"{manifest.expected_frontend_form} has no masked (type=password) input")
+        if not (
+            disc.discover_frontend_form_uses_password_input(manifest.expected_frontend_form)
+            or disc.discover_frontend_form_uses_masked_multiline_input(manifest.expected_frontend_form)
+        ):
+            issues.append(f"{manifest.expected_frontend_form} has no masked input (type=password or textarea)")
     for env_var in manifest.prohibited_env_vars:
         if disc.discover_global_env_var_reference(pid, env_var):
             issues.append(f"connector references prohibited global env var {env_var!r}")
@@ -1004,4 +1207,6 @@ ALL_PROVIDER_GATE_FUNCS = (
     gate_demo_case_reporting,
     gate_change_classification_exhaustive_proof,
     gate_adapter_consistency,
+    gate_security_finding_reachability,
+    gate_finding_change_parity,
 )

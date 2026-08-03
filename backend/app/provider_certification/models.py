@@ -110,6 +110,9 @@ DIMENSIONS: dict[str, str] = {
     "cross_manifest_finding_uniqueness": "Global: no Security Finding rule-ID collisions across registered manifests",
     "cross_manifest_catalog_consistency": "Global: every registered manifest agrees with backend/frontend/capability-matrix/security-coverage catalogs",
     "cross_manifest_live_freeze": "Global: every Live-declared manifest is absent from every future-provider queue",
+    "security_finding_reachability": "Every declared Finding rule ID has direct evidence, grouped evidence, or an explicit static-only exemption that real connector-shaped records reach the evaluator",
+    "finding_change_parity": "Every declared Finding rule ID with a direct Change transition has parity evidence or an explicit, rationale-backed severity exception",
+    "cross_manifest_reachability_parity_coverage": "Global: every provider declaring Security Findings has reachability and parity evidence registered",
 }
 
 
@@ -234,6 +237,139 @@ class CertificationGate:
         }
 
 
+# ── Finding-reachability evidence model (message 3) ───────────────────────────
+#
+# "A predicate can evaluate a handcrafted record" is not reachability
+# evidence — this framework requires evidence that a REAL,
+# connector-shaped record (via the connector's own fetch/normalize path,
+# or a documented fixture pipeline standing in for it) reaches the
+# Security Finding evaluator. Not every rule needs its own dedicated
+# end-to-end test: one connector/normalizer path commonly produces
+# several related record shapes that trigger several related rules —
+# such cases are declared as one GROUPED evidence entry covering
+# multiple rule IDs, with an explicit mapping (``covered_rule_ids``).
+
+
+@dataclass(frozen=True)
+class FindingReachabilityEvidence:
+    """One piece of evidence that real, connector-shaped records reach
+    the Security Finding evaluator for one or more declared rule IDs.
+
+    ``test_file`` must be a real, existing path relative to the backend
+    root, inside ``tests/`` (never a live-API call). ``test_selector``
+    is a keyword/substring used to identify the relevant test(s) inside
+    that file (a class name, a shared fixture name, or similar) —
+    test-time tooling (never the runtime certifier) counts matches to
+    prove ``minimum_test_count`` is met.
+    """
+
+    provider_id: str
+    test_file: str
+    test_selector: str
+    covered_rule_ids: tuple[str, ...]
+    source_record_type: str = ""
+    derived_record_type: str = ""
+    real_connector_path_required: bool = True
+    minimum_test_count: int = 1
+    note: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "test_file": self.test_file,
+            "test_selector": self.test_selector,
+            "covered_rule_ids": sorted(self.covered_rule_ids),
+            "source_record_type": self.source_record_type,
+            "derived_record_type": self.derived_record_type,
+            "real_connector_path_required": self.real_connector_path_required,
+            "minimum_test_count": self.minimum_test_count,
+            "note": self.note,
+        }
+
+
+@dataclass(frozen=True)
+class ReachabilityExemption:
+    """A declared, non-silent exemption for rule IDs whose source
+    posture cannot be deterministically constructed through the
+    connector fixture pipeline without external/private API support.
+
+    Never silent: every exempted rule ID must appear here with a
+    concrete, provider-specific reason. ``blocking=True`` means the
+    exemption itself is a certification concern requiring explicit
+    review (still counted as "covered" for reachability purposes, but
+    flagged in gate details) — ``blocking=False`` (default) is a
+    routine, accepted static-only limitation."""
+
+    rule_ids: tuple[str, ...]
+    reason: str
+    blocking: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "rule_ids": sorted(self.rule_ids),
+            "reason": self.reason,
+            "blocking": self.blocking,
+        }
+
+
+# ── Finding-vs-Change parity evidence model (message 3) ───────────────────────
+
+
+@dataclass(frozen=True)
+class FindingChangeParityEvidence:
+    """Evidence that a real ``compute_diff()``-pipeline test proves
+    Change severity is at least as severe as the corresponding static
+    Finding severity for the declared rule IDs."""
+
+    provider_id: str
+    test_file: str
+    test_selector: str
+    covered_rule_ids: tuple[str, ...]
+    transition_record_types: tuple[str, ...] = field(default_factory=tuple)
+    minimum_test_count: int = 1
+    note: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "test_file": self.test_file,
+            "test_selector": self.test_selector,
+            "covered_rule_ids": sorted(self.covered_rule_ids),
+            "transition_record_types": sorted(self.transition_record_types),
+            "minimum_test_count": self.minimum_test_count,
+            "note": self.note,
+        }
+
+
+_VALID_SEVERITIES = frozenset({"critical", "high", "medium", "low", "info"})
+
+
+@dataclass(frozen=True)
+class ParityException:
+    """An explicitly-declared, non-silent exception where a Change
+    transition's severity is intentionally lower than (or otherwise
+    diverges from) the corresponding static Finding severity — e.g. a
+    documented business-logic reason a specific transition is treated
+    more leniently. Never silent: requires a durable rationale and a
+    real evidence test proving the exception was deliberately reviewed,
+    not merely unimplemented."""
+
+    rule_id: str
+    static_severity: str
+    transition_severity: str
+    rationale: str
+    evidence_test: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "static_severity": self.static_severity,
+            "transition_severity": self.transition_severity,
+            "rationale": self.rationale,
+            "evidence_test": self.evidence_test,
+        }
+
+
 # ── Provider certification manifest ───────────────────────────────────────────
 
 
@@ -285,6 +421,11 @@ class ProviderCertificationManifest:
     known_limitations: tuple[str, ...] = field(default_factory=tuple)
     evidence_test_files: tuple[str, ...] = field(default_factory=tuple)
     evidence_reports: tuple[str, ...] = field(default_factory=tuple)
+
+    reachability_evidence: tuple[FindingReachabilityEvidence, ...] = field(default_factory=tuple)
+    reachability_exemptions: tuple[ReachabilityExemption, ...] = field(default_factory=tuple)
+    change_parity_evidence: tuple[FindingChangeParityEvidence, ...] = field(default_factory=tuple)
+    change_parity_exceptions: tuple[ParityException, ...] = field(default_factory=tuple)
 
     certification_owner: str = "provider-certification-framework"
     manifest_version: int = 1
@@ -397,6 +538,80 @@ class ProviderCertificationManifest:
         if env_overlap:
             errors.append(f"env var declared both required and prohibited: {sorted(env_overlap)}")
 
+        # ── reachability / parity evidence validation (message 3) ──────────────
+        known_rule_ids = set(self.security_finding_rule_ids)
+
+        seen_evidence_ids: set[tuple[str, str]] = set()
+        for ev in self.reachability_evidence:
+            if ev.provider_id != self.provider_id:
+                errors.append(
+                    f"reachability_evidence declares provider_id={ev.provider_id!r}, "
+                    f"which differs from the manifest's own provider_id={self.provider_id!r} "
+                    "(no shared-evidence allowance is configured)"
+                )
+            unknown = set(ev.covered_rule_ids) - known_rule_ids
+            if unknown:
+                errors.append(f"reachability_evidence covers unknown rule ID(s): {sorted(unknown)}")
+            if ev.minimum_test_count < 1:
+                errors.append(f"reachability_evidence minimum_test_count must be >= 1, got {ev.minimum_test_count}")
+            if not ev.test_file.startswith("tests/"):
+                errors.append(f"reachability_evidence test_file must be inside tests/: {ev.test_file!r}")
+            ev_id = (ev.test_file, ev.test_selector)
+            if ev_id in seen_evidence_ids:
+                errors.append(f"duplicate reachability_evidence (test_file, test_selector): {ev_id!r}")
+            seen_evidence_ids.add(ev_id)
+
+        for exemption in self.reachability_exemptions:
+            unknown = set(exemption.rule_ids) - known_rule_ids
+            if unknown:
+                errors.append(f"reachability_exemptions references unknown rule ID(s): {sorted(unknown)}")
+            if not exemption.reason:
+                errors.append("reachability_exemptions entry has an empty reason")
+
+        if "security_findings" in self.supported_capabilities and known_rule_ids:
+            reachability_covered = {rid for ev in self.reachability_evidence for rid in ev.covered_rule_ids}
+            exempted = {rid for ex in self.reachability_exemptions for rid in ex.rule_ids}
+            uncovered = known_rule_ids - reachability_covered - exempted
+            if uncovered:
+                errors.append(
+                    f"rule ID(s) declared with neither reachability evidence nor an exemption: {sorted(uncovered)}"
+                )
+
+        seen_parity_ids: set[tuple[str, str]] = set()
+        for ev in self.change_parity_evidence:
+            if ev.provider_id != self.provider_id:
+                errors.append(
+                    f"change_parity_evidence declares provider_id={ev.provider_id!r}, "
+                    f"which differs from the manifest's own provider_id={self.provider_id!r}"
+                )
+            unknown = set(ev.covered_rule_ids) - known_rule_ids
+            if unknown:
+                errors.append(f"change_parity_evidence covers unknown rule ID(s): {sorted(unknown)}")
+            if ev.minimum_test_count < 1:
+                errors.append(f"change_parity_evidence minimum_test_count must be >= 1, got {ev.minimum_test_count}")
+            if not ev.test_file.startswith("tests/"):
+                errors.append(f"change_parity_evidence test_file must be inside tests/: {ev.test_file!r}")
+            ev_id = (ev.test_file, ev.test_selector)
+            if ev_id in seen_parity_ids:
+                errors.append(f"duplicate change_parity_evidence (test_file, test_selector): {ev_id!r}")
+            seen_parity_ids.add(ev_id)
+
+        seen_exception_rules: set[str] = set()
+        for exc in self.change_parity_exceptions:
+            if exc.rule_id not in known_rule_ids:
+                errors.append(f"change_parity_exceptions references unknown rule ID: {exc.rule_id!r}")
+            if exc.rule_id in seen_exception_rules:
+                errors.append(f"duplicate change_parity_exceptions entry for rule ID: {exc.rule_id!r}")
+            seen_exception_rules.add(exc.rule_id)
+            if not exc.evidence_test:
+                errors.append(f"change_parity_exceptions for {exc.rule_id!r} has no evidence_test")
+            if not exc.rationale:
+                errors.append(f"change_parity_exceptions for {exc.rule_id!r} has an empty rationale")
+            if exc.static_severity not in _VALID_SEVERITIES:
+                errors.append(f"change_parity_exceptions for {exc.rule_id!r} has invalid static_severity {exc.static_severity!r}")
+            if exc.transition_severity not in _VALID_SEVERITIES:
+                errors.append(f"change_parity_exceptions for {exc.rule_id!r} has invalid transition_severity {exc.transition_severity!r}")
+
         if errors:
             raise ManifestValidationError(
                 f"Invalid certification manifest for provider {self.provider_id!r}:\n"
@@ -431,6 +646,10 @@ class ProviderCertificationManifest:
             "known_limitations": list(self.known_limitations),
             "evidence_test_files": list(self.evidence_test_files),
             "evidence_reports": list(self.evidence_reports),
+            "reachability_evidence": [e.as_dict() for e in sorted(self.reachability_evidence, key=lambda e: (e.test_file, e.test_selector))],
+            "reachability_exemptions": [e.as_dict() for e in sorted(self.reachability_exemptions, key=lambda e: sorted(e.rule_ids))],
+            "change_parity_evidence": [e.as_dict() for e in sorted(self.change_parity_evidence, key=lambda e: (e.test_file, e.test_selector))],
+            "change_parity_exceptions": [e.as_dict() for e in sorted(self.change_parity_exceptions, key=lambda e: e.rule_id)],
             "certification_owner": self.certification_owner,
             "manifest_version": self.manifest_version,
         }

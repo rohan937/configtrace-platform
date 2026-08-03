@@ -153,6 +153,8 @@ class TestManifestContradictions:
             )
 
     def test_complete_maturity_with_all_capabilities_accepted(self):
+        from app.provider_certification.models import ReachabilityExemption
+
         m = _minimal_manifest(
             maturity="complete",
             supported_capabilities=(
@@ -163,6 +165,9 @@ class TestManifestContradictions:
                 "demo_case_reporting",
             ),
             security_finding_rule_ids=("testprov_rule",),
+            reachability_exemptions=(
+                ReachabilityExemption(rule_ids=("testprov_rule",), reason="Test fixture; not a real provider."),
+            ),
         )
         assert m.maturity == "complete"
 

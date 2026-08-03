@@ -166,10 +166,12 @@ def gate_cross_manifest_catalog_consistency(manifests: tuple[ProviderCertificati
         if m.provider_id not in sync_ids:
             issues.append("missing from sync_service._SUPPORTED_PROVIDERS")
         in_complete, in_partial = disc.discover_capability_matrix_membership(m.provider_id)
-        if not in_complete:
-            issues.append("missing from PROVIDER_CAPABILITIES (canonical/complete list)")
-        if in_partial:
-            issues.append("still present in PROVIDER_CAPABILITIES_PARTIAL after launch")
+        # NOTE (message 3): PROVIDER_CAPABILITIES_PARTIAL is not a
+        # "not really launched" list — see gate_capability_matrix_parity's
+        # docstring in gates.py for the full explanation. Registration in
+        # EITHER list satisfies catalog consistency.
+        if not (in_complete or in_partial):
+            issues.append("missing from both PROVIDER_CAPABILITIES and PROVIDER_CAPABILITIES_PARTIAL")
         if not disc.discover_coverage_provider_membership(m.provider_id):
             issues.append("missing from security_coverage_service.PROVIDERS")
         if fe_ids is not None and m.provider_id not in fe_ids:

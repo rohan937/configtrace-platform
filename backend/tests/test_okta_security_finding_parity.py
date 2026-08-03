@@ -73,14 +73,13 @@ class TestModuleDispatchReachable:
         assert len(keys) == len(set(keys)), "duplicate okta_* rule key value found"
 
 
-class TestRegistryParity:
-    def test_module_keys_subset_of_registry(self):
-        missing = _module_rule_keys() - _registry_okta_keys()
-        assert not missing, f"rule keys missing from security_rule_registry: {sorted(missing)}"
-
-    def test_registry_has_no_extra_okta_keys(self):
-        extra = _registry_okta_keys() - _module_rule_keys()
-        assert not extra, f"registry has okta_* keys with no matching rule: {sorted(extra)}"
+# NOTE (Provider Certification Framework message 3): TestRegistryParity's
+# module-keys == registry set-equality assertions formerly here are now
+# framework-owned — see
+# app.provider_certification.gates.gate_security_finding_registry_parity
+# and tests/test_provider_certification_okta.py, which independently
+# re-derives and pins the exact 30-ID set. See
+# tests/reports/provider_certification_duplication_inventory.md.
 
 
 class TestConfidenceParity:
@@ -178,13 +177,9 @@ class TestFrontendParity:
     def test_frontend_catalog_file_exists(self):
         assert _FRONTEND_CATALOG.exists()
 
-    def test_every_registered_okta_rule_in_frontend_catalog(self):
-        missing = _registry_okta_keys() - _frontend_okta_keys()
-        assert not missing, f"missing frontend catalog entries: {sorted(missing)}"
-
-    def test_no_frontend_only_okta_rules(self):
-        extra = _frontend_okta_keys() - _registry_okta_keys()
-        assert not extra, f"frontend catalog has okta_* keys with no backend rule: {sorted(extra)}"
+    # NOTE (message 3): the frontend-catalog == registry set-equality
+    # checks formerly here are now framework-owned — see
+    # gate_security_finding_registry_parity's frontend_catalog branch.
 
     def test_frontend_entries_have_provider_okta(self):
         text = _FRONTEND_CATALOG.read_text()
@@ -203,24 +198,8 @@ class TestFrontendParity:
             assert fe_severity == backend_severity, f"{key}: frontend severity {fe_severity!r} != backend {backend_severity!r}"
 
 
-class TestFullCrossLayerParity:
-    def test_all_layers_have_identical_okta_key_sets(self):
-        layers = {
-            "module": _module_rule_keys(),
-            "registry": _registry_okta_keys(),
-            "confidence": _confidence_okta_keys(),
-            "pack": _pack_okta_keys(),
-            "coverage": _coverage_okta_keys(),
-            "frontend": _frontend_okta_keys(),
-        }
-        reference = layers["registry"]
-        for name, keys in layers.items():
-            assert keys == reference, (
-                f"{name} layer diverges from registry — "
-                f"missing={sorted(reference - keys)} extra={sorted(keys - reference)}"
-            )
-
-    def test_expected_rule_count_is_30(self):
-        # Pinned count — update deliberately if the taxonomy changes; a
-        # silent drift here should fail loudly rather than pass unnoticed.
-        assert len(_registry_okta_keys()) == 30
+# NOTE (message 3): TestFullCrossLayerParity's all-layers-identical check
+# and pinned rule-count assertion are now framework-owned — see
+# gate_security_finding_registry_parity and
+# tests/test_provider_certification_okta.py (pins the exact 30-ID set
+# independently via discovery, not a hardcoded count alone).

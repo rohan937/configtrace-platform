@@ -12,7 +12,7 @@ from app.provider_certification import discovery as disc
 from app.provider_certification import gates
 from app.provider_certification.manifests.sentry import SENTRY_MANIFEST
 from app.provider_certification.manifests.snowflake import SNOWFLAKE_MANIFEST
-from app.provider_certification.models import ProviderCertificationManifest
+from app.provider_certification.models import ProviderCertificationManifest, ReachabilityExemption
 
 
 def _bad_manifest(**overrides) -> ProviderCertificationManifest:
@@ -33,6 +33,12 @@ def _bad_manifest(**overrides) -> ProviderCertificationManifest:
         supported_capabilities=("security_findings",),
         security_finding_rule_ids=("ghostprov_finding_one",),
         false_removal_scopes=("account_wide",),
+        # This helper builds a gate-testing fixture, not a real reachability
+        # certification — a blanket exemption keeps every gate-focused test
+        # below decoupled from message-3's reachability/parity requirements.
+        reachability_exemptions=(
+            ReachabilityExemption(rule_ids=("ghostprov_finding_one",), reason="Test fixture; not a real provider."),
+        ),
     )
     fields.update(overrides)
     return ProviderCertificationManifest(**fields)
@@ -194,7 +200,7 @@ class TestGateSecurityFindingRegistryParity:
         assert g.status == "pass"
 
     def test_not_applicable_without_capability(self):
-        m = _bad_manifest(supported_capabilities=(), security_finding_rule_ids=())
+        m = _bad_manifest(supported_capabilities=(), security_finding_rule_ids=(), reachability_exemptions=())
         g = gates.gate_security_finding_registry_parity(m)
         assert g.status == "not_applicable"
 
@@ -230,7 +236,7 @@ class TestGateFindingReachability:
         assert g.status == "fail"
 
     def test_not_applicable_without_capability(self):
-        m = _bad_manifest(supported_capabilities=(), security_finding_rule_ids=())
+        m = _bad_manifest(supported_capabilities=(), security_finding_rule_ids=(), reachability_exemptions=())
         g = gates.gate_finding_reachability(m)
         assert g.status == "not_applicable"
 
@@ -436,3 +442,53 @@ class TestGlobalFreezeGate:
         g = gates.gate_provider_expansion_freeze()
         assert g.status == "fail"
         assert "Sentry" in g.details
+
+
+# ── Message 3: generic PROVIDER_CAPABILITIES_PARTIAL fix ──────────────────────
+# get_provider_capability() merges BOTH PROVIDER_CAPABILITIES and
+# PROVIDER_CAPABILITIES_PARTIAL into one lookup — membership in the
+# PARTIAL list alone is a legitimate, fully-launched state, not a
+# "staging/not-really-launched" signal. These pin the generic gate
+# behavior directly (independent of any one provider's own manifest).
+
+
+class TestGateCapabilityMatrixParityAcceptsPartialListMembership:
+    def test_pass_when_only_in_partial_list_not_complete(self, monkeypatch):
+        cap = disc.discover_capability_entry("sentry")
+        monkeypatch.setattr(disc, "discover_capability_matrix_membership", lambda pid: (False, True) if pid == "sentry" else (True, False))
+        g = gates.gate_capability_matrix_parity(SENTRY_MANIFEST)
+        assert g.status == "pass"
+
+    def test_fail_when_absent_from_both_lists(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_capability_matrix_membership", lambda pid: (False, False) if pid == "sentry" else (True, False))
+        g = gates.gate_capability_matrix_parity(SENTRY_MANIFEST)
+        assert g.status == "fail"
+
+
+class TestGateConnectorContractCapitalizationFallback:
+    def test_fail_when_neither_naive_nor_fallback_resolve(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_connector_class", lambda pid, name: None)
+        monkeypatch.setattr(disc, "discover_connector_class_any_capitalization", lambda pid: None)
+        g = gates.gate_connector_contract(SENTRY_MANIFEST)
+        assert g.status == "fail"
+
+    def test_pass_when_only_fallback_resolves(self, monkeypatch):
+        real_cls = disc.discover_connector_class_any_capitalization("sentry")
+        monkeypatch.setattr(disc, "discover_connector_class", lambda pid, name: None)
+        monkeypatch.setattr(disc, "discover_connector_class_any_capitalization", lambda pid: real_cls if pid == "sentry" else None)
+        g = gates.gate_connector_contract(SENTRY_MANIFEST)
+        assert g.status in ("pass", "warning")
+
+
+class TestGateReconnectRotationGenericDispatchFallback:
+    def test_pass_when_generic_dispatch_present_without_named_function(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_reconnect_function_exists", lambda pid: False)
+        monkeypatch.setattr(disc, "discover_generic_reconnect_dispatch", lambda pid: True)
+        g = gates.gate_reconnect_rotation(SENTRY_MANIFEST)
+        assert g.status == "pass"
+
+    def test_fail_when_neither_named_function_nor_generic_dispatch_present(self, monkeypatch):
+        monkeypatch.setattr(disc, "discover_reconnect_function_exists", lambda pid: False)
+        monkeypatch.setattr(disc, "discover_generic_reconnect_dispatch", lambda pid: False)
+        g = gates.gate_reconnect_rotation(SENTRY_MANIFEST)
+        assert g.status == "fail"

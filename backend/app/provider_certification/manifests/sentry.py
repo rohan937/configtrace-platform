@@ -8,7 +8,11 @@ discovered repository reality by ``app.provider_certification.gates``.
 
 from __future__ import annotations
 
-from app.provider_certification.models import ProviderCertificationManifest
+from app.provider_certification.models import (
+    FindingChangeParityEvidence,
+    FindingReachabilityEvidence,
+    ProviderCertificationManifest,
+)
 from app.provider_certification.runner import register_manifest
 
 _EXPECTED_RECORD_TYPES = (
@@ -128,6 +132,26 @@ SENTRY_MANIFEST = ProviderCertificationManifest(
         "tests/reports/sentry_provider_certification.md",
         "tests/reports/sentry_provider_depth_matrix.md",
         "tests/reports/sentry_access_requirement_matrix.md",
+    ),
+    reachability_evidence=(
+        FindingReachabilityEvidence(
+            provider_id="sentry",
+            test_file="tests/test_sentry_security_findings_reachability.py",
+            test_selector="",
+            covered_rule_ids=_SECURITY_FINDING_RULE_IDS,
+            minimum_test_count=6,
+            note="Grouped evidence: connector-shaped fixture -> normalize -> derive -> evaluate, across all 20 rules.",
+        ),
+    ),
+    change_parity_evidence=(
+        FindingChangeParityEvidence(
+            provider_id="sentry",
+            test_file="tests/test_sentry_change_parity.py",
+            test_selector="",
+            covered_rule_ids=_SECURITY_FINDING_RULE_IDS,
+            minimum_test_count=26,
+            note="Grouped evidence: compute_diff()-pipeline severity parity across all 20 rules.",
+        ),
     ),
 )
 

@@ -23,7 +23,9 @@ _ALL = (ENTRA_MANIFEST, OKTA_MANIFEST, SENTRY_MANIFEST, SNOWFLAKE_MANIFEST)
 class TestFourUniquePilotIds:
     def test_four_manifests_registered(self):
         runner._ensure_manifests_loaded()
-        assert set(runner.known_provider_ids()) == {"entra", "okta", "sentry", "snowflake"}
+        assert set(runner.known_provider_ids()) == {
+            "entra", "okta", "sentry", "snowflake", "kubernetes", "github", "gitlab",
+        }
 
     def test_identity_gate_passes_for_real_manifests(self):
         gate = cross_manifest.gate_cross_manifest_identity(_ALL)
@@ -164,6 +166,27 @@ class TestCrossManifestGatesAttachedToEveryResult:
 
     def test_cross_manifest_gate_status_identical_across_providers(self):
         results = {pid: runner.certify_provider(pid) for pid in ("sentry", "okta")}
+        for gate_id in ("cross_manifest_identity", "cross_manifest_catalog_consistency"):
+            statuses = {next(g for g in r.gates if g.gate_id == gate_id).status for r in results.values()}
+            assert len(statuses) == 1
+
+
+class TestCrossManifestGatesAcrossAllSevenProviders:
+    def test_every_one_of_seven_providers_includes_all_cross_manifest_gates(self):
+        for pid in runner.known_provider_ids():
+            result = runner.certify_provider(pid)
+            gate_ids = {g.gate_id for g in result.gates}
+            for expected in (
+                "cross_manifest_identity",
+                "cross_manifest_capability_consistency",
+                "cross_manifest_finding_uniqueness",
+                "cross_manifest_catalog_consistency",
+                "cross_manifest_live_freeze",
+            ):
+                assert expected in gate_ids, f"{pid} missing {expected}"
+
+    def test_cross_manifest_gate_status_identical_across_all_seven_providers(self):
+        results = {pid: runner.certify_provider(pid) for pid in runner.known_provider_ids()}
         for gate_id in ("cross_manifest_identity", "cross_manifest_catalog_consistency"):
             statuses = {next(g for g in r.gates if g.gate_id == gate_id).status for r in results.values()}
             assert len(statuses) == 1

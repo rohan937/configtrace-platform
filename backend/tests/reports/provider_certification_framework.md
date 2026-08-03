@@ -1,5 +1,9 @@
-# Provider Certification Framework (Message 1 + Message 2)
+# Provider Certification Framework (Message 1 + Message 2 + Message 3)
 
+**Message 3 update**: see §22-27 below for the Kubernetes/GitHub/GitLab
+manifests (bringing the pilot set to seven providers), the
+`security_finding_reachability` and `finding_change_parity` gates, the
+Okta/Entra consolidation, and the message-3 certification status.
 **Message 2 update**: see §17-21 below for Okta/Entra manifests, the
 discovery-adapter model, cross-manifest global gates, and the
 consolidation performed. Sections 1-16 are message 1's original content,
@@ -360,5 +364,177 @@ rows) for the full audit and the message-3 recommendation.
 | Framework matrix ≥ 220 rows | PASS (336 rows) |
 | Duplication inventory ≥ 80 rows | PASS (80 rows) |
 | Full backend test suite has no framework-caused regression | PASS |
+
+## 22. Three new pilot providers (message 3): Kubernetes, GitHub, GitLab
+
+`manifests/kubernetes.py`, `manifests/github.py`, `manifests/gitlab.py`
+bring the certified pilot set to seven providers. Each manifest declares
+only verified-true repository state — discovered independently via
+`discovery.py`, never merely trusted:
+
+- **Kubernetes**: 36 record types (identity-constant discovery correctly
+  excludes 3 phantom schema constants never wired into the connector,
+  and correctly includes 5 types only reachable via ternary dispatch —
+  see `discover_schema_record_type_constants`'s window-based regex),
+  4 derived record types, 59 Finding IDs, unprefixed credential fields
+  (`kubeconfig`, `context`, `cluster_name`, `namespace_allowlist`)
+  resolved via a dedicated `ProviderDiscoveryAdapter`
+  (`_KUBERNETES_ADAPTER` in `manifests/kubernetes.py`), grouped
+  classifier dispatch resolved via `discover_classifier_grouped_dispatch`
+  (a new generic function, not Kubernetes-specific), Live/connectable,
+  reconnect required, `kubeconfig` masked via a `<textarea>` (proven via
+  the new `discover_frontend_form_uses_masked_multiline_input`).
+- **GitHub**: 11 real record types (6 schema-declared constants —
+  `github_app_installation`, `github_codeowners`, `github_collaborator`,
+  `github_oidc_trust`, `github_security_features`,
+  `github_workflow_file` — correctly excluded as never wired), 25
+  Finding IDs, `maturity="complete"` with all five dual-stack
+  capabilities, `GitHubConnector` resolved via
+  `discover_connector_class_any_capitalization` (irregular internal
+  capitalization vs. the naive `GithubConnector` guess), reconnect wired
+  via the shared generic dispatcher (`discover_generic_reconnect_dispatch`,
+  not a named `reconnect_credentials_github` function), frontend wired
+  via the dispatcher's implicit default case rather than an explicit
+  `selectedProvider === "github"` branch.
+- **GitLab**: 9 record types (resolved via literal string-VALUE matching,
+  since GitLab's connector never imports its own schema constants by
+  name — the message-1/2 name-based check alone found zero, corrected by
+  adding a literal-value fallback to `discover_schema_record_type_constants`),
+  25 Finding IDs, `maturity="partial"`, honestly declared
+  `expected_live=False` / `expected_reconnect=False` (no reconnect
+  wiring exists for GitLab at all), creation validation wired via an
+  inline `elif body.provider == "gitlab":` router branch
+  (`discover_router_create_dispatch`, a new generic function) rather
+  than a named `_create_gitlab_integration` function, registered in
+  `PROVIDER_CAPABILITIES_PARTIAL` (not `PROVIDER_CAPABILITIES`) — see
+  §24 for why that is not a "not really launched" signal.
+
+None of the three providers' own depth-QA/security-finding test files
+were touched this message — onboarding only adds the certification
+layer on top of existing, unmodified semantic test suites.
+
+## 23. Security Finding reachability and Finding-vs-Change parity gates (message 3)
+
+Two new generalized, per-provider gates in `gates.py`:
+
+- **`gate_security_finding_reachability`**: requires every Finding rule
+  ID declared in `security_finding_rule_ids` to be covered by a
+  `FindingReachabilityEvidence` entry (direct or grouped — one evidence
+  group's `covered_rule_ids` may span many rule IDs) or an explicit
+  `ReachabilityExemption` with a non-empty `reason`. Coverage is
+  MANDATORY at manifest-construction time (`models.py`'s
+  `__post_init__` raises `ManifestValidationError` if any rule ID is
+  covered by neither) — the gate itself additionally checks, at
+  certification time, that every referenced evidence `test_file` exists
+  on disk and that its declared `test_selector` matches at least
+  `minimum_test_count` real tests via `gates._count_matching_tests` —
+  purely static text/regex parsing of the test file, never a
+  pytest/subprocess invocation.
+- **`gate_finding_change_parity`**: requires every Finding rule ID to be
+  covered by `FindingChangeParityEvidence` or an explicit,
+  rationale-backed `ParityException` (typed `static_severity` /
+  `transition_severity` fields, both validated against a fixed severity
+  enum, plus a mandatory `evidence_test` reference). Unlike
+  reachability, parity coverage is **not** mandatory — a manifest with
+  zero parity evidence/exceptions is legitimate and the gate resolves
+  `deferred` (non-blocking), never a fabricated `pass`. GitLab is the
+  live proof of this: it has no parity evidence or exceptions at all,
+  and `test_provider_certification_gitlab.py::TestGitLabFullCertification::test_finding_change_parity_gate_is_deferred_not_fabricated_pass`
+  pins that its gate result is `deferred` with `blocking=False`.
+
+Sentry, Snowflake, Okta, and Entra's existing manifests were each
+migrated to declare one grouped `reachability_evidence` entry and one
+grouped `change_parity_evidence` entry (referencing their real,
+pre-existing evidence test files:
+`test_{provider}_security_finding{s}_reachability.py` /
+`test_{provider}_change_parity.py`), required once the mandatory
+reachability-coverage validation was added — otherwise none of the four
+pre-existing manifests could construct.
+
+## 24. Genuine framework bugs found and fixed by seven-provider certification
+
+None of these are provider defects — all four are framework gate/
+discovery bugs, exposed only once a provider with a genuinely different
+real-world wiring pattern was certified, and fixed generically (never
+special-cased per provider):
+
+1. `gate_capability_matrix_parity` and `gate_cross_manifest_catalog_consistency`
+   both incorrectly treated `PROVIDER_CAPABILITIES_PARTIAL` membership
+   as "not really launched." Direct code reading confirmed
+   `get_provider_capability()` merges both `PROVIDER_CAPABILITIES` and
+   `PROVIDER_CAPABILITIES_PARTIAL` into one `_BY_KEY` lookup, and
+   roughly a dozen fully-launched, connectable providers (GitLab
+   included) live permanently in the PARTIAL list. Fixed to accept
+   membership in EITHER list.
+2. `gate_connector_contract` failed for GitHub/GitLab due to naive
+   Title-case capitalization assumptions (`GithubConnector` /
+   `GitlabConnector`) not matching the real `GitHubConnector` /
+   `GitLabConnector` class names. Fixed with a capitalization-fallback
+   discovery function.
+3. `gate_frontend_provider_parity` failed for GitHub because its form is
+   wired via the dispatcher's implicit default case, not an explicit
+   `selectedProvider === "github"` branch. Fixed by extending
+   `discover_frontend_form_wired_into_dispatcher` with an
+   explicit-component-name fallback.
+4. Kubernetes' manifest initially declared `prohibited_dependencies=("kubernetes",)`,
+   which failed `gate_dependency_env_audit` because the real
+   `kubernetes==30.1.0` PyPI package genuinely is present in
+   `requirements.txt` (confirmed, via grep of the connector's own
+   imports, to be unrelated and unused by the ConfigTrace Kubernetes
+   connector). Fixed by declaring `prohibited_dependencies=()` — flagging
+   it would have been a false positive against real repository state,
+   not a defect to correct.
+
+## 25. Consolidation performed (message 3)
+
+12 more duplicated static parity assertions were removed this
+message — 6 from `test_okta_security_finding_parity.py` and 6 from
+`test_entra_security_finding_parity.py` (both files' `TestRegistryParity`
+and `TestFullCrossLayerParity` classes, plus the two frontend-catalog
+set-equality checks in each `TestFrontendParity` class) — the exact
+same category of assertion removed from Sentry/Snowflake in message 2,
+now extended to the two providers deliberately left untouched then.
+Okta: 30 → 24 tests (57 combined with Entra, both files verified still
+passing). Entra: 39 → 33 tests. Kubernetes/GitHub/GitLab's own
+depth-QA/legacy files were NOT touched this message, per the explicit
+instruction not to consolidate a provider's own tests in the same
+milestone it is onboarded — see
+`tests/reports/provider_certification_duplication_inventory.md` (now
+140 rows) for the full audit, including the newly-added
+Kubernetes/GitHub/GitLab rows, all marked `Defer to message 4`.
+
+## 26. Migration policy
+
+See `provider_certification_migration_policy.md` for the durable
+reference on framework-owned vs. provider-owned invariants, evidence
+requirements, deletion criteria, the deprecation lifecycle, the
+negative-mutation requirement, the rollback policy, and the provider
+onboarding checklist.
+
+## 27. Certification status after message 3
+
+| Gate | Result |
+|---|---|
+| Sentry pilot manifest certifies PASS | PASS |
+| Snowflake pilot manifest certifies PASS | PASS |
+| Okta pilot manifest certifies PASS | PASS |
+| Entra pilot manifest certifies PASS | PASS |
+| Kubernetes pilot manifest certifies PASS | PASS |
+| GitHub pilot manifest certifies PASS | PASS |
+| GitLab pilot manifest certifies PASS | PASS |
+| `certify_all_providers()` deterministic ordering (7 providers) | PASS |
+| Global provider-expansion-freeze gate passes for all 7 | PASS |
+| Cross-manifest global gates (identity/capability/finding/catalog/live-freeze) all PASS for all 7 | PASS |
+| `security_finding_reachability` gate: full mandatory coverage, all 7 providers | PASS |
+| `finding_change_parity` gate: PASS where evidence/exceptions declared, `deferred` (non-blocking) for GitLab | PASS |
+| Kubernetes discovery adapter (credential fields + grouped classifier dispatch) proven | PASS |
+| 4 genuine framework bugs found and fixed (PARTIAL-list, capitalization, frontend implicit-default, K8s dependency false-positive) | PASS |
+| Consolidation: 12 more assertions removed (Okta + Entra), all proven safe — 24 total across the framework | PASS |
+| No network/DB/credential access during certification (7 providers) | PASS |
+| Deterministic JSON output for all 7 providers + summary.json (same process, separate process) | PASS |
+| Framework matrix ≥ 500 rows | PASS (501 rows) |
+| Duplication inventory ≥ 140 rows | PASS (140 rows) |
+| Full framework test suite (544 tests) has no framework-caused regression | PASS |
+| Focused provider regressions (Kubernetes/GitHub/GitLab/Okta/Entra/Sentry/Snowflake depth-QA + security-finding suites, 1029 tests) all pass | PASS |
 
 **FRAMEWORK CERTIFICATION STATUS: PASS.**

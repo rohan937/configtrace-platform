@@ -106,13 +106,22 @@ class TestAdapterRegistry:
 
 
 class TestNoPilotAdapterNeeded:
-    """Confirms none of the four pilots currently register an adapter —
-    generic discovery is sufficient for all of them."""
+    """Confirms generic discovery is sufficient for six of the seven
+    pilots. Kubernetes (message 3) is the sole exception — it registers
+    a real adapter for two genuinely different architectural patterns
+    (unprefixed credential fields, grouped classifier dispatch) — see
+    ``manifests/kubernetes.py``."""
 
-    def test_no_adapter_registered_for_any_pilot(self):
+    def test_no_adapter_registered_for_non_kubernetes_pilots(self):
         runner._ensure_manifests_loaded()
         for pid in runner.known_provider_ids():
+            if pid == "kubernetes":
+                continue
             assert adapt.get_adapter(pid) is None
+
+    def test_kubernetes_has_a_registered_adapter(self):
+        runner._ensure_manifests_loaded()
+        assert adapt.get_adapter("kubernetes") is not None
 
 
 class TestGateAdapterConsistency:

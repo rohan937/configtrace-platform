@@ -92,7 +92,7 @@
     {
       "blocking": true,
       "description": "Provider's maturity/list-membership matches the declared manifest maturity.",
-      "details": "maturity='partial' matches manifest; in canonical PROVIDER_CAPABILITIES list.",
+      "details": "maturity='partial' matches manifest; registered in PROVIDER_CAPABILITIES.",
       "dimension": "capability_matrix_parity",
       "evidence": [
         {
@@ -210,11 +210,11 @@
     {
       "blocking": true,
       "description": "Synchronous validate-before-persist dispatch function exists.",
-      "details": "integration_service._create_sentry_integration exists: True",
+      "details": "creation dispatch wired (named function or router-inline branch) for 'sentry': True",
       "dimension": "creation_validation",
       "evidence": [
         {
-          "discovered_symbol": "integration_service._create_sentry_integration",
+          "discovered_symbol": "integration_service._create_sentry_integration (or router-inline)",
           "evidence_type": "discovered_symbol",
           "expected_value": null,
           "file": null,
@@ -266,7 +266,7 @@
     {
       "blocking": true,
       "description": "Every manifest's maturity/capability declarations agree with the discovered capability matrix.",
-      "details": "All 4 manifest(s) agree with their discovered capability-matrix entry.",
+      "details": "All 7 manifest(s) agree with their discovered capability-matrix entry.",
       "dimension": "cross_manifest_capability_consistency",
       "evidence": [],
       "gate_id": "cross_manifest_capability_consistency",
@@ -283,7 +283,7 @@
     {
       "blocking": true,
       "description": "Every manifest agrees with backend sync/coverage lists and frontend provider/connectable lists.",
-      "details": "All 4 manifest(s) consistent across backend and frontend catalogs.",
+      "details": "All 7 manifest(s) consistent across backend and frontend catalogs.",
       "dimension": "cross_manifest_catalog_consistency",
       "evidence": [],
       "gate_id": "cross_manifest_catalog_consistency",
@@ -300,7 +300,7 @@
     {
       "blocking": true,
       "description": "No Security Finding rule ID is declared by more than one registered manifest.",
-      "details": "126 Finding IDs declared across 4 manifest(s); no cross-provider collisions.",
+      "details": "235 Finding IDs declared across 7 manifest(s); no cross-provider collisions.",
       "dimension": "cross_manifest_finding_uniqueness",
       "evidence": [
         {
@@ -309,7 +309,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "126",
+          "observed_value": "235",
           "report": null,
           "test_node_id": null
         }
@@ -328,7 +328,7 @@
     {
       "blocking": true,
       "description": "Every registered manifest has a unique provider_id; no alias variant is double-registered.",
-      "details": "4 manifest(s) registered with unique provider_ids: ['entra', 'okta', 'sentry', 'snowflake'].",
+      "details": "7 manifest(s) registered with unique provider_ids: ['entra', 'github', 'gitlab', 'kubernetes', 'okta', 'sentry', 'snowflake'].",
       "dimension": "cross_manifest_identity",
       "evidence": [
         {
@@ -337,7 +337,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "['entra', 'okta', 'sentry', 'snowflake']",
+          "observed_value": "['entra', 'github', 'gitlab', 'kubernetes', 'okta', 'sentry', 'snowflake']",
           "report": null,
           "test_node_id": null
         }
@@ -356,7 +356,7 @@
     {
       "blocking": true,
       "description": "Every Live-declared manifest is absent from every future-provider queue.",
-      "details": "All 4 Live-declared manifest(s) absent from both future-provider queues.",
+      "details": "All 6 Live-declared manifest(s) absent from both future-provider queues.",
       "dimension": "cross_manifest_live_freeze",
       "evidence": [],
       "gate_id": "cross_manifest_live_freeze",
@@ -459,6 +459,34 @@
       ],
       "status": "pass",
       "title": "False-removal protection"
+    },
+    {
+      "blocking": true,
+      "description": "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+      "details": "20 declared rule ID(s): 20 via parity evidence (1 evidence group(s)), 0 via explicit severity exception.",
+      "dimension": "finding_change_parity",
+      "evidence": [
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_sentry_change_parity.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "finding_change_parity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Finding-vs-Change parity"
     },
     {
       "blocking": true,
@@ -590,7 +618,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "['backend_credential_schema', 'backend_sync_dispatch', 'backend_worker_dispatch', 'capability_matrix_complete_list', 'create_dispatch', 'frontend_connectable', 'frontend_provider_id', 'not_in_frontend_future_queue', 'not_in_future_queue', 'reconnect_function']",
+          "observed_value": "['backend_credential_schema', 'backend_sync_dispatch', 'backend_worker_dispatch', 'capability_matrix_registered', 'create_dispatch', 'frontend_connectable', 'frontend_provider_id', 'not_in_frontend_future_queue', 'not_in_future_queue', 'reconnect_function']",
           "report": null,
           "test_node_id": null
         }
@@ -695,6 +723,34 @@
       ],
       "status": "pass",
       "title": "Security coverage parity"
+    },
+    {
+      "blocking": true,
+      "description": "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
+      "details": "20 declared rule ID(s): 20 via reachability evidence (1 evidence group(s)), 0 via exemption (0 blocking).",
+      "dimension": "security_finding_reachability",
+      "evidence": [
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_sentry_security_findings_reachability.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "security_finding_reachability",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Security Finding reachability"
     },
     {
       "blocking": true,
@@ -882,7 +938,7 @@
     "deferred": 4,
     "failed": 0,
     "not_applicable": 1,
-    "passed": 29,
+    "passed": 31,
     "unknown": 0,
     "warnings": 1
   }

@@ -2,60 +2,220 @@
   "all_pass": true,
   "providers": {
     "entra": {
+      "deferred_gates": [
+        "activity_ingestion",
+        "activity_signals",
+        "demo_case_reporting",
+        "risk_activity_correlations"
+      ],
+      "exemption_count": 0,
       "finding_count": 45,
       "maturity": "partial",
       "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 45,
+        "declared": 45,
+        "excepted": 0
+      },
+      "reachability_evidence_coverage": {
+        "covered": 45,
+        "declared": 45,
+        "exempted": 0
+      },
       "record_count": 19,
       "summary": {
         "deferred": 4,
         "failed": 0,
         "not_applicable": 1,
-        "passed": 30,
+        "passed": 32,
         "unknown": 0,
         "warnings": 0
-      }
+      },
+      "warnings": 0
+    },
+    "github": {
+      "deferred_gates": [],
+      "exemption_count": 0,
+      "finding_count": 25,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 25,
+        "declared": 25,
+        "excepted": 0
+      },
+      "reachability_evidence_coverage": {
+        "covered": 25,
+        "declared": 25,
+        "exempted": 0
+      },
+      "record_count": 11,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 1,
+        "passed": 29,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "warnings": 7
+    },
+    "gitlab": {
+      "deferred_gates": [
+        "finding_change_parity"
+      ],
+      "exemption_count": 0,
+      "finding_count": 25,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 0,
+        "declared": 25,
+        "excepted": 0
+      },
+      "reachability_evidence_coverage": {
+        "covered": 25,
+        "declared": 25,
+        "exempted": 0
+      },
+      "record_count": 9,
+      "summary": {
+        "deferred": 1,
+        "failed": 0,
+        "not_applicable": 3,
+        "passed": 26,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "warnings": 7
+    },
+    "kubernetes": {
+      "deferred_gates": [
+        "activity_ingestion",
+        "activity_signals",
+        "demo_case_reporting",
+        "risk_activity_correlations"
+      ],
+      "exemption_count": 0,
+      "finding_count": 59,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 59,
+        "declared": 59,
+        "excepted": 0
+      },
+      "reachability_evidence_coverage": {
+        "covered": 59,
+        "declared": 59,
+        "exempted": 0
+      },
+      "record_count": 36,
+      "summary": {
+        "deferred": 4,
+        "failed": 0,
+        "not_applicable": 0,
+        "passed": 31,
+        "unknown": 0,
+        "warnings": 2
+      },
+      "warnings": 2
     },
     "okta": {
+      "deferred_gates": [
+        "activity_ingestion",
+        "activity_signals",
+        "demo_case_reporting",
+        "risk_activity_correlations"
+      ],
+      "exemption_count": 0,
       "finding_count": 30,
       "maturity": "partial",
       "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 30,
+        "declared": 30,
+        "excepted": 0
+      },
+      "reachability_evidence_coverage": {
+        "covered": 30,
+        "declared": 30,
+        "exempted": 0
+      },
       "record_count": 16,
       "summary": {
         "deferred": 4,
         "failed": 0,
         "not_applicable": 1,
-        "passed": 30,
+        "passed": 32,
         "unknown": 0,
         "warnings": 0
-      }
+      },
+      "warnings": 0
     },
     "sentry": {
+      "deferred_gates": [
+        "activity_ingestion",
+        "activity_signals",
+        "demo_case_reporting",
+        "risk_activity_correlations"
+      ],
+      "exemption_count": 0,
       "finding_count": 20,
       "maturity": "partial",
       "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 20,
+        "declared": 20,
+        "excepted": 0
+      },
+      "reachability_evidence_coverage": {
+        "covered": 20,
+        "declared": 20,
+        "exempted": 0
+      },
       "record_count": 18,
       "summary": {
         "deferred": 4,
         "failed": 0,
         "not_applicable": 1,
-        "passed": 29,
+        "passed": 31,
         "unknown": 0,
         "warnings": 1
-      }
+      },
+      "warnings": 1
     },
     "snowflake": {
+      "deferred_gates": [
+        "activity_ingestion",
+        "activity_signals",
+        "demo_case_reporting",
+        "risk_activity_correlations"
+      ],
+      "exemption_count": 0,
       "finding_count": 31,
       "maturity": "partial",
       "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 31,
+        "declared": 31,
+        "excepted": 0
+      },
+      "reachability_evidence_coverage": {
+        "covered": 31,
+        "declared": 31,
+        "exempted": 0
+      },
       "record_count": 21,
       "summary": {
         "deferred": 4,
         "failed": 0,
         "not_applicable": 1,
-        "passed": 30,
+        "passed": 32,
         "unknown": 0,
         "warnings": 0
-      }
+      },
+      "warnings": 0
     }
   },
   "schema_version": 1
