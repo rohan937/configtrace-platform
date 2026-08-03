@@ -817,3 +817,103 @@ the explicit "prefer existing certified providers" instruction.
 | Permanent regression guard: matrix data-row count is asserted ≥ 1,050 in `test_provider_certification_reports.py::TestFrameworkMatrixReport::test_matrix_has_at_least_1050_genuine_data_rows` | PASS |
 
 **FRAMEWORK CERTIFICATION STATUS: PASS (after message 5).**
+
+## 42. Nine remaining launched providers certified (message 6): Auth0, Azure, Clerk, Google Cloud, Linear, SendGrid, Shopify, Terraform Cloud, Twilio
+
+The exact remaining cohort was derived from the framework itself —
+`discover_launched_provider_ids() - known_provider_ids()` — not
+hardcoded from memory: `{auth0, azure, clerk, google_cloud, linear,
+sendgrid, shopify, terraform_cloud, twilio}`, exactly matching the 9
+entries the migration allowlist already carried. All 9 certified using
+generic discovery alone — zero adapters needed (no schema-declared-
+but-unwired constants were found for any of them, unlike AWS/Vercel in
+message 5). Shopify is the only one of the 9 registered as
+`maturity="complete"` with `expected_live=True` and `expected_reconnect=True`
+in the real capability matrix; the other 8 are `maturity="partial"`,
+non-Live, no reconnect wired yet. Record/Finding counts: Auth0 8/39,
+Azure 9/21, Clerk 10/40, Google Cloud 10/23, Linear 9/39, SendGrid
+8/27, Shopify 5/7, Terraform Cloud 10/36, Twilio 5/18 — totaling 74
+records and 250 Findings across the 9 new providers.
+
+## 43. Genuine framework/runtime defect found and fixed by message 6
+
+Terraform Cloud's certification `creation_validation` gate failed:
+`routers/integrations.py`'s `_build_credentials()` function had **no
+branch at all** for `provider == "terraform_cloud"` — a real,
+pre-existing gap between the M87A (GitLab) and Okta/Entra/Snowflake/
+Sentry blocks, meaning a Terraform Cloud integration created through
+this endpoint would silently receive an empty credentials dict.
+Confirmed via direct grep (zero references to
+`terraform_cloud_api_token` anywhere in `routers/` or
+`integration_service.py`). Fixed by adding the missing `elif
+body.provider == "terraform_cloud":` branch, extracting
+`terraform_cloud_api_token`/`terraform_cloud_organization`/optional
+`terraform_cloud_base_url` into the exact credential-dict shape
+`TerraformCloudConnector.validate_credentials()` expects (`api_token`,
+`organization`, `base_url`) — the same pattern already used for
+GitLab's optional-base_url branch immediately above it. This is the
+one genuine runtime defect certification justified fixing this
+message; no other provider's runtime code was touched.
+
+## 44. Manifest migration allowlist exit (message 6)
+
+`MIGRATION_ALLOWLIST` is now the empty tuple `()` — every one of the 9
+entries present after message 5 has been removed, since each
+corresponding provider now has a passing manifest. The allowlist
+mechanism itself (validation, rejection paths, `get_allowlist_entry`,
+`allowlisted_provider_ids`) is retained unchanged for any genuinely
+future, controlled migration — not deleted, per the task's explicit
+"retain allowlist infrastructure only if needed for future controlled
+migrations" instruction. `test_provider_certification_migration_allowlist.py`
+(new, 17 tests) proves the mechanism still works correctly against
+both the real (empty) allowlist and synthetic standalone entries.
+
+## 45. 100% adoption coverage (message 6)
+
+`provider_certification_adoption.json`: launched_provider_count=25,
+certified_provider_count=26, allowlisted_provider_count=0,
+missing_unexpected_count=0, orphan_manifest_count=0,
+coverage_percentage=**100.0**. (26 certified vs. 25 launched because
+Slack's `maturity="planned"` manifest is honestly counted as certified
+without being a launched sync provider — the manifest-coverage gate's
+own `planned_ids` exemption already accounts for this, matching the
+precedent set in message 5.)
+
+## 46. Consolidation performed (message 6)
+
+3 duplicated static assertions were removed: `test_kubernetes_in_providers_list`
+(Kubernetes, message 3), `test_sentry_in_providers_list` (Sentry,
+message 1), and `test_snowflake_in_providers_list` (Snowflake, message
+1) — each an exact, verified duplicate of
+`gate_security_coverage_parity`'s `security_coverage_service.PROVIDERS`
+membership check. None of the 9 providers onboarded this message had
+their depth-QA files touched, per the explicit "prefer existing
+certified providers" instruction. Running consolidation total across
+the entire framework: 33 assertions (30 after message 5 + 3 this
+message), well within message 6's own ≤24-additional-assertions budget.
+
+## 47. Certification status after message 6
+
+| Gate | Result |
+|---|---|
+| All twenty-six providers (the 17 certified through message 5, plus Auth0, Azure, Clerk, Google Cloud, Linear, SendGrid, Shopify, Terraform Cloud, Twilio) certify PASS | PASS |
+| `certify_all_providers()` deterministic ordering (26 providers) | PASS |
+| Global provider-expansion-freeze gate passes for all 26 | PASS |
+| Global `gate_provider_manifest_coverage` passes: 25 launched, 26 manifests, 0 allowlisted, 0 unexpected missing, 0 orphans | PASS |
+| Migration allowlist: exactly 0 entries — zero launched providers allowlisted | PASS |
+| Adoption coverage: exactly 100.0% | PASS |
+| Cross-manifest global gates all PASS for all 26 | PASS |
+| Zero adapters needed for any of the 9 new providers | PASS |
+| Genuine runtime defect found and fixed: Terraform Cloud creation-dispatch router branch was entirely missing | PASS |
+| Schema version: NOT bumped (purely additive fields) | PASS |
+| Onboarding standard extended (§32-34 additions); migration policy extended (§16-18 additions) | PASS |
+| Consolidation: 3 more assertions removed (Kubernetes, Sentry, Snowflake), all proven safe — 33 total across the framework | PASS |
+| No network/DB/credential access during certification (26 providers) | PASS |
+| Deterministic JSON output for all 26 providers + summary.json + provider_certification_adoption.json | PASS |
+| Framework matrix ≥ 1,400 rows | PASS (1,420 rows) |
+| Duplication inventory ≥ 500 rows | PASS (520 rows) |
+| Full framework test suite (1,546 tests) has no framework-caused regression | PASS |
+| Per-new-provider narrow filters (auth0/azure/clerk/google_cloud/linear/sendgrid/shopify/terraform_cloud/twilio) + manifest_coverage/full_catalog/migration_allowlist/staleness/reports filters all select and pass non-zero tests | PASS |
+| Permanent regression guard: matrix data-row count is asserted ≥ 1,400 in `test_provider_certification_reports.py::TestFrameworkMatrixReport::test_matrix_has_at_least_1400_genuine_data_rows` | PASS |
+
+**FRAMEWORK CERTIFICATION STATUS: PASS (after message 6). 100% repository-wide launched-provider certification coverage achieved.**

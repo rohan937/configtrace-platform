@@ -1,0 +1,914 @@
+{
+  "gates": [
+    {
+      "blocking": true,
+      "description": "Dual-stack capability 'activity_ingestion' \u2014 optional for maturity=partial.",
+      "details": "Manifest declares 'activity_ingestion' as supported but message 1 does not statically verify it.",
+      "dimension": "activity_ingestion",
+      "evidence": [],
+      "gate_id": "activity_ingestion",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "warning",
+      "title": "Activity ingestion"
+    },
+    {
+      "blocking": true,
+      "description": "Dual-stack capability 'activity_signals' \u2014 optional for maturity=partial.",
+      "details": "Manifest declares 'activity_signals' as supported but message 1 does not statically verify it.",
+      "dimension": "activity_signals",
+      "evidence": [],
+      "gate_id": "activity_signals",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "warning",
+      "title": "Activity signals"
+    },
+    {
+      "blocking": true,
+      "description": "A registered discovery adapter never silently contradicts generic discovery.",
+      "details": "No discovery adapter registered for this provider; generic discovery is authoritative.",
+      "dimension": "adapter_consistency",
+      "evidence": [],
+      "gate_id": "adapter_consistency",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "not_applicable",
+      "title": "Adapter consistency"
+    },
+    {
+      "blocking": true,
+      "description": "Provider is dispatchable by sync_service, present in the credential schema literal, and in the security coverage list.",
+      "details": "Provider present in sync dispatch, credential schema literal, and security coverage list.",
+      "dimension": "backend_registration",
+      "evidence": [
+        {
+          "discovered_symbol": "sync_service._SUPPORTED_PROVIDERS",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "terraform_cloud",
+          "report": null,
+          "test_node_id": null
+        },
+        {
+          "discovered_symbol": "security_coverage_service.PROVIDERS",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "terraform_cloud",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "backend_registration",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Backend registration"
+    },
+    {
+      "blocking": true,
+      "description": "Every capability_evidence declaration's evidence_tests files exist on disk.",
+      "details": "1 capability evidence declaration(s), all evidence files resolve.",
+      "dimension": "capability_evidence",
+      "evidence": [],
+      "gate_id": "capability_evidence",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Capability evidence"
+    },
+    {
+      "blocking": true,
+      "description": "Provider's maturity/list-membership matches the declared manifest maturity.",
+      "details": "maturity='partial' matches manifest; registered in PROVIDER_CAPABILITIES_PARTIAL.",
+      "dimension": "capability_matrix_parity",
+      "evidence": [
+        {
+          "discovered_symbol": "provider_capability_matrix_service.PROVIDER_CAPABILITIES_PARTIAL",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "partial",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "capability_matrix_parity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Capability matrix parity"
+    },
+    {
+      "blocking": true,
+      "description": "Real compute_diff-pipeline parity tests are referenced as evidence (never claimed from static discovery alone).",
+      "details": "2 evidence test file(s) referenced.",
+      "dimension": "change_classification_exhaustive_proof",
+      "evidence": [],
+      "gate_id": "change_classification_exhaustive_proof",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Exhaustive change-classification proof"
+    },
+    {
+      "blocking": true,
+      "description": "risk_service dispatches this provider's prefix; every expected record type is handled explicitly.",
+      "details": "Dispatch branch exists; 10/10 expected record types have an explicit record_type == check in risk_rules/terraform_cloud.py.",
+      "dimension": "change_classifier_coverage",
+      "evidence": [
+        {
+          "discovered_symbol": "risk_rules.terraform_cloud.classify_terraform_cloud_change",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "10",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "change_classifier_coverage",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Change classifier coverage"
+    },
+    {
+      "blocking": true,
+      "description": "Manifest declares family/per-parent completeness scopes backed by real evidence files.",
+      "details": "Manifest declares no completeness scopes.",
+      "dimension": "completeness_model",
+      "evidence": [],
+      "gate_id": "completeness_model",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "warning",
+      "title": "Completeness model"
+    },
+    {
+      "blocking": false,
+      "description": "Every typed completeness scope's suppression_symbol (if declared) is discoverable on diff_service.",
+      "details": "Manifest declares no typed completeness_scope_declarations.",
+      "dimension": "completeness_model",
+      "evidence": [],
+      "gate_id": "completeness_scope_declarations",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "not_applicable",
+      "title": "Typed completeness-scope declarations"
+    },
+    {
+      "blocking": true,
+      "description": "Connector class exists and exposes a credential-mapping method.",
+      "details": "TerraformCloudConnector imported successfully; _credentials() present: False.",
+      "dimension": "connector_contract",
+      "evidence": [
+        {
+          "discovered_symbol": "app.connectors.terraform_cloud.TerraformCloudConnector",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "imported",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "connector_contract",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "warning",
+      "title": "Connector contract"
+    },
+    {
+      "blocking": true,
+      "description": "Synchronous validate-before-persist dispatch function exists.",
+      "details": "creation dispatch wired (named function or router-inline branch) for 'terraform_cloud': True",
+      "dimension": "creation_validation",
+      "evidence": [
+        {
+          "discovered_symbol": "integration_service._create_terraform_cloud_integration (or router-inline)",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "True",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "creation_validation",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Creation validation"
+    },
+    {
+      "blocking": true,
+      "description": "Every manifest credential field exists on the backend schema; secret fields are marked sensitive.",
+      "details": "All 3 manifest credential fields found on backend schema.",
+      "dimension": "credential_schema",
+      "evidence": [
+        {
+          "discovered_symbol": "IntegrationCreateRequest.model_fields",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "['terraform_cloud_api_token', 'terraform_cloud_base_url', 'terraform_cloud_organization']",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "credential_schema",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Credential schema"
+    },
+    {
+      "blocking": true,
+      "description": "Every manifest's maturity/capability declarations agree with the discovered capability matrix.",
+      "details": "All 26 manifest(s) agree with their discovered capability-matrix entry.",
+      "dimension": "cross_manifest_capability_consistency",
+      "evidence": [],
+      "gate_id": "cross_manifest_capability_consistency",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest capability consistency"
+    },
+    {
+      "blocking": true,
+      "description": "Every manifest agrees with backend sync/coverage lists and frontend provider/connectable lists.",
+      "details": "All 26 manifest(s) consistent across backend and frontend catalogs.",
+      "dimension": "cross_manifest_catalog_consistency",
+      "evidence": [],
+      "gate_id": "cross_manifest_catalog_consistency",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest catalog consistency"
+    },
+    {
+      "blocking": true,
+      "description": "No Security Finding rule ID is declared by more than one registered manifest.",
+      "details": "691 Finding IDs declared across 26 manifest(s); no cross-provider collisions.",
+      "dimension": "cross_manifest_finding_uniqueness",
+      "evidence": [
+        {
+          "discovered_symbol": "security_rule_registry.KNOWN_RULE_KEYS",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "691",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "cross_manifest_finding_uniqueness",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest Finding-ID uniqueness"
+    },
+    {
+      "blocking": true,
+      "description": "Every registered manifest has a unique provider_id; no alias variant is double-registered.",
+      "details": "26 manifest(s) registered with unique provider_ids: ['auth0', 'aws', 'azure', 'clerk', 'cloudflare', 'datadog', 'entra', 'firebase', 'github', 'gitlab', 'google_cloud', 'jira', 'kubernetes', 'linear', 'okta', 'pagerduty', 'sendgrid', 'sentry', 'shopify', 'slack', 'snowflake', 'stripe', 'supabase', 'terraform_cloud', 'twilio', 'vercel'].",
+      "dimension": "cross_manifest_identity",
+      "evidence": [
+        {
+          "discovered_symbol": null,
+          "evidence_type": "manifest_declaration",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "['auth0', 'aws', 'azure', 'clerk', 'cloudflare', 'datadog', 'entra', 'firebase', 'github', 'gitlab', 'google_cloud', 'jira', 'kubernetes', 'linear', 'okta', 'pagerduty', 'sendgrid', 'sentry', 'shopify', 'slack', 'snowflake', 'stripe', 'supabase', 'terraform_cloud', 'twilio', 'vercel']",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "cross_manifest_identity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest identity uniqueness"
+    },
+    {
+      "blocking": true,
+      "description": "Every Live-declared manifest is absent from every future-provider queue.",
+      "details": "All 12 Live-declared manifest(s) absent from both future-provider queues.",
+      "dimension": "cross_manifest_live_freeze",
+      "evidence": [],
+      "gate_id": "cross_manifest_live_freeze",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Cross-manifest Live-freeze consistency"
+    },
+    {
+      "blocking": true,
+      "description": "Dual-stack capability 'demo_case_reporting' \u2014 optional for maturity=partial.",
+      "details": "Manifest declares 'demo_case_reporting' as supported but message 1 does not statically verify it.",
+      "dimension": "demo_case_reporting",
+      "evidence": [],
+      "gate_id": "demo_case_reporting",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "warning",
+      "title": "Demo/case reporting"
+    },
+    {
+      "blocking": true,
+      "description": "No prohibited dependency in requirements.txt; no prohibited global env var referenced by the connector.",
+      "details": "Manifest declares no prohibited dependencies or env vars.",
+      "dimension": "dependency_env_audit",
+      "evidence": [],
+      "gate_id": "dependency_env_audit",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "not_applicable",
+      "title": "Dependency / env-var audit"
+    },
+    {
+      "blocking": true,
+      "description": "Every expected record type has a non-empty tracked-field entry in diff_service.py.",
+      "details": "All 10 expected record types have tracked-field dict entries.",
+      "dimension": "diff_tracked_fields",
+      "evidence": [
+        {
+          "discovered_symbol": "diff_service._TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "10",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "diff_tracked_fields",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Diff tracked fields"
+    },
+    {
+      "blocking": true,
+      "description": "diff_service._<provider>_removal_suppressed exists and covers every declared false-removal scope.",
+      "details": "Manifest declares no false-removal scopes.",
+      "dimension": "false_removal_protection",
+      "evidence": [],
+      "gate_id": "false_removal_protection",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "warning",
+      "title": "False-removal protection"
+    },
+    {
+      "blocking": true,
+      "description": "Every declared Finding rule ID has parity evidence or an explicit, rationale-backed severity exception.",
+      "details": "36 declared rule ID(s): 36 via parity evidence (1 evidence group(s)), 0 via explicit severity exception.",
+      "dimension": "finding_change_parity",
+      "evidence": [
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_terraform_cloud_provider_depth_qa.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "finding_change_parity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Finding-vs-Change parity"
+    },
+    {
+      "blocking": true,
+      "description": "Provider is registered in security_finding_evaluator._PROVIDER_RULES.",
+      "details": "provider in security_finding_evaluator._PROVIDER_RULES: True",
+      "dimension": "finding_reachability",
+      "evidence": [],
+      "gate_id": "finding_reachability",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Finding reachability"
+    },
+    {
+      "blocking": true,
+      "description": "Provider ID/connectable-ID present in frontend providers.ts; form component exists and is wired if required.",
+      "details": "Frontend provider ID, connectable ID, and form wiring all present.",
+      "dimension": "frontend_provider_parity",
+      "evidence": [
+        {
+          "discovered_symbol": "providers.ts PROVIDER_IDS/CONNECTABLE_PROVIDER_IDS",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "present",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "frontend_provider_parity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Frontend provider parity"
+    },
+    {
+      "blocking": true,
+      "description": "Provider ID/label/category is internally consistent.",
+      "details": "provider_id/category match discovered capability entry: terraform_cloud/devops.",
+      "dimension": "identity",
+      "evidence": [
+        {
+          "discovered_symbol": "provider_capability_matrix_service.get_provider_capability",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "terraform_cloud/devops",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "identity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Provider identity"
+    },
+    {
+      "blocking": true,
+      "description": "Manifest declares known limitations for a launched provider.",
+      "details": "6 known limitation(s) declared.",
+      "dimension": "known_limitations",
+      "evidence": [],
+      "gate_id": "known_limitations",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Known limitations"
+    },
+    {
+      "blocking": true,
+      "description": "RECOMMENDED_NEXT_PROVIDERS is empty, no frontend future-provider queue recommends an unlaunched provider, and expansion is marked frozen.",
+      "details": "Backend queue empty, frontend queue empty/absent, planned_next_stage says frozen.",
+      "dimension": "provider_expansion_freeze",
+      "evidence": [
+        {
+          "discovered_symbol": "provider_expansion_framework.RECOMMENDED_NEXT_PROVIDERS",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "[]",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "provider_expansion_freeze",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Provider-expansion freeze"
+    },
+    {
+      "blocking": true,
+      "description": "Every launched provider has a manifest or an explicit migration-allowlist entry; no orphan/duplicate manifests; no certified provider remains allowlisted.",
+      "details": "25 launched provider(s), 26 manifest(s), 0 allowlisted, 0 unexpected missing, 0 orphans.",
+      "dimension": "provider_manifest_coverage",
+      "evidence": [
+        {
+          "discovered_symbol": "discover_launched_provider_ids()",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "['auth0', 'aws', 'azure', 'clerk', 'cloudflare', 'datadog', 'entra', 'firebase', 'github', 'gitlab', 'google_cloud', 'jira', 'kubernetes', 'linear', 'okta', 'pagerduty', 'sendgrid', 'sentry', 'shopify', 'snowflake', 'stripe', 'supabase', 'terraform_cloud', 'twilio', 'vercel']",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "provider_manifest_coverage",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Provider manifest coverage"
+    },
+    {
+      "blocking": true,
+      "description": "For a Live provider: backend+frontend registration, credential validation, reconnect, sync/worker dispatch, capability-matrix launched state, and absence from the future-provider queue all agree.",
+      "details": "Manifest does not declare expected_live=True.",
+      "dimension": "public_connectable_live_consistency",
+      "evidence": [],
+      "gate_id": "public_connectable_live_consistency",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "not_applicable",
+      "title": "Public/connectable/Live consistency"
+    },
+    {
+      "blocking": true,
+      "description": "Reconnect dispatch function, router branch, and schema fields exist.",
+      "details": "Manifest does not require reconnect for this provider.",
+      "dimension": "reconnect_rotation",
+      "evidence": [],
+      "gate_id": "reconnect_rotation",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "not_applicable",
+      "title": "Reconnect / rotation dispatch"
+    },
+    {
+      "blocking": true,
+      "description": "Manifest expected_record_types == discovered schema record-type constants.",
+      "details": "All 10 expected record types discovered.",
+      "dimension": "record_inventory",
+      "evidence": [
+        {
+          "discovered_symbol": "app.connectors.terraform_cloud_schema",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "10",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "record_inventory",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Record inventory"
+    },
+    {
+      "blocking": true,
+      "description": "Dual-stack capability 'risk_activity_correlations' \u2014 optional for maturity=partial.",
+      "details": "Manifest declares 'risk_activity_correlations' as supported but message 1 does not statically verify it.",
+      "dimension": "risk_activity_correlations",
+      "evidence": [],
+      "gate_id": "risk_activity_correlations",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "warning",
+      "title": "Risk x activity correlations"
+    },
+    {
+      "blocking": true,
+      "description": "Provider is present in security_coverage_service.PROVIDERS.",
+      "details": "provider in security_coverage_service.PROVIDERS: True",
+      "dimension": "security_coverage_parity",
+      "evidence": [],
+      "gate_id": "security_coverage_parity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Security coverage parity"
+    },
+    {
+      "blocking": true,
+      "description": "Every declared Finding rule ID has direct/grouped reachability evidence or an explicit exemption.",
+      "details": "36 declared rule ID(s): 36 via reachability evidence (1 evidence group(s)), 0 via exemption (0 blocking).",
+      "dimension": "security_finding_reachability",
+      "evidence": [
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_terraform_cloud_provider_depth_qa.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "security_finding_reachability",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Security Finding reachability"
+    },
+    {
+      "blocking": true,
+      "description": "Exact set equality across registry/confidence/pack/coverage (and frontend catalog if the tree is mounted).",
+      "details": "All 36 declared Finding IDs match registry/confidence/pack/coverage exactly.",
+      "dimension": "security_finding_registry_parity",
+      "evidence": [
+        {
+          "discovered_symbol": "security_rule_registry.KNOWN_RULE_KEYS",
+          "evidence_type": "discovered_symbol",
+          "expected_value": null,
+          "file": null,
+          "note": "",
+          "observed_value": "36",
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "security_finding_registry_parity",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Security Finding registry parity"
+    },
+    {
+      "blocking": true,
+      "description": "Sensitive credential fields are masked in the frontend form and never referenced by a global env var.",
+      "details": "1 sensitive field(s) masked; no prohibited global env var reads found.",
+      "dimension": "sensitive_data_controls",
+      "evidence": [],
+      "gate_id": "sensitive_data_controls",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Sensitive-data controls"
+    },
+    {
+      "blocking": true,
+      "description": "Provider is present in sync_service's supported-provider set.",
+      "details": "provider in sync_service._SUPPORTED_PROVIDERS: True",
+      "dimension": "sync_dispatch",
+      "evidence": [],
+      "gate_id": "sync_dispatch",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Sync service dispatch"
+    },
+    {
+      "blocking": true,
+      "description": "Every referenced evidence test file/report exists on disk.",
+      "details": "All 2 referenced evidence file(s) exist on disk.",
+      "dimension": "test_evidence",
+      "evidence": [
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_terraform_cloud_provider_depth_qa.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        },
+        {
+          "discovered_symbol": null,
+          "evidence_type": "test_file",
+          "expected_value": null,
+          "file": "tests/test_terraform_cloud_provider_depth_qa.py",
+          "note": "",
+          "observed_value": null,
+          "report": null,
+          "test_node_id": null
+        }
+      ],
+      "gate_id": "test_evidence",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Test evidence"
+    },
+    {
+      "blocking": true,
+      "description": "sync_task.py dispatches this provider to its connector.",
+      "details": "sync_task.py provider dispatch branch present: True",
+      "dimension": "worker_dispatch",
+      "evidence": [],
+      "gate_id": "worker_dispatch",
+      "remediation": "",
+      "required_for_live": false,
+      "required_for_maturities": [
+        "planned",
+        "partial",
+        "complete"
+      ],
+      "status": "pass",
+      "title": "Worker dispatch"
+    }
+  ],
+  "maturity": "partial",
+  "overall_status": "pass",
+  "provider_id": "terraform_cloud",
+  "schema_version": 1,
+  "summary": {
+    "deferred": 0,
+    "failed": 0,
+    "not_applicable": 5,
+    "passed": 28,
+    "unknown": 0,
+    "warnings": 7
+  }
+}

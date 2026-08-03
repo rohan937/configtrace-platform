@@ -300,7 +300,7 @@
     {
       "blocking": true,
       "description": "Every manifest's maturity/capability declarations agree with the discovered capability matrix.",
-      "details": "All 17 manifest(s) agree with their discovered capability-matrix entry.",
+      "details": "All 26 manifest(s) agree with their discovered capability-matrix entry.",
       "dimension": "cross_manifest_capability_consistency",
       "evidence": [],
       "gate_id": "cross_manifest_capability_consistency",
@@ -317,7 +317,7 @@
     {
       "blocking": true,
       "description": "Every manifest agrees with backend sync/coverage lists and frontend provider/connectable lists.",
-      "details": "All 17 manifest(s) consistent across backend and frontend catalogs.",
+      "details": "All 26 manifest(s) consistent across backend and frontend catalogs.",
       "dimension": "cross_manifest_catalog_consistency",
       "evidence": [],
       "gate_id": "cross_manifest_catalog_consistency",
@@ -334,7 +334,7 @@
     {
       "blocking": true,
       "description": "No Security Finding rule ID is declared by more than one registered manifest.",
-      "details": "441 Finding IDs declared across 17 manifest(s); no cross-provider collisions.",
+      "details": "691 Finding IDs declared across 26 manifest(s); no cross-provider collisions.",
       "dimension": "cross_manifest_finding_uniqueness",
       "evidence": [
         {
@@ -343,7 +343,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "441",
+          "observed_value": "691",
           "report": null,
           "test_node_id": null
         }
@@ -362,7 +362,7 @@
     {
       "blocking": true,
       "description": "Every registered manifest has a unique provider_id; no alias variant is double-registered.",
-      "details": "17 manifest(s) registered with unique provider_ids: ['aws', 'cloudflare', 'datadog', 'entra', 'firebase', 'github', 'gitlab', 'jira', 'kubernetes', 'okta', 'pagerduty', 'sentry', 'slack', 'snowflake', 'stripe', 'supabase', 'vercel'].",
+      "details": "26 manifest(s) registered with unique provider_ids: ['auth0', 'aws', 'azure', 'clerk', 'cloudflare', 'datadog', 'entra', 'firebase', 'github', 'gitlab', 'google_cloud', 'jira', 'kubernetes', 'linear', 'okta', 'pagerduty', 'sendgrid', 'sentry', 'shopify', 'slack', 'snowflake', 'stripe', 'supabase', 'terraform_cloud', 'twilio', 'vercel'].",
       "dimension": "cross_manifest_identity",
       "evidence": [
         {
@@ -371,7 +371,7 @@
           "expected_value": null,
           "file": null,
           "note": "",
-          "observed_value": "['aws', 'cloudflare', 'datadog', 'entra', 'firebase', 'github', 'gitlab', 'jira', 'kubernetes', 'okta', 'pagerduty', 'sentry', 'slack', 'snowflake', 'stripe', 'supabase', 'vercel']",
+          "observed_value": "['auth0', 'aws', 'azure', 'clerk', 'cloudflare', 'datadog', 'entra', 'firebase', 'github', 'gitlab', 'google_cloud', 'jira', 'kubernetes', 'linear', 'okta', 'pagerduty', 'sendgrid', 'sentry', 'shopify', 'slack', 'snowflake', 'stripe', 'supabase', 'terraform_cloud', 'twilio', 'vercel']",
           "report": null,
           "test_node_id": null
         }
@@ -390,7 +390,7 @@
     {
       "blocking": true,
       "description": "Every Live-declared manifest is absent from every future-provider queue.",
-      "details": "All 11 Live-declared manifest(s) absent from both future-provider queues.",
+      "details": "All 12 Live-declared manifest(s) absent from both future-provider queues.",
       "dimension": "cross_manifest_live_freeze",
       "evidence": [],
       "gate_id": "cross_manifest_live_freeze",
@@ -621,7 +621,7 @@
     {
       "blocking": true,
       "description": "Every launched provider has a manifest or an explicit migration-allowlist entry; no orphan/duplicate manifests; no certified provider remains allowlisted.",
-      "details": "25 launched provider(s), 17 manifest(s), 9 allowlisted, 0 unexpected missing, 0 orphans.",
+      "details": "25 launched provider(s), 26 manifest(s), 0 allowlisted, 0 unexpected missing, 0 orphans.",
       "dimension": "provider_manifest_coverage",
       "evidence": [
         {

@@ -27,16 +27,11 @@ class TestDiscoverLaunchedProviderIds:
     def test_returns_a_frozenset(self):
         assert isinstance(disc.discover_launched_provider_ids(), frozenset)
 
-    def test_includes_all_17_certified_providers(self):
+    def test_includes_all_26_certified_providers_except_planned_slack(self):
         launched = disc.discover_launched_provider_ids()
         for pid in runner.PILOT_PROVIDERS:
             if pid == "slack":
                 continue  # Slack has no launched sync surface — see its manifest.
-            assert pid in launched, f"{pid} expected to be launched"
-
-    def test_includes_the_9_allowlisted_uncertified_providers(self):
-        launched = disc.discover_launched_provider_ids()
-        for pid in ma.allowlisted_provider_ids():
             assert pid in launched, f"{pid} expected to be launched"
 
     def test_slack_is_not_launched(self):
@@ -44,8 +39,13 @@ class TestDiscoverLaunchedProviderIds:
 
 
 class TestMigrationAllowlist:
-    def test_contains_exactly_9_entries(self):
-        assert len(ma.MIGRATION_ALLOWLIST) == 9
+    """As of message 6, every launched provider has a certification
+    manifest — the allowlist is empty. See
+    ``test_provider_certification_migration_allowlist.py`` for the
+    dedicated, comprehensive allowlist-mechanism test file."""
+
+    def test_contains_zero_entries(self):
+        assert len(ma.MIGRATION_ALLOWLIST) == 0
 
     def test_no_certified_provider_present(self):
         certified = set(runner.known_provider_ids())
@@ -60,16 +60,17 @@ class TestMigrationAllowlist:
     def test_get_allowlist_entry_returns_none_for_unknown(self):
         assert ma.get_allowlist_entry("not_a_real_provider") is None
 
-    def test_get_allowlist_entry_returns_entry_for_known(self):
-        entry = ma.get_allowlist_entry("auth0")
-        assert entry is not None
-        assert entry.provider_id == "auth0"
+    def test_get_allowlist_entry_returns_none_for_any_now_certified_provider(self):
+        assert ma.get_allowlist_entry("auth0") is None
 
     def test_duplicate_entry_rejected_at_validation_time(self):
         with pytest.raises(ValueError, match="duplicate"):
-            bad = ma.MIGRATION_ALLOWLIST + (
+            bad = (
                 UncertifiedProviderMigrationEntry(
-                    provider_id="auth0", reason="dup", planned_framework_message=6,
+                    provider_id="auth0", reason="dup", planned_framework_message=7,
+                ),
+                UncertifiedProviderMigrationEntry(
+                    provider_id="auth0", reason="dup2", planned_framework_message=7,
                 ),
             )
             _validate_standalone(bad)
@@ -206,7 +207,7 @@ class TestDeterministicAdoptionReport:
         assert "launched_provider_count" in data
         assert "certified_provider_count" in data
         assert "allowlisted_provider_count" in data
-        assert data["certified_provider_count"] == 17
+        assert data["certified_provider_count"] == 26
 
     def test_adoption_report_has_no_timestamp_fields(self):
         import json

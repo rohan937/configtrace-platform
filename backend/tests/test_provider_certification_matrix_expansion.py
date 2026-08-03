@@ -651,10 +651,10 @@ class TestProviderSpecificCoverageAdditionalCases:
 
 
 class TestCrossManifestAdditionalCases:
-    def test_all_seventeen_provider_ids_are_unique(self):
+    def test_all_provider_ids_are_unique(self):
         ids = [m.provider_id for m in _all_manifests()]
-        assert len(ids) == 17
-        assert len(set(ids)) == 17
+        assert len(ids) == 26
+        assert len(set(ids)) == 26
 
     def test_schema_version_agreement_across_all_seventeen(self):
         versions = {getattr(m, "schema_version", 1) for m in _all_manifests()}

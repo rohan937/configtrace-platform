@@ -36,7 +36,7 @@ class TestCertifyOneProvider:
         """A provider absent from the manifest registry must raise, not
         return some default-passing result."""
         with pytest.raises(runner.MissingManifestError):
-            runner.certify_provider("azure")  # launched provider, but no manifest as of message 3
+            runner.certify_provider("totally_unregistered_provider_id")
 
 
 class TestCertifyAllProviders:
@@ -46,6 +46,8 @@ class TestCertifyAllProviders:
             "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
             "cloudflare", "supabase", "firebase", "stripe",
             "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
+            "auth0", "azure", "clerk", "google_cloud", "linear", "sendgrid",
+            "shopify", "terraform_cloud", "twilio",
         }
         for pid, result in results.items():
             assert result.provider_id == pid
@@ -65,6 +67,8 @@ class TestCertifyAllProviders:
             "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
             "cloudflare", "supabase", "firebase", "stripe",
             "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
+            "auth0", "azure", "clerk", "google_cloud", "linear", "sendgrid",
+            "shopify", "terraform_cloud", "twilio",
         }
 
 

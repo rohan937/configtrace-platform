@@ -43,6 +43,8 @@ PILOT_PROVIDERS: tuple[str, ...] = (
     "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
     "cloudflare", "supabase", "firebase", "stripe",
     "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
+    "auth0", "azure", "clerk", "google_cloud", "linear", "sendgrid",
+    "shopify", "terraform_cloud", "twilio",
 )
 
 
@@ -64,22 +66,31 @@ def _ensure_manifests_loaded() -> None:
         return
     # Import triggers each manifest module's module-level
     # register_manifest() call.
+    from app.provider_certification.manifests import auth0 as _auth0_manifest  # noqa: F401
     from app.provider_certification.manifests import aws as _aws_manifest  # noqa: F401
+    from app.provider_certification.manifests import azure as _azure_manifest  # noqa: F401
+    from app.provider_certification.manifests import clerk as _clerk_manifest  # noqa: F401
     from app.provider_certification.manifests import cloudflare as _cloudflare_manifest  # noqa: F401
     from app.provider_certification.manifests import datadog as _datadog_manifest  # noqa: F401
     from app.provider_certification.manifests import entra as _entra_manifest  # noqa: F401
     from app.provider_certification.manifests import firebase as _firebase_manifest  # noqa: F401
     from app.provider_certification.manifests import github as _github_manifest  # noqa: F401
     from app.provider_certification.manifests import gitlab as _gitlab_manifest  # noqa: F401
+    from app.provider_certification.manifests import google_cloud as _google_cloud_manifest  # noqa: F401
     from app.provider_certification.manifests import jira as _jira_manifest  # noqa: F401
     from app.provider_certification.manifests import kubernetes as _kubernetes_manifest  # noqa: F401
+    from app.provider_certification.manifests import linear as _linear_manifest  # noqa: F401
     from app.provider_certification.manifests import okta as _okta_manifest  # noqa: F401
     from app.provider_certification.manifests import pagerduty as _pagerduty_manifest  # noqa: F401
+    from app.provider_certification.manifests import sendgrid as _sendgrid_manifest  # noqa: F401
     from app.provider_certification.manifests import sentry as _sentry_manifest  # noqa: F401
+    from app.provider_certification.manifests import shopify as _shopify_manifest  # noqa: F401
     from app.provider_certification.manifests import slack as _slack_manifest  # noqa: F401
     from app.provider_certification.manifests import snowflake as _snowflake_manifest  # noqa: F401
     from app.provider_certification.manifests import stripe as _stripe_manifest  # noqa: F401
     from app.provider_certification.manifests import supabase as _supabase_manifest  # noqa: F401
+    from app.provider_certification.manifests import terraform_cloud as _terraform_cloud_manifest  # noqa: F401
+    from app.provider_certification.manifests import twilio as _twilio_manifest  # noqa: F401
     from app.provider_certification.manifests import vercel as _vercel_manifest  # noqa: F401
     _manifests_fully_loaded = True
 

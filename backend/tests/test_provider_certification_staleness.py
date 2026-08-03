@@ -152,3 +152,101 @@ class TestReconnectFieldDiverges:
         monkeypatch.setattr(disc, "discover_generic_reconnect_dispatch", lambda pid: False)
         gate = gates.gate_reconnect_rotation(VERCEL_MANIFEST)
         assert gate.status == "fail"
+
+
+# ── Message 6 additions: full-catalog stale-manifest coverage ──────────────
+
+
+class TestLaunchedProviderMissingManifestFullCatalog:
+    def test_gate_fails_when_a_real_launched_provider_manifest_is_removed(self):
+        from app.provider_certification import runner
+
+        runner._ensure_manifests_loaded()
+        real = tuple(runner.get_manifest(pid) for pid in runner.known_provider_ids())
+        without_auth0 = tuple(m for m in real if m.provider_id != "auth0")
+        gate = gates.gate_provider_manifest_coverage(without_auth0)
+        assert gate.status == "fail"
+        assert "auth0" in gate.details
+
+
+class TestManifestOmittedFromRunnerFullCatalog:
+    def test_pilot_providers_constant_would_disagree_if_a_manifest_were_omitted(self):
+        from app.provider_certification import runner
+
+        registered = set(runner.known_provider_ids())
+        hypothetically_omitted = registered - {"twilio"}
+        assert hypothetically_omitted != set(runner.PILOT_PROVIDERS)
+
+
+class TestOrphanManifestFullCatalog:
+    def test_gate_fails_for_an_orphan_manifest_among_the_full_26_provider_catalog(self):
+        import dataclasses
+
+        from app.provider_certification import runner
+        from app.provider_certification.models import ProviderCertificationManifest
+
+        runner._ensure_manifests_loaded()
+        real = tuple(runner.get_manifest(pid) for pid in runner.known_provider_ids())
+        orphan = ProviderCertificationManifest(
+            provider_id="not_launched_orphan_fixture",
+            display_name="Orphan", category="other", maturity="partial",
+            expected_public=False, expected_connectable=False, expected_live=False,
+            credential_fields=(), sensitive_credential_fields=(),
+            authentication_model="api_token", expected_record_types=(),
+            security_finding_rule_ids=(), supported_capabilities=(),
+            unsupported_capabilities=(), completeness_scopes=(), false_removal_scopes=(),
+            expected_frontend_form=None, expected_reconnect=False, prohibited_dependencies=(),
+            known_limitations=("Fixture-only manifest for an unlaunched provider.",),
+        )
+        gate = gates.gate_provider_manifest_coverage(real + (orphan,))
+        assert gate.status == "fail"
+        assert "not_launched_orphan_fixture" in gate.details
+
+
+class TestStaleCapabilityEvidenceFullCatalog:
+    def test_auth0_capability_evidence_test_file_going_missing_fails(self):
+        from app.provider_certification.manifests.auth0 import AUTH0_MANIFEST
+
+        bad_ev = dataclasses.replace(
+            AUTH0_MANIFEST.capability_evidence[0],
+            evidence_tests=("tests/test_auth0_this_file_does_not_exist.py",),
+        )
+        bad_manifest = dataclasses.replace(AUTH0_MANIFEST, capability_evidence=(bad_ev,))
+        gate = gates.gate_capability_evidence(bad_manifest)
+        assert gate.status == "fail"
+
+    def test_azure_capability_evidence_record_type_drift_rejected_at_construction(self):
+        from app.provider_certification.manifests.azure import AZURE_MANIFEST
+        from app.provider_certification.models import (
+            CapabilityEvidenceDeclaration,
+            ManifestValidationError,
+        )
+        import pytest
+
+        with pytest.raises(ManifestValidationError, match="unknown record type"):
+            dataclasses.replace(
+                AZURE_MANIFEST,
+                capability_evidence=(
+                    CapabilityEvidenceDeclaration(
+                        capability="security_findings",
+                        supporting_record_types=("azure_totally_phantom_record",),
+                    ),
+                ),
+            )
+
+
+class TestStaleCompletenessDeclarationFullCatalog:
+    def test_dead_suppression_symbol_fails_for_a_message_6_provider(self):
+        from app.provider_certification.manifests.terraform_cloud import TERRAFORM_CLOUD_MANIFEST
+        from app.provider_certification.models import CompletenessScopeDeclaration
+
+        scope = CompletenessScopeDeclaration(
+            scope_id="terraform_cloud_dead_symbol_fixture",
+            record_types=(TERRAFORM_CLOUD_MANIFEST.expected_record_types[0],),
+            granularity="family",
+            suppression_symbol="_totally_nonexistent_suppression_function_tf",
+        )
+        m = dataclasses.replace(TERRAFORM_CLOUD_MANIFEST, completeness_scope_declarations=(scope,))
+        gate = gates.gate_completeness_scope_declarations(m)
+        assert gate.status == "fail"
+        assert "_totally_nonexistent_suppression_function_tf" in gate.details

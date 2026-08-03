@@ -136,8 +136,9 @@ class TestPackParity:
 
 
 class TestCoverageParity:
-    def test_kubernetes_in_providers_list(self):
-        assert "kubernetes" in security_coverage_service.PROVIDERS
+    # test_kubernetes_in_providers_list was consolidated in message 6:
+    # exactly superseded by app.provider_certification.gates.gate_security_coverage_parity
+    # (see test_provider_certification_kubernetes.py and provider_certification_duplication_inventory.md).
 
     def test_every_registered_kubernetes_rule_has_record_types(self):
         registry_keys = _registry_kubernetes_keys()

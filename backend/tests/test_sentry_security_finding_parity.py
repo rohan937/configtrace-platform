@@ -153,11 +153,10 @@ class TestPackParity:
 
 
 class TestCoverageParity:
-    def test_sentry_in_providers_list(self):
-        # Sentry has appeared in the internal PROVIDERS list since message
-        # 1 (foundation) — coverage reporting can exist internally while
-        # the provider remains non-connectable/non-Live.
-        assert "sentry" in security_coverage_service.PROVIDERS
+    # test_sentry_in_providers_list was consolidated in message 6: exactly
+    # superseded by app.provider_certification.gates.gate_security_coverage_parity
+    # (see test_provider_certification_sentry.py and
+    # provider_certification_duplication_inventory.md).
 
     def test_sentry_in_provider_surfaces(self):
         assert "sentry" in security_coverage_service.PROVIDER_SURFACES

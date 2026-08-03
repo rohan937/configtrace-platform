@@ -291,3 +291,43 @@ rule IDs (adding, removing, or renaming) MUST be accompanied by the
 matching manifest update in the same change — `gate_record_inventory`
 and `gate_security_finding_registry_parity` will otherwise report
 drift on the very next certification run.
+
+## 32. Every launched provider requires a manifest (message 6)
+
+As of message 6, 100% of launched providers are certified — there is
+no longer any launched provider without a manifest. Any newly LAUNCHED
+provider (an already-existing repository concept: backend sync +
+frontend connectable + capability-matrix registered, per
+`discover_launched_provider_ids()`) MUST receive a certification
+manifest in the same message it becomes launched, or be added to
+`MIGRATION_ALLOWLIST` with a concrete `reason` and
+`planned_framework_message` as a temporary, tracked exception — never
+silently.
+
+## 33. No migration allowlist for ordinary launched providers
+
+The migration allowlist exists for genuinely temporary, controlled
+migration windows only — not as a permanent parking spot. As of
+message 6 it is empty and MUST remain empty for any provider that is
+an ordinary launched sync provider with no unusual circumstance
+justifying deferral. `gate_provider_manifest_coverage` fails if a
+certified provider reappears in the allowlist, and
+`test_provider_certification_migration_allowlist.py` proves the
+mechanism's validation rules (duplicate/unknown/certified-provider
+rejection, required reason, required planned milestone) independent
+of whether the real allowlist currently holds any entries.
+
+## 34. Certification failure blocks provider metadata drift
+
+Message 6 confirms this is now framework-wide, not aspirational:
+record/Finding changes must update the manifest in the SAME pull
+request that makes the change — `gate_record_inventory` and
+`gate_security_finding_registry_parity` will report drift (`fail` for
+missing, `warning` for undeclared extras) on the very next
+certification run otherwise, and `certify_provider()` never silently
+passes a provider whose manifest has drifted from real discovery.
+Provider-specific semantic tests (connector normalization, pagination/
+retry, partial-sync/false-removal, Change-classification, Finding
+reachability, reconnect-mismatch) remain mandatory and are never
+superseded by the certification framework, which only proves static
+repository WIRING.

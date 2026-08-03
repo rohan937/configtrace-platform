@@ -1,4 +1,4 @@
-"""Migration allowlist (message 5 of N).
+"""Migration allowlist (message 5 of N; emptied in message 6).
 
 Every launched provider not yet certified must appear here, with a
 durable reason and a planned framework message — never a silent gap.
@@ -6,73 +6,23 @@ This project tracks work by "message N" (this file, this commit
 history), not calendar dates, so entries reference a planned message
 number rather than a date.
 
-Sentry/Snowflake/Okta/Entra/Kubernetes/GitHub/GitLab/Cloudflare/
-Supabase/Firebase/Stripe/AWS/Vercel/Datadog/PagerDuty/Slack/Jira are
-certified as of this message and MUST NOT appear here — see
-``test_provider_certification_manifest_coverage.py`` for the test that
-pins this.
+As of message 6, ALL 26 launched providers (the 17 certified in
+messages 1-5 plus auth0/azure/clerk/google_cloud/linear/sendgrid/
+shopify/terraform_cloud/twilio, certified this message) have registered
+certification manifests. The allowlist is intentionally empty — no
+launched provider may appear here. The mechanism itself is retained
+(not deleted) for any genuinely future, controlled migration of a
+provider not yet launched at the time it's added; see
+``test_provider_certification_manifest_coverage.py`` and
+``test_provider_certification_migration_allowlist.py`` for the tests
+pinning zero launched-provider entries and full validation coverage.
 """
 
 from __future__ import annotations
 
 from app.provider_certification.models import UncertifiedProviderMigrationEntry
 
-MIGRATION_ALLOWLIST: tuple[UncertifiedProviderMigrationEntry, ...] = (
-    UncertifiedProviderMigrationEntry(
-        provider_id="auth0",
-        reason="Launched (backend sync + frontend connectable + capability-matrix registered) but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=("tests/test_milestone81h_auth0_provider_depth_qa.py",),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="azure",
-        reason="Launched but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="clerk",
-        reason="Launched but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="google_cloud",
-        reason="Launched but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="linear",
-        reason="Launched but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="sendgrid",
-        reason="Launched but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="shopify",
-        reason="Launched (maturity='complete' in the real capability matrix) but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="terraform_cloud",
-        reason="Launched but not yet given a certification manifest. Also present in the future-provider recommendation queue as of message 3's freeze audit — a genuine pre-existing repository quirk (already-launched provider still recommended), not introduced by this framework.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-    UncertifiedProviderMigrationEntry(
-        provider_id="twilio",
-        reason="Launched but not yet given a certification manifest.",
-        planned_framework_message=6,
-        evidence=(),
-    ),
-)
+MIGRATION_ALLOWLIST: tuple[UncertifiedProviderMigrationEntry, ...] = ()
 
 
 def _validate_allowlist() -> None:

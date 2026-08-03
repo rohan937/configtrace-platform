@@ -108,7 +108,7 @@ class TestConsolidatedTestCountReduction:
     """Pins the exact before/after test counts so a future silent
     re-addition (or over-deletion) of assertions is caught."""
 
-    def test_sentry_parity_file_has_33_tests_after_consolidation(self):
+    def test_sentry_parity_file_has_32_tests_after_consolidation(self):
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "tests/test_sentry_security_finding_parity.py", "--collect-only", "-q"],
             cwd=str(_BACKEND_ROOT),
@@ -119,9 +119,9 @@ class TestConsolidatedTestCountReduction:
         assert result.returncode == 0, result.stderr
         last_line = [ln for ln in result.stdout.splitlines() if ln.strip()][-1]
         assert "39" not in last_line or "tests collected" not in last_line  # sanity: not the pre-consolidation count
-        assert "33" in last_line, last_line
+        assert "32" in last_line, last_line
 
-    def test_snowflake_parity_file_has_31_tests_after_consolidation(self):
+    def test_snowflake_parity_file_has_30_tests_after_consolidation(self):
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "tests/test_snowflake_security_finding_parity.py", "--collect-only", "-q"],
             cwd=str(_BACKEND_ROOT),
@@ -132,8 +132,12 @@ class TestConsolidatedTestCountReduction:
         assert result.returncode == 0, result.stderr
         last_line = [ln for ln in result.stdout.splitlines() if ln.strip()][-1]
         assert "37" not in last_line or "tests collected" not in last_line
-        assert "31" in last_line, last_line
+        assert "30" in last_line, last_line
 
-    def test_twelve_total_assertions_consolidated(self):
-        # 39 -> 33 (Sentry) and 37 -> 31 (Snowflake): 6 removed each, 12 total.
-        assert (39 - 33) + (37 - 31) == 12
+    def test_thirteen_total_assertions_consolidated(self):
+        # 39 -> 32 (Sentry) and 37 -> 30 (Snowflake): 7 removed each (6 from
+        # message 2 + 1 from message 6's TestCoverageParity consolidation),
+        # 14 total... explicitly: message 2 removed 6+6=12, message 6 removed
+        # 1 more from each (test_sentry_in_providers_list /
+        # test_snowflake_in_providers_list) = 14 total from these two files.
+        assert (39 - 32) + (37 - 30) == 14

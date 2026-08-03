@@ -137,6 +137,8 @@ class TestReportFilesExist:
             "sentry", "snowflake", "okta", "entra", "kubernetes", "github", "gitlab",
             "cloudflare", "supabase", "firebase", "stripe",
             "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
+            "auth0", "azure", "clerk", "google_cloud", "linear", "sendgrid",
+            "shopify", "terraform_cloud", "twilio",
         }
 
 
@@ -165,6 +167,19 @@ class TestFrameworkMatrixReport:
         assert len(numbered_rows) >= 1050, f"only {len(numbered_rows)} numbered data rows"
         # Row numbers must be sequential starting at 1, with no gaps or
         # duplicates — proves the count isn't inflated by repeated numbers.
+        numbers = [int(re.match(r"^\|\s*(\d+)\s*\|", ln).group(1)) for ln in numbered_rows]
+        assert numbers == list(range(1, len(numbers) + 1)), "row numbers are not sequential/unique"
+
+    def test_matrix_has_at_least_1400_genuine_data_rows(self):
+        # Permanent regression guard (message 6): raises the floor from
+        # message 5's 1050 to message 6's required 1400, using the same
+        # sequential/unique row-number verification.
+        import re
+
+        path = _BACKEND_ROOT / "tests" / "reports" / "provider_certification_framework_matrix.md"
+        lines = path.read_text().splitlines()
+        numbered_rows = [ln for ln in lines if re.match(r"^\|\s*\d+\s*\|", ln)]
+        assert len(numbered_rows) >= 1400, f"only {len(numbered_rows)} numbered data rows"
         numbers = [int(re.match(r"^\|\s*(\d+)\s*\|", ln).group(1)) for ln in numbered_rows]
         assert numbers == list(range(1, len(numbers) + 1)), "row numbers are not sequential/unique"
 

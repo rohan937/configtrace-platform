@@ -15,9 +15,10 @@ import json
 from app.provider_certification import runner
 
 _ALL_ELEVEN = (
-    "aws", "cloudflare", "datadog", "entra", "firebase", "github", "gitlab",
-    "jira", "kubernetes", "okta", "pagerduty", "sentry", "slack", "snowflake",
-    "stripe", "supabase", "vercel",
+    "auth0", "aws", "azure", "clerk", "cloudflare", "datadog", "entra", "firebase",
+    "github", "gitlab", "google_cloud", "jira", "kubernetes", "linear", "okta",
+    "pagerduty", "sendgrid", "sentry", "shopify", "slack", "snowflake", "stripe",
+    "supabase", "terraform_cloud", "twilio", "vercel",
 )
 
 

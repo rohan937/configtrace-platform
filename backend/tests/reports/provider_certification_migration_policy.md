@@ -344,3 +344,42 @@ framework verifies static repository WIRING only, and every
 consolidation this message (§9.7) was scoped to pure registry/catalog
 set-equality duplication with a verified 1:1 framework-gate
 equivalent, never a semantic behavioral test.
+
+## 16. 100% adoption reached — allowlist exit is complete (message 6)
+
+The migration allowlist held exactly 9 entries after message 5, all
+for genuinely launched-but-uncertified providers. Message 6 certified
+all 9 (Auth0, Azure, Clerk, Google Cloud, Linear, SendGrid, Shopify,
+Terraform Cloud, Twilio) and removed every one of their entries — the
+allowlist is now the empty tuple `()`. Repository-wide adoption
+coverage is exactly 100.0%: every launched provider has a
+certification manifest, with zero exceptions. This is a genuine
+milestone, not a target adjusted to force a PASS — the underlying
+`gate_provider_manifest_coverage` gate was not weakened to reach it;
+all 9 new providers independently passed every blocking gate on their
+own merits (see `provider_certification_message6.md`).
+
+## 17. Ordinary launched providers may never remain allowlisted
+
+Going forward, the allowlist is reserved for genuinely temporary,
+controlled migration windows — e.g. a provider that becomes launched
+mid-message, with certification explicitly deferred one message with a
+concrete reason and milestone. It must never become a permanent
+parking spot for provider debt. `gate_provider_manifest_coverage`
+actively fails if a certified provider reappears in the allowlist,
+and `discover_launched_provider_ids()` gates entry eligibility — an
+allowlist entry for a provider that isn't genuinely launched is
+rejected at import time.
+
+## 18. Runtime defect fixed during message 6 certification
+
+Terraform Cloud's `creation_validation` gate exposed a genuine,
+pre-existing production defect: `routers/integrations.py`'s
+`_build_credentials()` had no dispatch branch for
+`provider == "terraform_cloud"` at all, meaning credentials were
+silently dropped (`{}`) on integration creation. This was fixed by
+adding the missing branch, mirroring the existing GitLab
+optional-base-URL pattern — the one runtime change this message made,
+justified exclusively by a certification-uncovered genuine defect, not
+by any attempt to force a gate to pass through means other than fixing
+the underlying gap.

@@ -157,12 +157,10 @@ class TestPackParity:
 
 
 class TestCoverageParity:
-    def test_snowflake_in_providers_list(self):
-        # Snowflake has appeared in the internal PROVIDERS list since
-        # message 1 (foundation) — coverage reporting can exist
-        # internally while the provider remains non-connectable/non-Live
-        # until message 8.
-        assert "snowflake" in security_coverage_service.PROVIDERS
+    # test_snowflake_in_providers_list was consolidated in message 6:
+    # exactly superseded by app.provider_certification.gates.gate_security_coverage_parity
+    # (see test_provider_certification_snowflake.py and
+    # provider_certification_duplication_inventory.md).
 
     def test_snowflake_in_provider_surfaces(self):
         assert "snowflake" in security_coverage_service.PROVIDER_SURFACES

@@ -27,6 +27,8 @@ class TestFourUniquePilotIds:
             "entra", "okta", "sentry", "snowflake", "kubernetes", "github", "gitlab",
             "cloudflare", "supabase", "firebase", "stripe",
             "aws", "vercel", "datadog", "pagerduty", "slack", "jira",
+            "auth0", "azure", "clerk", "google_cloud", "linear", "sendgrid",
+            "shopify", "terraform_cloud", "twilio",
         }
 
     def test_identity_gate_passes_for_real_manifests(self):
@@ -211,7 +213,7 @@ class TestElevenProviderCrossManifestInvariants:
     def test_unique_canonical_ids_across_all_eleven(self):
         manifests = self._all_manifests()
         ids = [m.provider_id for m in manifests]
-        assert len(ids) == len(set(ids)) == 17
+        assert len(ids) == len(set(ids)) == 26
 
     def test_consistent_schema_version_across_all_eleven(self):
         manifests = self._all_manifests()

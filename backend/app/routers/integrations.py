@@ -256,6 +256,16 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
         if body.gitlab_base_url:
             creds["base_url"] = body.gitlab_base_url
         return creds
+    # ── M88A — Terraform Cloud drift provider ────────────────────────────────
+    elif body.provider == "terraform_cloud":
+        # SECURITY: terraform_cloud_api_token is NEVER logged here or in the service.
+        creds = {
+            "api_token": body.terraform_cloud_api_token,
+            "organization": body.terraform_cloud_organization,
+        }
+        if body.terraform_cloud_base_url:
+            creds["base_url"] = body.terraform_cloud_base_url
+        return creds
     # ── Kubernetes provider (message 9 — public launch) ──────────────────────
     elif body.provider == "kubernetes":
         # SECURITY: kubeconfig is NEVER logged here or in the service. It is

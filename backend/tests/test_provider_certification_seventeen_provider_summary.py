@@ -14,9 +14,10 @@ import json
 from app.provider_certification import runner
 
 _ALL_SEVENTEEN = (
-    "aws", "cloudflare", "datadog", "entra", "firebase", "github", "gitlab",
-    "jira", "kubernetes", "okta", "pagerduty", "sentry", "slack", "snowflake",
-    "stripe", "supabase", "vercel",
+    "auth0", "aws", "azure", "clerk", "cloudflare", "datadog", "entra", "firebase",
+    "github", "gitlab", "google_cloud", "jira", "kubernetes", "linear", "okta",
+    "pagerduty", "sendgrid", "sentry", "shopify", "slack", "snowflake", "stripe",
+    "supabase", "terraform_cloud", "twilio", "vercel",
 )
 
 _NEW_THIS_MESSAGE = ("aws", "vercel", "datadog", "pagerduty", "slack", "jira")
@@ -25,7 +26,7 @@ _NEW_THIS_MESSAGE = ("aws", "vercel", "datadog", "pagerduty", "slack", "jira")
 class TestSeventeenProvidersKnown:
     def test_known_provider_ids_returns_exactly_seventeen(self):
         assert runner.known_provider_ids() == tuple(sorted(_ALL_SEVENTEEN))
-        assert len(runner.known_provider_ids()) == 17
+        assert len(runner.known_provider_ids()) == 26
 
     def test_pilot_providers_constant_matches_all_seventeen(self):
         assert set(runner.PILOT_PROVIDERS) == set(_ALL_SEVENTEEN)
@@ -93,5 +94,5 @@ class TestDeterministicReportsForAllSeventeen:
         reports_dir = runner._BACKEND_ROOT / "tests" / "reports"
         path = reports_dir / "provider_certification_adoption.json"
         data = json.loads(path.read_text())
-        assert data["certified_provider_count"] == 17
+        assert data["certified_provider_count"] == 26
         assert set(data["certified_provider_ids"]) == set(_ALL_SEVENTEEN)

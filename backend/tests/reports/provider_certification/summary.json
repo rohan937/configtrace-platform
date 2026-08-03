@@ -1,6 +1,43 @@
 {
   "all_pass": true,
   "providers": {
+    "auth0": {
+      "category": "auth",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Auth0",
+      "exemption_count": 0,
+      "finding_count": 39,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 39,
+        "declared": 39,
+        "excepted": 0
+      },
+      "provider_id": "auth0",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 39,
+        "declared": 39,
+        "exempted": 0
+      },
+      "record_count": 8,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
     "aws": {
       "category": "cloud",
       "completeness_scope_count": 0,
@@ -31,6 +68,80 @@
         "failed": 0,
         "not_applicable": 3,
         "passed": 30,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "azure": {
+      "category": "cloud",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Microsoft Azure",
+      "exemption_count": 0,
+      "finding_count": 21,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 21,
+        "declared": 21,
+        "excepted": 0
+      },
+      "provider_id": "azure",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 21,
+        "declared": 21,
+        "exempted": 0
+      },
+      "record_count": 9,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "clerk": {
+      "category": "identity",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Clerk",
+      "exemption_count": 0,
+      "finding_count": 40,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 40,
+        "declared": 40,
+        "excepted": 0
+      },
+      "provider_id": "clerk",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 40,
+        "declared": 40,
+        "exempted": 0
+      },
+      "record_count": 10,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
         "unknown": 0,
         "warnings": 7
       },
@@ -267,6 +378,43 @@
       "unsupported_capability_count": 0,
       "warnings": 7
     },
+    "google_cloud": {
+      "category": "cloud",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Google Cloud",
+      "exemption_count": 0,
+      "finding_count": 23,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 23,
+        "declared": 23,
+        "excepted": 0
+      },
+      "provider_id": "google_cloud",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 23,
+        "declared": 23,
+        "exempted": 0
+      },
+      "record_count": 10,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
     "jira": {
       "category": "devops",
       "completeness_scope_count": 0,
@@ -345,6 +493,43 @@
       "supported_capability_count": 1,
       "unsupported_capability_count": 4,
       "warnings": 2
+    },
+    "linear": {
+      "category": "devops",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Linear",
+      "exemption_count": 0,
+      "finding_count": 39,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 39,
+        "declared": 39,
+        "excepted": 0
+      },
+      "provider_id": "linear",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 39,
+        "declared": 39,
+        "exempted": 0
+      },
+      "record_count": 9,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
     },
     "okta": {
       "category": "auth",
@@ -425,6 +610,43 @@
       "unsupported_capability_count": 0,
       "warnings": 7
     },
+    "sendgrid": {
+      "category": "communications",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "SendGrid",
+      "exemption_count": 0,
+      "finding_count": 27,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 27,
+        "declared": 27,
+        "excepted": 0
+      },
+      "provider_id": "sendgrid",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 27,
+        "declared": 27,
+        "exempted": 0
+      },
+      "record_count": 8,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
     "sentry": {
       "category": "observability",
       "completeness_scope_count": 5,
@@ -466,6 +688,43 @@
       "supported_capability_count": 1,
       "unsupported_capability_count": 4,
       "warnings": 1
+    },
+    "shopify": {
+      "category": "ecommerce",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Shopify",
+      "exemption_count": 0,
+      "finding_count": 7,
+      "live": true,
+      "maturity": "complete",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 7,
+        "declared": 7,
+        "excepted": 0
+      },
+      "provider_id": "shopify",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 7,
+        "declared": 7,
+        "exempted": 0
+      },
+      "record_count": 5,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 3,
+        "passed": 30,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
     },
     "slack": {
       "category": "communication",
@@ -620,6 +879,80 @@
         "failed": 0,
         "not_applicable": 4,
         "passed": 29,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "terraform_cloud": {
+      "category": "devops",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Terraform Cloud",
+      "exemption_count": 0,
+      "finding_count": 36,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 36,
+        "declared": 36,
+        "excepted": 0
+      },
+      "provider_id": "terraform_cloud",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 36,
+        "declared": 36,
+        "exempted": 0
+      },
+      "record_count": 10,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
+        "unknown": 0,
+        "warnings": 7
+      },
+      "supported_capability_count": 5,
+      "unsupported_capability_count": 0,
+      "warnings": 7
+    },
+    "twilio": {
+      "category": "communications",
+      "completeness_scope_count": 0,
+      "connectable": true,
+      "deferred_gate_count": 0,
+      "deferred_gates": [],
+      "display_name": "Twilio",
+      "exemption_count": 0,
+      "finding_count": 18,
+      "live": false,
+      "maturity": "partial",
+      "overall_status": "pass",
+      "parity_evidence_coverage": {
+        "covered": 18,
+        "declared": 18,
+        "excepted": 0
+      },
+      "provider_id": "twilio",
+      "public": true,
+      "reachability_evidence_coverage": {
+        "covered": 18,
+        "declared": 18,
+        "exempted": 0
+      },
+      "record_count": 5,
+      "summary": {
+        "deferred": 0,
+        "failed": 0,
+        "not_applicable": 5,
+        "passed": 28,
         "unknown": 0,
         "warnings": 7
       },
