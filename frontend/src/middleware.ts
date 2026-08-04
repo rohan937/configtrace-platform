@@ -19,9 +19,10 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
-  // Allow direct hits to the root — the root page redirects to /dashboard,
-  // which is protected, so signed-out users still bounce to /sign-in via
-  // the protect() call below.
+  // The root page (src/app/page.tsx) renders a public overview for
+  // signed-out visitors and redirects signed-in visitors to /dashboard
+  // itself, so `/` must stay out of auth.protect() below regardless of
+  // sign-in state.
   "/",
   // M58.13: Public demo — no auth required.
   "/demo(.*)",
