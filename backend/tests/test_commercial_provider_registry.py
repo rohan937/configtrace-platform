@@ -11,7 +11,7 @@ import dataclasses
 
 import pytest
 
-from app.billing.adapters.paddle import PaddleBillingAdapter, PaddleNotConfiguredError, PaddleUnsupportedBeforeM2Error, PaddlePriceMapping
+from app.billing.adapters.paddle import PaddleBillingAdapter, PaddleNotConfiguredError, PaddlePriceMapping
 from app.billing.adapters.stripe import StripeBillingAdapter
 from app.billing.enums import BillingProvider
 from app.billing.provider import CheckoutRequest
@@ -41,28 +41,27 @@ class TestPaddleSelectedButNotActivated:
         with pytest.raises(PaddleNotConfiguredError):
             get_billing_provider(db_session, provider_override=BillingProvider.PADDLE)
 
-    def test_paddle_configured_adapter_is_returned_but_unsupported(self, db_session, monkeypatch):
+    def test_paddle_missing_api_key_fails_closed_even_with_price_mapping(self, db_session, monkeypatch):
         from app import config
 
-        monkeypatch.setattr(config.settings, "PADDLE_BASE_PRICE_ID", "pri_test_base")
-        monkeypatch.setattr(config.settings, "PADDLE_ADDITIONAL_SEAT_PRICE_ID", "pri_test_seat")
+        monkeypatch.setattr(config.settings, "PADDLE_TEAM_BASE_PRICE_ID", "pri_test_base")
+        monkeypatch.setattr(config.settings, "PADDLE_TEAM_ADDITIONAL_SEAT_PRICE_ID", "pri_test_seat")
         monkeypatch.setattr(config.settings, "PADDLE_ENVIRONMENT", "sandbox")
+        monkeypatch.setattr(config.settings, "PADDLE_API_KEY", None)
+        with pytest.raises(PaddleNotConfiguredError):
+            get_billing_provider(db_session, provider_override=BillingProvider.PADDLE)
+
+    def test_paddle_fully_configured_returns_a_real_configured_adapter(self, db_session, monkeypatch):
+        from app import config
+
+        monkeypatch.setattr(config.settings, "PADDLE_TEAM_BASE_PRICE_ID", "pri_test_base")
+        monkeypatch.setattr(config.settings, "PADDLE_TEAM_ADDITIONAL_SEAT_PRICE_ID", "pri_test_seat")
+        monkeypatch.setattr(config.settings, "PADDLE_ENVIRONMENT", "sandbox")
+        monkeypatch.setattr(config.settings, "PADDLE_API_KEY", "apikey_sandbox_test")
+        monkeypatch.setattr(config.settings, "PADDLE_WEBHOOK_SECRET", "whsec_test")
         adapter = get_billing_provider(db_session, provider_override=BillingProvider.PADDLE)
         assert isinstance(adapter, PaddleBillingAdapter)
         assert adapter.is_configured is True
-        # Configured does NOT mean implemented — every real operation still
-        # raises the typed "unsupported before M2" state.
-        with pytest.raises(PaddleUnsupportedBeforeM2Error):
-            adapter.create_checkout(
-                CheckoutRequest(
-                    workspace_id=__import__("uuid").uuid4(),
-                    plan_id=__import__("app.billing.enums", fromlist=["PlanId"]).PlanId.TEAM,
-                    billing_interval=__import__("app.billing.enums", fromlist=["BillingInterval"]).BillingInterval.MONTH,
-                    billable_seat_count=25,
-                    success_url="https://app.example.test/success",
-                    cancel_url="https://app.example.test/cancel",
-                )
-            )
 
 
 class TestUnknownProviderRejected:

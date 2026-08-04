@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -8,9 +8,11 @@ import {
   getWorkspaceBilling,
   getTeamPricingPreview,
   createCheckoutSession,
+  createTeamCheckout,
   createPortalSession,
   type TeamPricingBreakdown,
 } from "@/lib/api";
+import { initPaddle, isPaddleClientConfigured, openPaddleCheckout, paddleEnvironment } from "@/lib/paddle";
 import type { WorkspaceBilling, BillingPlan } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
 
@@ -646,10 +648,21 @@ export default function BillingPage() {
     return () => { cancelled = true; };
   }, [selectedWorkspace, getToken]);
 
+  // Commercial Infrastructure message 2: guards against a double-click
+  // (or a stray re-render) opening two checkout overlays / firing two
+  // checkout-creation requests at once.
+  const checkoutInFlightRef = useRef(false);
+
   async function handleUpgrade(plan: BillingPlan) {
-    if (!selectedWorkspace) return;
-    // Defense-in-depth: guard against the disabled button being triggered via
-    // devtools or keyboard when Stripe is not configured or force-disabled.
+    if (!selectedWorkspace || checkoutInFlightRef.current) return;
+
+    // Team + Paddle-configured checkout path (message 2).
+    if (plan === "team" && billing?.checkout_provider === "paddle") {
+      await handlePaddleTeamCheckout();
+      return;
+    }
+
+    // Existing Stripe path — unchanged (message-1/2 compatibility).
     if (CHECKOUT_FORCE_DISABLED || !billing?.stripe_configured) {
       setActionError(STRIPE_UNAVAILABLE_HELPER_TEXT);
       return;
@@ -659,6 +672,7 @@ export default function BillingPage() {
       setActionError("Billing is not fully configured yet. Contact support or try again later.");
       return;
     }
+    checkoutInFlightRef.current = true;
     setActionBusy(true);
     setActionError(null);
     try {
@@ -673,6 +687,51 @@ export default function BillingPage() {
       const msg = err instanceof Error ? err.message : "Failed to start checkout.";
       setActionError(friendlyBillingError(msg));
       setActionBusy(false);
+      checkoutInFlightRef.current = false;
+    }
+  }
+
+  async function handlePaddleTeamCheckout() {
+    if (!selectedWorkspace) return;
+    if (!isPaddleClientConfigured()) {
+      setActionError("Billing is not fully configured yet. Contact support or try again later.");
+      return;
+    }
+    checkoutInFlightRef.current = true;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const token = await getToken();
+      const { checkout_url, external_reference } = await createTeamCheckout(selectedWorkspace.id, token);
+      const clientToken = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN ?? "";
+      if (external_reference) {
+        try {
+          await initPaddle(paddleEnvironment(), clientToken, (event) => {
+            if (event.name === "checkout.completed") {
+              setSuccessMsg("Subscription activated! It may take a moment to reflect here.");
+              load();
+            } else if (event.name === "checkout.closed") {
+              checkoutInFlightRef.current = false;
+              setActionBusy(false);
+            }
+          });
+          openPaddleCheckout(external_reference);
+          return; // overlay stays open; do not clear actionBusy here
+        } catch {
+          // Paddle.js failed to load/initialize — fall back to the
+          // hosted checkout URL redirect below.
+        }
+      }
+      if (checkout_url) {
+        window.location.href = checkout_url;
+        return;
+      }
+      throw new Error("Paddle did not return a usable checkout.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to start checkout.";
+      setActionError(friendlyBillingError(msg));
+      setActionBusy(false);
+      checkoutInFlightRef.current = false;
     }
   }
 

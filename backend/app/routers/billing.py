@@ -19,8 +19,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import UUID4, BaseModel
 from sqlalchemy.orm import Session
 
+import uuid as uuid_module
+
 from app.billing.billable_seats import calculate_billable_member_count
+from app.billing.enums import BillingInterval, BillingProvider, PlanId
+from app.billing.models import NormalizedSubscription
 from app.billing.pricing import calculate_team_monthly_price
+from app.billing.provider import CancelSubscriptionRequest, CheckoutRequest as NeutralCheckoutRequest, PortalRequest
+from app.billing.provider_routing import provider_for_checkout, provider_for_management
+from app.billing.reconciliation_service import reconcile_workspace_subscription
+from app.billing.registry import get_adapter_for_provider
 from app.config import settings
 from app.core.auth import get_current_user
 from app.database import get_db
@@ -51,6 +59,11 @@ class BillingResponse(BaseModel):
     stripe_configured: bool = False
     stripe_mode: str = "not_configured"
     stripe_events_configured: bool = False
+    # Commercial Infrastructure message 2: which provider a NEW checkout
+    # would use right now — "stripe" | "paddle". Never implies anything
+    # about an EXISTING subscription's provider (see
+    # app.billing.provider_routing for that rule).
+    checkout_provider: str = "stripe"
 
     model_config = {"from_attributes": True}
 
@@ -128,6 +141,7 @@ def get_billing(
         stripe_configured=settings.is_stripe_configured,
         stripe_mode=settings.stripe_mode,
         stripe_events_configured=settings.is_webhook_configured,
+        checkout_provider=settings.BILLING_PROVIDER or "stripe",
     )
 
 
@@ -202,3 +216,250 @@ def create_portal(
 
     portal_url = billing_service.create_portal_session(billing=billing, db=db)
     return PortalResponse(portal_url=portal_url)
+
+
+# ── Provider-neutral routes (Commercial Infrastructure message 2) ──────────────
+#
+# These dispatch via app.billing.provider_routing / app.billing.registry —
+# they never assume Stripe. A new checkout always uses the CONFIGURED
+# checkout provider (settings.BILLING_PROVIDER); managing an EXISTING
+# subscription always uses the provider STORED on that subscription
+# (message-2 spec item 31) — never reinterpreted by the global setting.
+
+
+class NeutralCheckoutResponse(BaseModel):
+    provider: str
+    checkout_url: str
+    # Paddle transaction ID — used by the frontend to open the Paddle.js
+    # overlay checkout directly (Paddle.Checkout.open({transactionId}))
+    # instead of a full page redirect. None for Stripe (which uses
+    # checkout_url as a redirect target, as it always has).
+    external_reference: str | None = None
+
+
+@router.post(
+    "/workspaces/{workspace_id}/billing/checkout/team",
+    response_model=NeutralCheckoutResponse,
+    summary="Create a provider-neutral Team checkout (routes to the configured provider)",
+)
+def create_team_checkout(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NeutralCheckoutResponse:
+    """Create a Team checkout using ONLY server-computed values — the
+    client never supplies a price ID, plan, or seat count (message-2 spec
+    item 10). Success/cancel URLs are built entirely server-side from
+    ``settings.effective_frontend_url`` — never accepted from the client,
+    closing off any open-redirect vector."""
+    _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+
+    provider = provider_for_checkout(workspace_id, db)  # type: ignore[arg-type]
+    adapter = get_adapter_for_provider(provider, db)
+
+    billable_seats = calculate_billable_member_count(workspace_id, db)  # type: ignore[arg-type]
+    frontend_url = settings.effective_frontend_url
+    request = NeutralCheckoutRequest(
+        workspace_id=workspace_id,  # type: ignore[arg-type]
+        plan_id=PlanId.TEAM,
+        billing_interval=BillingInterval.MONTH,
+        billable_seat_count=billable_seats,
+        success_url=f"{frontend_url}/settings/workspace/billing?checkout=success",
+        cancel_url=f"{frontend_url}/settings/workspace/billing?checkout=canceled",
+        customer_email=current_user.email,
+        idempotency_reference=f"{workspace_id}:{uuid_module.uuid4()}",
+    )
+    response = adapter.create_checkout(request)
+    return NeutralCheckoutResponse(
+        provider=response.provider.value, checkout_url=response.checkout_url,
+        external_reference=response.external_reference,
+    )
+
+
+class NeutralSubscriptionResponse(BaseModel):
+    provider: str | None
+    plan_id: str
+    status: str
+    billable_seats: int
+    additional_seat_quantity: int
+    cancel_at_period_end: bool
+    current_period_end: str | None = None
+    has_paid_access: bool
+    grace_period_end: str | None = None
+
+
+@router.get(
+    "/workspaces/{workspace_id}/billing/subscription",
+    response_model=NeutralSubscriptionResponse,
+    summary="Get the provider-neutral current subscription + entitlement state",
+)
+def get_current_subscription(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NeutralSubscriptionResponse:
+    """Never exposes provider technical IDs (subscription/customer
+    references) — only provider-neutral, display-safe fields."""
+    _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+
+    from app.billing.entitlements import decide_entitlements, normalize_stripe_status
+    from app.billing.paddle_webhook_service import normalize_paddle_status
+
+    sub = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == workspace_id)
+        .first()
+    )
+    if sub is None:
+        return NeutralSubscriptionResponse(
+            provider=None, plan_id="free", status="active", billable_seats=0,
+            additional_seat_quantity=0, cancel_at_period_end=False, has_paid_access=False,
+        )
+
+    normalizer = normalize_paddle_status if sub.provider == "paddle" else normalize_stripe_status
+    normalized_status = normalizer(sub.status)
+    decision = decide_entitlements(
+        plan_id=PlanId(sub.plan_id) if sub.plan_id in ("free", "team") else PlanId.FREE,
+        status=normalized_status,
+        grace_period_end=sub.grace_period_end,
+        source_provider=BillingProvider(sub.provider),
+    )
+    return NeutralSubscriptionResponse(
+        provider=sub.provider,
+        plan_id=decision.plan_id.value,
+        status=normalized_status.value,
+        billable_seats=sub.billable_seats,
+        additional_seat_quantity=sub.additional_seat_quantity,
+        cancel_at_period_end=sub.cancel_at_period_end,
+        current_period_end=sub.current_period_end.isoformat() if sub.current_period_end else None,
+        has_paid_access=decision.has_paid_access,
+        grace_period_end=sub.grace_period_end.isoformat() if sub.grace_period_end else None,
+    )
+
+
+@router.post(
+    "/workspaces/{workspace_id}/billing/management",
+    response_model=PortalResponse,
+    summary="Get a provider-neutral billing-management URL",
+)
+def get_management_url(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PortalResponse:
+    _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+    provider = provider_for_management(workspace_id, db)  # type: ignore[arg-type]
+    adapter = get_adapter_for_provider(provider, db)
+
+    if provider == BillingProvider.STRIPE:
+        billing = billing_service.get_or_create_billing(workspace_id, db)  # type: ignore[arg-type]
+        return PortalResponse(portal_url=billing_service.create_portal_session(billing=billing, db=db))
+
+    sub = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == workspace_id)
+        .first()
+    )
+    if sub is None or not sub.provider_customer_reference:
+        raise HTTPException(status_code=400, detail="No Paddle customer found. Please subscribe first.")
+
+    from app.billing.enums import ObjectType
+    from app.billing.provider import BillingProviderReference
+
+    response = adapter.create_portal(
+        PortalRequest(
+            workspace_id=workspace_id,  # type: ignore[arg-type]
+            customer_reference=BillingProviderReference(
+                provider=BillingProvider.PADDLE, object_type=ObjectType.CUSTOMER,
+                external_id=sub.provider_customer_reference, workspace_id=workspace_id,  # type: ignore[arg-type]
+            ),
+            return_url=f"{settings.effective_frontend_url}/settings/workspace/billing",
+        )
+    )
+    return PortalResponse(portal_url=response.management_url)
+
+
+class CancelResponse(BaseModel):
+    provider: str
+    state: str
+
+
+@router.post(
+    "/workspaces/{workspace_id}/billing/cancel",
+    response_model=CancelResponse,
+    summary="Cancel the current subscription at period end (provider-neutral)",
+)
+def cancel_current_subscription(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Default is cancel-at-period-end (message-2 spec item 25) — access
+    is preserved through the current paid period."""
+    _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+    provider = provider_for_management(workspace_id, db)  # type: ignore[arg-type]
+
+    if provider == BillingProvider.STRIPE:
+        raise HTTPException(
+            status_code=400,
+            detail="Stripe subscriptions are canceled via the Billing Portal, not this endpoint.",
+        )
+
+    sub = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == workspace_id)
+        .first()
+    )
+    if sub is None or not sub.provider_subscription_reference:
+        raise HTTPException(status_code=400, detail="No active subscription found.")
+
+    from app.billing.enums import ObjectType
+    from app.billing.provider import BillingProviderReference
+
+    adapter = get_adapter_for_provider(provider, db)
+    result = adapter.cancel_subscription(
+        CancelSubscriptionRequest(
+            subscription_reference=BillingProviderReference(
+                provider=BillingProvider.PADDLE, object_type=ObjectType.SUBSCRIPTION,
+                external_id=sub.provider_subscription_reference, workspace_id=workspace_id,  # type: ignore[arg-type]
+            ),
+            cancel_at_period_end=True,
+        )
+    )
+    sub.cancel_at_period_end = True
+    db.commit()
+    return CancelResponse(provider=provider.value, state=result.state)
+
+
+class ReconcileResponse(BaseModel):
+    updated: bool
+    seat_update_applied: bool
+    new_status: str
+    reason: str
+
+
+@router.post(
+    "/workspaces/{workspace_id}/billing/reconcile",
+    response_model=ReconcileResponse,
+    summary="Manually trigger seat/subscription reconciliation against Paddle (admin only)",
+)
+def trigger_reconciliation(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ReconcileResponse:
+    """Manually invokable reconciliation (message-2 spec item 29) — no
+    background scheduler is created; this is the operation a future
+    scheduled job (or an operator) would call."""
+    _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+    provider = provider_for_management(workspace_id, db)  # type: ignore[arg-type]
+    if provider != BillingProvider.PADDLE:
+        raise HTTPException(status_code=400, detail="Reconciliation is only implemented for Paddle subscriptions.")
+
+    adapter = get_adapter_for_provider(provider, db)
+    result = reconcile_workspace_subscription(workspace_id, adapter, db)  # type: ignore[arg-type]
+    db.commit()
+    return ReconcileResponse(
+        updated=result.updated, seat_update_applied=result.seat_update_applied,
+        new_status=result.new_status, reason=result.reason,
+    )

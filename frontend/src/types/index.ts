@@ -1171,6 +1171,10 @@ export interface WorkspaceBilling {
   stripe_configured: boolean;
   stripe_mode: "test" | "live" | "not_configured";
   stripe_events_configured: boolean;
+  // Commercial Infrastructure message 2: which provider a NEW checkout
+  // uses right now — "stripe" | "paddle". Never implies anything about an
+  // EXISTING subscription's provider.
+  checkout_provider: "stripe" | "paddle";
 }
 
 // ── M58.8: Change Notes ───────────────────────────────────────────────────────

@@ -2293,6 +2293,30 @@ export async function getTeamPricingPreview(
 }
 
 /**
+ * Provider-neutral Team checkout (Commercial Infrastructure message 2).
+ * Routes to whichever provider is currently configured for new checkouts
+ * (`BillingResponse.checkout_provider`) — the backend computes plan,
+ * seat count, and pricing entirely server-side; the client never sends a
+ * price ID or seat count.
+ */
+export interface TeamCheckoutResponse {
+  provider: string;
+  checkout_url: string;
+  external_reference: string | null;
+}
+
+export async function createTeamCheckout(
+  workspaceId: string,
+  token?: string | null,
+): Promise<TeamCheckoutResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/billing/checkout/team`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    token,
+  });
+}
+
+/**
  * Create a Stripe Checkout session to upgrade a workspace.
  * Returns the Stripe-hosted checkout URL.
  * The frontend redirects to this URL; no card details touch our servers.

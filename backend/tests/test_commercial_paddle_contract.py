@@ -1,8 +1,14 @@
-"""Paddle adapter contract tests (Commercial Infrastructure message 1).
+"""Paddle adapter contract tests (Commercial Infrastructure message 1,
+updated for message 2's real implementation).
 
 No live Paddle API call is made anywhere in this file — every assertion
-verifies the ADAPTER SHAPE and its typed not-configured /
-unsupported-before-M2 states, never real Paddle behavior.
+verifies the ADAPTER SHAPE and its typed not-configured state. Real,
+mocked-HTTP behavior for a fully configured adapter (price mapping +
+client) is covered by the dedicated message-2 test files
+(``test_commercial_paddle_checkout.py``,
+``test_commercial_paddle_management.py``,
+``test_commercial_paddle_subscription_items.py``, etc.) — this file
+stays focused on the not-configured / shape-level contract.
 """
 
 from __future__ import annotations
@@ -15,7 +21,6 @@ from app.billing.adapters.paddle import (
     PaddleBillingAdapter,
     PaddleNotConfiguredError,
     PaddlePriceMapping,
-    PaddleUnsupportedBeforeM2Error,
 )
 from app.billing.enums import BillingInterval, BillingProvider, ObjectType, PlanId
 from app.billing.provider import (
@@ -87,51 +92,59 @@ class TestAdapterNotConfigured:
             adapter.get_subscription(_reference())
 
 
-class TestAdapterConfiguredButUnsupported:
+class TestPriceMappingConfiguredButNoClient:
+    """A price mapping alone (message-1 state) is NOT sufficient for
+    message 2's real adapter — it also requires an API client
+    (constructed by the registry from PADDLE_API_KEY). Every operation
+    still raises the SAME typed not-configured error either way — the
+    caller-visible contract does not change based on which half is
+    missing."""
+
     @pytest.fixture
-    def configured_adapter(self):
+    def mapping_only_adapter(self):
         return PaddleBillingAdapter(
-            PaddlePriceMapping(environment="sandbox", base_price_id="pri_base", additional_seat_price_id="pri_seat")
+            PaddlePriceMapping(environment="sandbox", base_price_id="pri_base", additional_seat_price_id="pri_seat"),
+            client=None,
         )
 
-    def test_create_checkout_raises_unsupported(self, configured_adapter):
-        with pytest.raises(PaddleUnsupportedBeforeM2Error):
-            configured_adapter.create_checkout(_checkout_request())
+    def test_create_checkout_raises_not_configured(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.create_checkout(_checkout_request())
 
-    def test_create_portal_raises_unsupported(self, configured_adapter):
-        with pytest.raises(PaddleUnsupportedBeforeM2Error):
-            configured_adapter.create_portal(
+    def test_create_portal_raises_not_configured(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.create_portal(
                 PortalRequest(
                     workspace_id=uuid.uuid4(), customer_reference=_reference(),
                     return_url="https://app.example.test/billing",
                 )
             )
 
-    def test_get_customer_raises_unsupported(self, configured_adapter):
-        with pytest.raises(PaddleUnsupportedBeforeM2Error):
-            configured_adapter.get_customer(_reference())
+    def test_get_customer_raises_not_configured(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.get_customer(_reference())
 
-    def test_get_subscription_raises_unsupported(self, configured_adapter):
-        with pytest.raises(PaddleUnsupportedBeforeM2Error):
-            configured_adapter.get_subscription(_reference())
+    def test_get_subscription_raises_not_configured(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.get_subscription(_reference())
 
-    def test_parse_webhook_raises_unsupported(self, configured_adapter):
-        with pytest.raises(PaddleUnsupportedBeforeM2Error):
-            configured_adapter.parse_webhook({}, b"{}")
+    def test_parse_webhook_raises_not_configured_when_no_secret(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.parse_webhook({}, b"{}")
 
-    def test_reconcile_raises_unsupported(self, configured_adapter):
-        with pytest.raises(PaddleUnsupportedBeforeM2Error):
-            configured_adapter.reconcile(_reference())
+    def test_reconcile_raises_not_configured(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.reconcile(_reference())
 
-    def test_update_subscription_returns_typed_result_not_exception(self, configured_adapter):
-        result = configured_adapter.update_subscription(
-            SubscriptionUpdateRequest(subscription_reference=_reference(), billable_seat_count=25, reason="member_added")
-        )
-        assert result.state == "unsupported_before_m2"
+    def test_update_subscription_raises_not_configured(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.update_subscription(
+                SubscriptionUpdateRequest(subscription_reference=_reference(), billable_seat_count=25, reason="member_added")
+            )
 
-    def test_cancel_subscription_returns_typed_result_not_exception(self, configured_adapter):
-        result = configured_adapter.cancel_subscription(CancelSubscriptionRequest(subscription_reference=_reference()))
-        assert result.state == "unsupported_before_m2"
+    def test_cancel_subscription_raises_not_configured(self, mapping_only_adapter):
+        with pytest.raises(PaddleNotConfiguredError):
+            mapping_only_adapter.cancel_subscription(CancelSubscriptionRequest(subscription_reference=_reference()))
 
 
 class TestNeverFallsBackToStripe:

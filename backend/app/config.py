@@ -121,17 +121,29 @@ class Settings(BaseSettings):
     # these fields exist only so message 2 can populate them without a
     # settings-schema change.
     #
-    # "sandbox" | "live" — never assume sandbox and live values are
-    # interchangeable (message-1 spec item 36).
+    # "sandbox" | "production" — never assume sandbox and live values are
+    # interchangeable (message-1 spec item 36; message-2 spec item 4).
     PADDLE_ENVIRONMENT: Optional[str] = None
     # Paddle API key — backend only, NEVER exposed to the frontend, NEVER logged.
     PADDLE_API_KEY: Optional[str] = None
     # Paddle webhook/notification signing secret — backend only.
     PADDLE_WEBHOOK_SECRET: Optional[str] = None
     # Paddle recurring price ID for the Team base ($30/month, up to 20 seats) item.
-    PADDLE_BASE_PRICE_ID: Optional[str] = None
+    # PADDLE_TEAM_BASE_PRICE_ID is the message-2 canonical name;
+    # PADDLE_BASE_PRICE_ID (message-1 name) is kept as an alias — same
+    # multi-alias pattern already used for STRIPE_PRICE_TEAM_MONTHLY.
+    PADDLE_TEAM_BASE_PRICE_ID: Optional[str] = None
+    PADDLE_BASE_PRICE_ID: Optional[str] = None  # alias (message-1 name)
     # Paddle recurring price ID for the Team additional-seat ($5/month) item.
-    PADDLE_ADDITIONAL_SEAT_PRICE_ID: Optional[str] = None
+    PADDLE_TEAM_ADDITIONAL_SEAT_PRICE_ID: Optional[str] = None
+    PADDLE_ADDITIONAL_SEAT_PRICE_ID: Optional[str] = None  # alias (message-1 name)
+
+    # ── Commercial Infrastructure message 2 — Paddle billing integration ────
+    #
+    # Number of days a past_due subscription retains paid access before
+    # entitlements downgrade to free. A single, named setting — never a
+    # magic number duplicated across files (message-2 spec item 28).
+    BILLING_GRACE_PERIOD_DAYS: int = 7
 
     # ── Required for Milestone 31 (GitHub App integration) ──────────────────
     # GitHub App numeric ID — shown on the App settings page.
@@ -283,6 +295,51 @@ class Settings(BaseSettings):
             return False
         placeholders = ("replace-with", "CHANGE_ME", "whsec_replace_me")
         return not any(p in secret for p in placeholders)
+
+    @property
+    def effective_paddle_team_base_price_id(self) -> Optional[str]:
+        """Resolve the Team base price ID from either supported name.
+
+        Priority: PADDLE_TEAM_BASE_PRICE_ID (message-2 canonical) →
+        PADDLE_BASE_PRICE_ID (message-1 alias).
+        """
+        return self.PADDLE_TEAM_BASE_PRICE_ID or self.PADDLE_BASE_PRICE_ID or None
+
+    @property
+    def effective_paddle_team_additional_seat_price_id(self) -> Optional[str]:
+        """Resolve the Team additional-seat price ID from either supported name."""
+        return self.PADDLE_TEAM_ADDITIONAL_SEAT_PRICE_ID or self.PADDLE_ADDITIONAL_SEAT_PRICE_ID or None
+
+    @property
+    def paddle_environment_normalized(self) -> str:
+        """Return "sandbox" | "production" | "not_configured".
+
+        Any value not exactly "sandbox" or "production" is treated as
+        not_configured — never guessed from a key prefix, since Paddle API
+        keys/tokens do not carry an unambiguous, documented sandbox/live
+        prefix the way Stripe's sk_test_/sk_live_ do (message-2 spec item 4:
+        "sandbox token prefixes are accepted only in sandbox" is enforced at
+        the credential-format-validation layer in app.billing.paddle_config,
+        not by prefix-sniffing here).
+        """
+        env = (self.PADDLE_ENVIRONMENT or "").strip().lower()
+        if env in ("sandbox", "production"):
+            return env
+        return "not_configured"
+
+    @property
+    def is_paddle_configured(self) -> bool:
+        """True when environment, API key, both price IDs, and webhook
+        secret are all present. Does NOT validate their format — see
+        app.billing.paddle_config.validate_paddle_configuration for the
+        fail-closed format/environment-consistency checks."""
+        return bool(
+            self.paddle_environment_normalized != "not_configured"
+            and self.PADDLE_API_KEY
+            and self.PADDLE_WEBHOOK_SECRET
+            and self.effective_paddle_team_base_price_id
+            and self.effective_paddle_team_additional_seat_price_id
+        )
 
     @property
     def effective_frontend_url(self) -> str:
