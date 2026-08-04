@@ -68,7 +68,11 @@ class TestUnknownProviderRejected:
     def test_unknown_provider_string_raises(self, db_session, monkeypatch):
         from app import config
 
-        monkeypatch.setattr(config.settings, "BILLING_PROVIDER", "dodo")
+        # NOTE: "dodo" used to be this test's example of an unhandled
+        # provider string — it is now a real, registered BillingProvider
+        # (see test_commercial_dodo_* for its own coverage), so this test
+        # uses a genuinely unknown string instead.
+        monkeypatch.setattr(config.settings, "BILLING_PROVIDER", "totally_unknown_provider_xyz")
         with pytest.raises(UnknownBillingProviderError):
             get_billing_provider(db_session)
 

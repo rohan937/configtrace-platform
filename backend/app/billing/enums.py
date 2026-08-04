@@ -15,10 +15,15 @@ class BillingProvider(str, enum.Enum):
     """The bounded set of billing providers this codebase knows how to
     adapt to. Paddle is the target/replacement provider; Stripe remains a
     supported compatibility adapter during migration (message 1) and is
-    removed only after the message-2+ cutover and rollback window."""
+    removed only after the message-2+ cutover and rollback window. Dodo
+    Payments (Commercial Infrastructure — Dodo message 1) is a THIRD,
+    independent adapter — added for Test Mode implementation only; it does
+    not change the ``BILLING_PROVIDER`` default and is never routed to in
+    any deployed environment by this change."""
 
     STRIPE = "stripe"
     PADDLE = "paddle"
+    DODO = "dodo"
 
 
 class BillingInterval(str, enum.Enum):
@@ -32,10 +37,15 @@ class BillingInterval(str, enum.Enum):
 
 
 class PlanId(str, enum.Enum):
-    """Stable internal plan identity. Never a Paddle or Stripe product ID —
-    those are external references mapped via ``BillingProviderReference``."""
+    """Stable internal plan identity. Never a Paddle, Stripe, or Dodo
+    product ID — those are external references mapped via
+    ``BillingProviderReference``. PRO was added alongside the Dodo Payments
+    integration (flat $10/month, no seat component) — see
+    ``app.billing.plans.PRO_PLAN`` and ``app.billing.pricing`` for its
+    canonical definition. Adding it does not change FREE or TEAM behavior."""
 
     FREE = "free"
+    PRO = "pro"
     TEAM = "team"
 
 

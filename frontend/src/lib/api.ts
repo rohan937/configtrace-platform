@@ -2317,6 +2317,22 @@ export async function createTeamCheckout(
 }
 
 /**
+ * Provider-neutral Pro checkout (Dodo Payments message 1). Same shape and
+ * server-side-computed contract as `createTeamCheckout` — the client
+ * never sends a price ID or plan; the backend computes everything.
+ */
+export async function createProCheckout(
+  workspaceId: string,
+  token?: string | null,
+): Promise<TeamCheckoutResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/billing/checkout/pro`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    token,
+  });
+}
+
+/**
  * Create a Stripe Checkout session to upgrade a workspace.
  * Returns the Stripe-hosted checkout URL.
  * The frontend redirects to this URL; no card details touch our servers.

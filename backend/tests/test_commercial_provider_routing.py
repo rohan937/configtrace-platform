@@ -113,3 +113,58 @@ class TestManagementFallsBackToConfiguredWhenNoSubscription:
 
         monkeypatch.setattr(config.settings, "BILLING_PROVIDER", "paddle")
         assert provider_for_management(workspace.id, db_session) == BillingProvider.PADDLE
+
+
+class TestDodoProviderRouting:
+    """Dodo Payments message 1 — proves Dodo participates in the exact
+    same stored-provider-wins invariant as Stripe/Paddle, and that
+    BILLING_PROVIDER stays at its unchanged default (never "dodo") unless
+    a test explicitly overrides it."""
+
+    def test_billing_provider_default_is_still_stripe_not_dodo(self, monkeypatch):
+        from app import config
+
+        # Simulates an unconfigured/default environment — this message
+        # never sets BILLING_PROVIDER=dodo anywhere.
+        monkeypatch.setattr(config.settings, "BILLING_PROVIDER", "stripe")
+        assert configured_checkout_provider() == BillingProvider.STRIPE
+
+    def test_configured_checkout_provider_can_resolve_to_dodo_when_set(self, monkeypatch):
+        from app import config
+
+        monkeypatch.setattr(config.settings, "BILLING_PROVIDER", "dodo")
+        assert configured_checkout_provider() == BillingProvider.DODO
+
+    def test_dodo_subscription_routes_to_dodo_even_if_global_default_is_stripe(
+        self, db_session, workspace, monkeypatch
+    ):
+        from app import config
+
+        sub = NormalizedSubscription(workspace_id=workspace.id, provider="dodo", plan_id="team", status="active")
+        db_session.add(sub)
+        db_session.commit()
+
+        monkeypatch.setattr(config.settings, "BILLING_PROVIDER", "stripe")
+        assert provider_for_management(workspace.id, db_session) == BillingProvider.DODO
+
+    def test_stripe_and_paddle_subscriptions_unaffected_by_dodo_existing(
+        self, db_session, workspace, monkeypatch
+    ):
+        """The critical regression guard: adding Dodo as a third provider
+        must not change routing for an existing Stripe subscription, even
+        when the global default is flipped to "dodo"."""
+        from app import config
+
+        sub = NormalizedSubscription(workspace_id=workspace.id, provider="stripe", plan_id="team", status="active")
+        db_session.add(sub)
+        db_session.commit()
+
+        for global_default in ("stripe", "paddle", "dodo"):
+            monkeypatch.setattr(config.settings, "BILLING_PROVIDER", global_default)
+            assert provider_for_management(workspace.id, db_session) == BillingProvider.STRIPE
+
+    def test_reconciliation_provider_matches_stored_dodo_subscription(self, db_session, workspace):
+        sub = NormalizedSubscription(workspace_id=workspace.id, provider="dodo", plan_id="team", status="active")
+        db_session.add(sub)
+        db_session.commit()
+        assert provider_for_reconciliation(workspace.id, db_session) == BillingProvider.DODO

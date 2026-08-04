@@ -237,6 +237,38 @@ class NeutralCheckoutResponse(BaseModel):
     external_reference: str | None = None
 
 
+def _create_plan_checkout(
+    plan_id: PlanId, workspace_id: uuid.UUID, db: Session, current_user: User
+) -> NeutralCheckoutResponse:
+    """Shared, provider-neutral checkout builder for any billing-available
+    plan (Dodo Payments message 1 — generalized from the Team-only helper
+    that used to live inline in ``create_team_checkout``). The client never
+    supplies a price ID, plan, or seat count (message-2 spec item 10);
+    success/cancel URLs are built entirely server-side from
+    ``settings.effective_frontend_url``, never accepted from the client."""
+    provider = provider_for_checkout(workspace_id, db)
+    adapter = get_adapter_for_provider(provider, db)
+
+    billable_seats = calculate_billable_member_count(workspace_id, db)
+    frontend_url = settings.effective_frontend_url
+    request = NeutralCheckoutRequest(
+        workspace_id=workspace_id,
+        plan_id=plan_id,
+        billing_interval=BillingInterval.MONTH,
+        billable_seat_count=billable_seats,
+        success_url=f"{frontend_url}/settings/workspace/billing?checkout=success",
+        cancel_url=f"{frontend_url}/settings/workspace/billing?checkout=canceled",
+        customer_email=current_user.email,
+        idempotency_reference=f"{workspace_id}:{uuid_module.uuid4()}",
+        configtrace_user_id=current_user.id,
+    )
+    response = adapter.create_checkout(request)
+    return NeutralCheckoutResponse(
+        provider=response.provider.value, checkout_url=response.checkout_url,
+        external_reference=response.external_reference,
+    )
+
+
 @router.post(
     "/workspaces/{workspace_id}/billing/checkout/team",
     response_model=NeutralCheckoutResponse,
@@ -247,33 +279,22 @@ def create_team_checkout(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> NeutralCheckoutResponse:
-    """Create a Team checkout using ONLY server-computed values — the
-    client never supplies a price ID, plan, or seat count (message-2 spec
-    item 10). Success/cancel URLs are built entirely server-side from
-    ``settings.effective_frontend_url`` — never accepted from the client,
-    closing off any open-redirect vector."""
     _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+    return _create_plan_checkout(PlanId.TEAM, workspace_id, db, current_user)  # type: ignore[arg-type]
 
-    provider = provider_for_checkout(workspace_id, db)  # type: ignore[arg-type]
-    adapter = get_adapter_for_provider(provider, db)
 
-    billable_seats = calculate_billable_member_count(workspace_id, db)  # type: ignore[arg-type]
-    frontend_url = settings.effective_frontend_url
-    request = NeutralCheckoutRequest(
-        workspace_id=workspace_id,  # type: ignore[arg-type]
-        plan_id=PlanId.TEAM,
-        billing_interval=BillingInterval.MONTH,
-        billable_seat_count=billable_seats,
-        success_url=f"{frontend_url}/settings/workspace/billing?checkout=success",
-        cancel_url=f"{frontend_url}/settings/workspace/billing?checkout=canceled",
-        customer_email=current_user.email,
-        idempotency_reference=f"{workspace_id}:{uuid_module.uuid4()}",
-    )
-    response = adapter.create_checkout(request)
-    return NeutralCheckoutResponse(
-        provider=response.provider.value, checkout_url=response.checkout_url,
-        external_reference=response.external_reference,
-    )
+@router.post(
+    "/workspaces/{workspace_id}/billing/checkout/pro",
+    response_model=NeutralCheckoutResponse,
+    summary="Create a provider-neutral Pro checkout (routes to the configured provider)",
+)
+def create_pro_checkout(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NeutralCheckoutResponse:
+    _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
+    return _create_plan_checkout(PlanId.PRO, workspace_id, db, current_user)  # type: ignore[arg-type]
 
 
 class NeutralSubscriptionResponse(BaseModel):
@@ -316,10 +337,17 @@ def get_current_subscription(
             additional_seat_quantity=0, cancel_at_period_end=False, has_paid_access=False,
         )
 
-    normalizer = normalize_paddle_status if sub.provider == "paddle" else normalize_stripe_status
+    if sub.provider == "paddle":
+        normalizer = normalize_paddle_status
+    elif sub.provider == "dodo":
+        from app.billing.dodo_webhook_service import normalize_dodo_status
+
+        normalizer = normalize_dodo_status
+    else:
+        normalizer = normalize_stripe_status
     normalized_status = normalizer(sub.status)
     decision = decide_entitlements(
-        plan_id=PlanId(sub.plan_id) if sub.plan_id in ("free", "team") else PlanId.FREE,
+        plan_id=PlanId(sub.plan_id) if sub.plan_id in ("free", "pro", "team") else PlanId.FREE,
         status=normalized_status,
         grace_period_end=sub.grace_period_end,
         source_provider=BillingProvider(sub.provider),
@@ -361,7 +389,7 @@ def get_management_url(
         .first()
     )
     if sub is None or not sub.provider_customer_reference:
-        raise HTTPException(status_code=400, detail="No Paddle customer found. Please subscribe first.")
+        raise HTTPException(status_code=400, detail="No customer found. Please subscribe first.")
 
     from app.billing.enums import ObjectType
     from app.billing.provider import BillingProviderReference
@@ -370,7 +398,7 @@ def get_management_url(
         PortalRequest(
             workspace_id=workspace_id,  # type: ignore[arg-type]
             customer_reference=BillingProviderReference(
-                provider=BillingProvider.PADDLE, object_type=ObjectType.CUSTOMER,
+                provider=provider, object_type=ObjectType.CUSTOMER,
                 external_id=sub.provider_customer_reference, workspace_id=workspace_id,  # type: ignore[arg-type]
             ),
             return_url=f"{settings.effective_frontend_url}/settings/workspace/billing",
@@ -420,7 +448,7 @@ def cancel_current_subscription(
     result = adapter.cancel_subscription(
         CancelSubscriptionRequest(
             subscription_reference=BillingProviderReference(
-                provider=BillingProvider.PADDLE, object_type=ObjectType.SUBSCRIPTION,
+                provider=provider, object_type=ObjectType.SUBSCRIPTION,
                 external_id=sub.provider_subscription_reference, workspace_id=workspace_id,  # type: ignore[arg-type]
             ),
             cancel_at_period_end=True,

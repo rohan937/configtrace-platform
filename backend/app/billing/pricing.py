@@ -37,13 +37,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.billing.enums import BillingInterval
+from app.billing.enums import BillingInterval, PlanId
 
 # ── Team pricing constants (message 1) ──────────────────────────────────────
 #
-# Never hardcode a Paddle or Stripe price ID here — these are internal,
-# provider-neutral amounts. Provider-specific price IDs are mapped
-# separately (see app.billing.plans / app.billing.adapters.paddle).
+# Never hardcode a Paddle, Stripe, or Dodo price/product ID here — these are
+# internal, provider-neutral amounts. Provider-specific catalog IDs are
+# mapped separately (see app.billing.plans / app.billing.adapters.*).
+#
+# THE canonical Team formula (never duplicate this elsewhere — see the
+# "stale legacy pricing" note below):
+#
+#     monthly_total_cents = 3000 + max(0, billable_member_count - 20) * 500
 
 TEAM_BASE_MONTHLY_CENTS = 3000
 TEAM_INCLUDED_SEATS = 20
@@ -52,6 +57,29 @@ TEAM_CURRENCY = "USD"
 
 TEAM_BASE_COMPONENT_ID = "team_base_monthly"
 TEAM_ADDITIONAL_SEAT_COMPONENT_ID = "team_additional_seat_monthly"
+
+# ── Pro pricing constants (Dodo Payments message 1) ─────────────────────────
+#
+# Pro is a flat monthly price — no seat component, no included-member
+# concept. $10.00/month = 1000 minor units (cents).
+PRO_MONTHLY_CENTS = 1000
+PRO_CURRENCY = "USD"
+PRO_COMPONENT_ID = "pro_monthly"
+
+# ── Stale legacy pricing warning ─────────────────────────────────────────────
+#
+# THIS is the canonical, provider-neutral Team price ($30 base). A SEPARATE,
+# older, Stripe-only pricing table exists at
+# ``app.services.billing_service.PLAN_LIMITS`` with a stale Team price of
+# $40/month (no seat-based component) — that table predates this
+# provider-neutral domain (Commercial Infrastructure message 1) and must
+# NEVER be imported by, or its values copied into, any Dodo-related module.
+# ``app.billing.adapters.dodo`` and every other Dodo module in this package
+# import ONLY from this file for pricing — never from
+# ``app.services.billing_service``. This is enforced by
+# ``tests/test_commercial_dodo_no_legacy_billing_service.py``, which greps
+# every ``app/billing/*dodo*`` file for a forbidden
+# ``billing_service``/``PLAN_LIMITS`` reference.
 
 
 class NegativeMemberCountError(ValueError):
@@ -170,3 +198,60 @@ def calculate_team_monthly_price(billable_member_count: int) -> PricingBreakdown
         total_amount_cents=total_amount_cents,
         components=components,
     )
+
+
+def calculate_pro_monthly_price(billable_member_count: int = 0) -> PricingBreakdown:
+    """Pure, deterministic Pro monthly pricing calculation.
+
+    Pro is a FLAT $10.00/month (1000 minor units) — never seat-based.
+    ``billable_member_count`` is accepted only so this function has the
+    same call signature as ``calculate_team_monthly_price`` (needed for
+    ``calculate_price_for_plan`` below to dispatch generically); it never
+    affects the returned price. A negative count is still rejected — the
+    same "never silently coerce" rule applies regardless of plan.
+    """
+    if billable_member_count < 0:
+        raise NegativeMemberCountError(
+            f"billable_member_count must be >= 0, got {billable_member_count!r}"
+        )
+
+    components = (
+        PriceComponent(
+            component_id=PRO_COMPONENT_ID,
+            unit_amount_cents=PRO_MONTHLY_CENTS,
+            quantity=1,
+            currency=PRO_CURRENCY,
+        ),
+    )
+    return PricingBreakdown(
+        currency=PRO_CURRENCY,
+        interval=BillingInterval.MONTH,
+        billable_members=billable_member_count,
+        included_members=0,
+        additional_members=0,
+        base_amount_cents=PRO_MONTHLY_CENTS,
+        additional_seat_amount_cents=0,
+        total_amount_cents=PRO_MONTHLY_CENTS,
+        components=components,
+    )
+
+
+class UnpricedPlanError(ValueError):
+    """Raised when ``calculate_price_for_plan`` is asked to price a plan
+    with no billing-available pricing function (e.g. FREE, which has no
+    external checkout and is never priced through this path)."""
+
+
+def calculate_price_for_plan(plan_id: PlanId, billable_member_count: int) -> PricingBreakdown:
+    """Generic, provider-neutral pricing dispatcher — the single entry
+    point checkout code should call regardless of which paid plan is being
+    priced. Dispatches to the plan's own pure pricing function; never
+    re-implements either formula itself, so ``calculate_team_monthly_price``
+    (seat-based) and ``calculate_pro_monthly_price`` (flat) each remain the
+    single source of truth for their own plan.
+    """
+    if plan_id == PlanId.TEAM:
+        return calculate_team_monthly_price(billable_member_count)
+    if plan_id == PlanId.PRO:
+        return calculate_pro_monthly_price(billable_member_count)
+    raise UnpricedPlanError(f"{plan_id!r} has no external checkout price (FREE is never priced here).")

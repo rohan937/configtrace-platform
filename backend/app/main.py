@@ -16,6 +16,7 @@ from app.routers.settings import router as settings_router
 from app.routers.slack_oauth import router as slack_oauth_router
 from app.routers.stripe_webhook import router as stripe_webhook_router
 from app.routers.paddle_webhook import router as paddle_webhook_router
+from app.routers.dodo_webhook import router as dodo_webhook_router
 from app.routers.syncs import router as syncs_router
 from app.routers.workspaces import router as workspaces_router
 
@@ -57,6 +58,7 @@ app.include_router(changes_router)        # prefix="/changes"
 app.include_router(resources_router)      # prefix="/resources"
 app.include_router(stripe_webhook_router) # prefix="/stripe"              (M52)
 app.include_router(paddle_webhook_router) # prefix="/paddle"              (Commercial Infra M2)
+app.include_router(dodo_webhook_router)   # prefix="/dodo"                (Dodo Payments M1, Test Mode)
 app.include_router(slack_oauth_router)    # prefix="/slack"               (M58.5)
 app.include_router(security_router)        # prefix="/security"            (M60.3)
 

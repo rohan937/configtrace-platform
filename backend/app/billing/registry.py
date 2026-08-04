@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.billing.adapters.dodo import DodoBillingAdapter, DodoCatalogMapping, DodoNotConfiguredError
 from app.billing.adapters.paddle import PaddleBillingAdapter, PaddleNotConfiguredError, PaddlePriceMapping
 from app.billing.adapters.stripe import StripeBillingAdapter
+from app.billing.dodo_client import DodoAPIClient, DodoClientConfig
 from app.billing.enums import BillingProvider
 from app.billing.paddle_client import PaddleAPIClient, PaddleClientConfig
 from app.billing.provider import BillingProviderAdapter
@@ -58,6 +60,35 @@ def _build_paddle_adapter() -> PaddleBillingAdapter:
     return PaddleBillingAdapter(mapping, client, webhook_secret=settings.PADDLE_WEBHOOK_SECRET)
 
 
+def _dodo_catalog_mapping() -> DodoCatalogMapping | None:
+    pro = settings.DODO_PRO_PRODUCT_ID
+    team = settings.DODO_TEAM_PRODUCT_ID
+    addon = settings.DODO_TEAM_ADDITIONAL_SEAT_ADDON_ID
+    if not pro and not team and not addon:
+        return None
+    env = settings.dodo_environment_normalized
+    return DodoCatalogMapping(
+        environment=env if env != "not_configured" else "test",
+        pro_product_id=pro,
+        team_product_id=team,
+        team_seat_addon_id=addon,
+    )
+
+
+def _build_dodo_adapter() -> DodoBillingAdapter:
+    mapping = _dodo_catalog_mapping()
+    client: DodoAPIClient | None = None
+    if mapping is not None and mapping.is_configured and settings.DODO_API_KEY:
+        env = settings.dodo_environment_normalized
+        client = DodoAPIClient(
+            DodoClientConfig(
+                environment=env if env != "not_configured" else "test",
+                api_key=settings.DODO_API_KEY,
+            )
+        )
+    return DodoBillingAdapter(mapping, client, webhook_secret=settings.DODO_WEBHOOK_SECRET)
+
+
 def get_billing_provider(
     db: Session, *, provider_override: BillingProvider | None = None
 ) -> BillingProviderAdapter:
@@ -90,6 +121,16 @@ def get_billing_provider(
             )
         return adapter
 
+    if provider == BillingProvider.DODO:
+        adapter = _build_dodo_adapter()
+        if not adapter.is_configured:
+            raise DodoNotConfiguredError(
+                "BILLING_PROVIDER=dodo but Dodo is not fully configured "
+                "(catalog mapping and/or DODO_API_KEY missing). "
+                "Refusing to silently fall back to another provider."
+            )
+        return adapter
+
     raise UnknownBillingProviderError(f"Unhandled billing provider: {provider!r}")
 
 
@@ -105,6 +146,14 @@ def get_adapter_for_provider(provider: BillingProvider, db: Session) -> BillingP
         if not adapter.is_configured:
             raise PaddleNotConfiguredError(
                 "This workspace's subscription is on Paddle, but Paddle is not "
+                "configured on this server — cannot manage it right now."
+            )
+        return adapter
+    if provider == BillingProvider.DODO:
+        adapter = _build_dodo_adapter()
+        if not adapter.is_configured:
+            raise DodoNotConfiguredError(
+                "This workspace's subscription is on Dodo, but Dodo is not "
                 "configured on this server — cannot manage it right now."
             )
         return adapter

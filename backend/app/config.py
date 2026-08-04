@@ -145,6 +145,31 @@ class Settings(BaseSettings):
     # magic number duplicated across files (message-2 spec item 28).
     BILLING_GRACE_PERIOD_DAYS: int = 7
 
+    # ── Dodo Payments message 1 — Test Mode only ─────────────────────────────
+    #
+    # ALL optional/unset by default. No Dodo product/customer/subscription/
+    # charge is created and no Dodo API is called unless BILLING_PROVIDER is
+    # explicitly set to "dodo" AND every field below is populated — this
+    # message does not change BILLING_PROVIDER's default ("stripe") in any
+    # deployed environment.
+    #
+    # "test" | "live" — verified base URLs: https://test.dodopayments.com /
+    # https://live.dodopayments.com. Never assume test and live credentials
+    # or catalog IDs are interchangeable.
+    DODO_ENVIRONMENT: Optional[str] = None
+    # Dodo API key — backend only, NEVER exposed to the frontend, NEVER logged.
+    DODO_API_KEY: Optional[str] = None
+    # Dodo webhook signing secret ("whsec_..." — Standard Webhooks format).
+    # Backend only, NEVER exposed to the frontend, NEVER logged.
+    DODO_WEBHOOK_SECRET: Optional[str] = None
+    # Dodo product ID for the Pro plan ($10/month flat recurring price).
+    DODO_PRO_PRODUCT_ID: Optional[str] = None
+    # Dodo product ID for the Team plan ($30/month base recurring price).
+    DODO_TEAM_PRODUCT_ID: Optional[str] = None
+    # Dodo add-on ID for the Team additional-seat charge ($5/month per seat
+    # above the 20 included in the Team base price).
+    DODO_TEAM_ADDITIONAL_SEAT_ADDON_ID: Optional[str] = None
+
     # ── Required for Milestone 31 (GitHub App integration) ──────────────────
     # GitHub App numeric ID — shown on the App settings page.
     GITHUB_APP_ID: Optional[str] = None
@@ -339,6 +364,37 @@ class Settings(BaseSettings):
             and self.PADDLE_WEBHOOK_SECRET
             and self.effective_paddle_team_base_price_id
             and self.effective_paddle_team_additional_seat_price_id
+        )
+
+    @property
+    def dodo_environment_normalized(self) -> str:
+        """Return "test" | "live" | "not_configured".
+
+        Any value not exactly "test" or "live" is treated as
+        not_configured — never guessed from a key format, since Dodo does
+        not document an unambiguous test/live credential-prefix convention
+        (verified during this message's research: test and live are two
+        entirely separate dashboards/API-key spaces, not a shared
+        namespace distinguished by prefix)."""
+        env = (self.DODO_ENVIRONMENT or "").strip().lower()
+        if env in ("test", "live"):
+            return env
+        return "not_configured"
+
+    @property
+    def is_dodo_configured(self) -> bool:
+        """True when environment, API key, both product IDs, the addon
+        ID, and the webhook secret are all present. Does NOT validate
+        their format — see
+        app.billing.dodo_config.validate_dodo_configuration for the
+        fail-closed format/consistency checks."""
+        return bool(
+            self.dodo_environment_normalized != "not_configured"
+            and self.DODO_API_KEY
+            and self.DODO_WEBHOOK_SECRET
+            and self.DODO_PRO_PRODUCT_ID
+            and self.DODO_TEAM_PRODUCT_ID
+            and self.DODO_TEAM_ADDITIONAL_SEAT_ADDON_ID
         )
 
     @property

@@ -9,6 +9,7 @@ import {
   getTeamPricingPreview,
   createCheckoutSession,
   createTeamCheckout,
+  createProCheckout,
   createPortalSession,
   type TeamPricingBreakdown,
 } from "@/lib/api";
@@ -662,6 +663,15 @@ export default function BillingPage() {
       return;
     }
 
+    // Pro or Team + Dodo-configured checkout path (Dodo Payments message 1,
+    // Test Mode). Dodo has no client-side SDK wired in this message — the
+    // backend-provided checkout_url is a plain hosted-page redirect, same
+    // shape as the existing Stripe path.
+    if ((plan === "pro" || plan === "team") && billing?.checkout_provider === "dodo") {
+      await handleDodoCheckout(plan);
+      return;
+    }
+
     // Existing Stripe path — unchanged (message-1/2 compatibility).
     if (CHECKOUT_FORCE_DISABLED || !billing?.stripe_configured) {
       setActionError(STRIPE_UNAVAILABLE_HELPER_TEXT);
@@ -727,6 +737,34 @@ export default function BillingPage() {
         return;
       }
       throw new Error("Paddle did not return a usable checkout.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to start checkout.";
+      setActionError(friendlyBillingError(msg));
+      setActionBusy(false);
+      checkoutInFlightRef.current = false;
+    }
+  }
+
+  async function handleDodoCheckout(plan: "pro" | "team") {
+    if (!selectedWorkspace) return;
+    checkoutInFlightRef.current = true;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const token = await getToken();
+      const { checkout_url } =
+        plan === "pro"
+          ? await createProCheckout(selectedWorkspace.id, token)
+          : await createTeamCheckout(selectedWorkspace.id, token);
+      if (!checkout_url) {
+        throw new Error("Dodo did not return a usable checkout.");
+      }
+      // Plain hosted-page redirect — no Dodo client-side SDK is loaded in
+      // this message (Phase 6 requirement 3: no frontend SDK unless
+      // required). The overlay/inline checkout SDK remains a documented
+      // future enhancement, same as this repo's own Paddle precedent
+      // started with a redirect-first approach.
+      window.location.href = checkout_url;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to start checkout.";
       setActionError(friendlyBillingError(msg));

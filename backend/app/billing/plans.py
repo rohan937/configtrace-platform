@@ -21,6 +21,8 @@ from dataclasses import dataclass
 
 from app.billing.enums import BillingInterval, PlanId
 from app.billing.pricing import (
+    PRO_CURRENCY,
+    PRO_MONTHLY_CENTS,
     TEAM_ADDITIONAL_SEAT_MONTHLY_CENTS,
     TEAM_BASE_MONTHLY_CENTS,
     TEAM_CURRENCY,
@@ -76,6 +78,29 @@ FREE_PLAN = Plan(
     currency=TEAM_CURRENCY,
 )
 
+PRO_PLAN = Plan(
+    plan_id=PlanId.PRO,
+    display_name="Pro",
+    billing_available=True,
+    # Entitlement values copied exactly from the existing, already-enforced
+    # ``app.services.billing_service.PLAN_LIMITS["pro"]`` bundle — this is
+    # the SAME audit discipline message-1 applied when TEAM_PLAN's
+    # entitlements were copied from that legacy table. Only the PRICE is
+    # canonicalized here ($10/month flat, via app.billing.pricing); the
+    # legacy table's own trial-days concept is not part of this
+    # provider-neutral domain and is intentionally not carried over.
+    entitlements=EntitlementBundle(
+        max_integrations=20,
+        max_members=5,
+        min_sync_interval_minutes=15,
+        history_retention_days=180,
+        includes_workspace_audit_logs=False,
+    ),
+    supported_intervals=(BillingInterval.MONTH,),
+    pricing_strategy="flat",
+    currency=PRO_CURRENCY,
+)
+
 TEAM_PLAN = Plan(
     plan_id=PlanId.TEAM,
     display_name="Team",
@@ -98,12 +123,22 @@ TEAM_PLAN = Plan(
 
 PLANS: dict[PlanId, Plan] = {
     PlanId.FREE: FREE_PLAN,
+    PlanId.PRO: PRO_PLAN,
     PlanId.TEAM: TEAM_PLAN,
 }
 
 
 def get_plan(plan_id: PlanId) -> Plan:
     return PLANS[plan_id]
+
+
+def pro_pricing_summary() -> dict:
+    """Static Pro pricing metadata for display — flat, no seat dimension."""
+    return {
+        "amount_cents": PRO_MONTHLY_CENTS,
+        "currency": PRO_CURRENCY,
+        "interval": BillingInterval.MONTH.value,
+    }
 
 
 def team_pricing_summary() -> dict:

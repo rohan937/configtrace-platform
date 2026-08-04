@@ -43,6 +43,11 @@ class CheckoutRequest:
     customer_email: str | None = None
     customer_reference: BillingProviderReference | None = None
     idempotency_reference: str | None = None
+    # ConfigTrace user ID initiating checkout — additive field (Dodo
+    # Payments message 1). Optional and unused by the existing Stripe/
+    # Paddle adapters; Dodo's checkout metadata includes it so a webhook
+    # can be traced back to the initiating user, not just the workspace.
+    configtrace_user_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
