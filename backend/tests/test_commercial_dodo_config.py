@@ -48,8 +48,41 @@ class TestEnvironmentValidation:
     def test_invalid_environment_string_rejected(self, monkeypatch):
         settings = _configure(monkeypatch, DODO_ENVIRONMENT="sandbox")
         assert settings.dodo_environment_normalized == "not_configured"
+
+    def test_dodo_official_test_mode_value_accepted_and_normalized(self, monkeypatch):
+        """Post-implementation audit finding: Dodo's own official Python
+        and Node.js SDKs use environment="test_mode"/"live_mode" as their
+        canonical values, not "test"/"live". ConfigTrace must accept an
+        operator pasting Dodo's own documented example value."""
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="test_mode")
+        assert settings.dodo_environment_normalized == "test"
+
+    def test_dodo_official_live_mode_value_accepted_and_normalized(self, monkeypatch):
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="live_mode")
+        assert settings.dodo_environment_normalized == "live"
+
+    def test_test_mode_value_is_case_insensitive(self, monkeypatch):
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="TEST_MODE")
+        assert settings.dodo_environment_normalized == "test"
+
+    def test_live_mode_value_is_case_insensitive(self, monkeypatch):
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="Live_Mode")
+        assert settings.dodo_environment_normalized == "live"
+
+    def test_test_mode_configuration_passes_full_validation(self, monkeypatch):
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="test_mode")
         result = validate_dodo_configuration(settings)
-        assert result.valid is False
+        assert result.valid is True
+
+    def test_dodo_environment_normalized_never_returns_raw_test_mode_string(self, monkeypatch):
+        """The normalized value must always be the short canonical form
+        ("test"/"live"), never the raw "test_mode"/"live_mode" input —
+        every other module in this codebase (dodo_client base-url
+        selection, registry.py's catalog mapping) depends on receiving
+        exactly "test" or "live"."""
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="test_mode")
+        assert settings.dodo_environment_normalized in ("test", "live")
+        assert settings.dodo_environment_normalized != "test_mode"
 
 
 class TestWebhookSecretFormat:
@@ -170,3 +203,27 @@ class TestReadinessReport:
         report = check_dodo_readiness(settings)
         not_routing_check = next(c for c in report.checks if c.name == "not_routing_production_to_dodo")
         assert not_routing_check.present is True
+
+
+class TestRegistryEndToEndWithOfficialEnvironmentValues:
+    """Post-implementation audit: prove the "test_mode"/"live_mode" fix
+    actually propagates all the way to the constructed client's base URL,
+    not just the settings property in isolation."""
+
+    def test_registry_builds_test_base_url_from_official_test_mode_value(self, monkeypatch):
+        from app import config
+        from app.billing.registry import _build_dodo_adapter
+
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="test_mode")
+        adapter = _build_dodo_adapter()
+        assert adapter.is_configured is True
+        assert adapter._client._config.base_url == "https://test.dodopayments.com"
+
+    def test_registry_builds_live_base_url_from_official_live_mode_value(self, monkeypatch):
+        from app import config
+        from app.billing.registry import _build_dodo_adapter
+
+        settings = _configure(monkeypatch, DODO_ENVIRONMENT="live_mode")
+        adapter = _build_dodo_adapter()
+        assert adapter.is_configured is True
+        assert adapter._client._config.base_url == "https://live.dodopayments.com"

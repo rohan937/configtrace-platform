@@ -21,28 +21,46 @@ add-on, which is its own separate object type in Dodo's model (verified:
 subscription product via ``product_cart[].addons[]`` at checkout or
 ``change-plan``).
 
-Unverified-in-this-message items (documented, not guessed)
+Post-implementation documentation audit (re-verified against current
+official Dodo docs after the initial commit)
+-------------------------------------------------------------------------
+* CONFIRMED: removing the Team seat add-on entirely (desired quantity 0)
+  is done by sending ``addons: []`` — Dodo's change-plan documentation
+  states verbatim "Leaving this empty would remove any existing addons" /
+  "Empty array removes all existing add-ons." This adapter's choice
+  (item 2 below) is therefore confirmed correct, not merely assumed.
+* CONFIRMED: the checkout ``product_cart`` shape — ``addons`` nests
+  INSIDE each cart item alongside ``product_id``/``quantity`` — matches
+  the documented schema exactly (verified against the official checkout
+  session request schema).
+* CONFIRMED: ``GET /subscriptions/{subscription_id}`` exists as the
+  single-subscription retrieval path — the official Python SDK exposes
+  ``client.subscriptions.retrieve(subscription_id)``, which is Dodo's
+  Stainless-generated-SDK convention for ``GET /{resource}/{id}`` (the
+  same pattern Stripe's own generated SDKs use).
+* Still NOT explicitly confirmed by an official worked example: whether
+  add-on ``quantity`` multiplies the add-on's unit price. This adapter
+  still implements quantity-multiplies-price (the same behavior every
+  other Dodo quantity field documents, and the only behavior consistent
+  with "3 additional seats" style examples in Dodo's own add-ons page),
+  but no official example shows the arithmetic explicitly.
+* Still NOT documented anywhere fetched: the customer-portal URL's host
+  (for a host-allowlist check analogous to Paddle's). This adapter
+  therefore does NOT allowlist-validate the portal URL host (an
+  intentional gap, not a guess) — see ``_validate_management_url``'s
+  docstring below.
+
+Original items, re-numbered to match the above
 -------------------------------------------------------------
-1. Whether add-on `quantity` multiplies the add-on's unit price (Dodo's
-   docs describe quantity as customer-selectable but never state the
-   pricing formula explicitly). This adapter implements it as
-   quantity-multiplies-price (the same behavior every other Dodo
-   quantity field — product_cart items, subscriptions — documents), but
-   this specific multiplication was not shown in an explicit example.
-2. Whether a zero desired add-on quantity must be OMITTED from the
-   ``addons`` array or explicitly sent as ``quantity: 0``. This adapter
-   omits it entirely (mirroring the message-2 Paddle precedent's
-   documented choice for its own, structurally different, contract) —
-   NOT verified against a real Dodo Test Mode change-plan call.
-3. The exact response shape of ``GET /subscriptions/{id}`` (the fetch/
-   reconcile path) — the endpoint's existence and path were confirmed by
-   the resource's own PATCH/POST siblings following the same pattern, but
-   its own response page was not directly fetched in this message.
-4. The customer-portal URL's host (for a host-allowlist check analogous
-   to Paddle's) — not documented anywhere fetched in this message. This
-   adapter therefore does NOT allowlist-validate the portal URL host (an
-   intentional gap, not a guess) — see ``_validate_management_url``'s
-   docstring below.
+1. Add-on quantity multiplication — still an assumption, now more
+   strongly corroborated (see above).
+2. Zero-quantity add-on representation — CONFIRMED correct (see above).
+3. ``GET /subscriptions/{id}`` response shape — path CONFIRMED (see
+   above); the exact field-by-field response shape used by
+   ``_snapshot_from_dodo_subscription`` below is still inferred from the
+   subscription object's documented fields elsewhere (webhook payload,
+   PATCH response), not from a dedicated GET-response example.
+4. The customer-portal URL's host — still undocumented (see above).
 
 Every one of these is repeated in the implementation report's "Behaviors
 still requiring a real Dodo Test Mode verification" section.

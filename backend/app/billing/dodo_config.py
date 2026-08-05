@@ -20,9 +20,14 @@ from app.config import Settings
 # DODO_API_KEY — unlike Paddle's best-effort marker check, inventing a
 # distinction Dodo doesn't document would be guessing, which this
 # message's instructions explicitly forbid. Environment consistency is
-# enforced structurally instead: DODO_ENVIRONMENT must be exactly "test"
-# or "live", and the client's base URL is derived from that value alone.
-_VALID_ENVIRONMENTS = ("test", "live")
+# enforced structurally instead: DODO_ENVIRONMENT must normalize to
+# "test" or "live" — see Settings.dodo_environment_normalized, which
+# accepts both this codebase's short form ("test"/"live") AND Dodo's own
+# documented SDK convention ("test_mode"/"live_mode", confirmed via a
+# post-implementation documentation audit against the official Python
+# and Node.js SDKs) — and the client's base URL is derived from the
+# normalized value alone.
+_VALID_ENVIRONMENTS = ("test", "live", "test_mode", "live_mode")
 
 
 @dataclass(frozen=True)
@@ -52,7 +57,10 @@ def validate_dodo_configuration(settings: Settings) -> DodoConfigurationResult:
     env = settings.dodo_environment_normalized
     if env == "not_configured":
         issues.append(
-            DodoConfigurationIssue("DODO_ENVIRONMENT", "must be exactly 'test' or 'live'")
+            DodoConfigurationIssue(
+                "DODO_ENVIRONMENT",
+                "must be 'test'/'live' or Dodo's own 'test_mode'/'live_mode'",
+            )
         )
 
     if not settings.DODO_API_KEY:

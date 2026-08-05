@@ -370,15 +370,30 @@ class Settings(BaseSettings):
     def dodo_environment_normalized(self) -> str:
         """Return "test" | "live" | "not_configured".
 
-        Any value not exactly "test" or "live" is treated as
-        not_configured — never guessed from a key format, since Dodo does
-        not document an unambiguous test/live credential-prefix convention
-        (verified during this message's research: test and live are two
-        entirely separate dashboards/API-key spaces, not a shared
+        Accepts BOTH naming conventions and normalizes to the canonical
+        internal value used everywhere else in this codebase ("test" /
+        "live"):
+
+          * "test" / "live" — this codebase's own short form, used
+            internally (base URL selection, catalog mapping, etc.).
+          * "test_mode" / "live_mode" — Dodo's own OFFICIAL SDK
+            convention, confirmed from the official Python SDK README
+            (`environment="test_mode"`, defaults to `"live_mode"`) and
+            the official Node.js SDK (`environment: 'test_mode'`) during
+            a post-implementation documentation audit. Accepting this
+            form avoids an operator who copies Dodo's own documented
+            example being rejected by ConfigTrace's config validation.
+
+        Any other value is treated as not_configured — never guessed from
+        a key format, since Dodo does not document an unambiguous
+        test/live credential-prefix convention (verified: test and live
+        are two entirely separate dashboards/API-key spaces, not a shared
         namespace distinguished by prefix)."""
         env = (self.DODO_ENVIRONMENT or "").strip().lower()
-        if env in ("test", "live"):
-            return env
+        if env in ("test", "test_mode"):
+            return "test"
+        if env in ("live", "live_mode"):
+            return "live"
         return "not_configured"
 
     @property
