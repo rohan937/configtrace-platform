@@ -55,6 +55,39 @@ class TestEnvExampleHasPaddlePlaceholders:
                 assert value == "", f"unexpected non-empty placeholder: {line!r}"
 
 
+class TestEnvExampleHasDodoPlaceholders:
+    """Mirrors TestEnvExampleHasPaddlePlaceholders (Dodo Payments message 1
+    + live-cutover preparation). ``DODO_PILOT_WORKSPACE_ID`` is included
+    here because it is a real, committed setting
+    (``Settings.DODO_PILOT_WORKSPACE_ID`` / ``app.billing.provider_routing``)
+    that must not silently drift out of the operator-facing env template —
+    found missing during the final handoff audit and fixed alongside this
+    test."""
+
+    def test_env_example_declares_dodo_variables(self):
+        text = _ENV_EXAMPLE.read_text()
+        for var in (
+            "DODO_ENVIRONMENT", "DODO_API_KEY", "DODO_WEBHOOK_SECRET",
+            "DODO_PRO_PRODUCT_ID", "DODO_TEAM_PRODUCT_ID",
+            "DODO_TEAM_ADDITIONAL_SEAT_ADDON_ID", "DODO_PILOT_WORKSPACE_ID",
+        ):
+            assert var in text, f"{var} missing from .env.example"
+
+    def test_env_example_declares_no_real_dodo_secret_values(self):
+        text = _ENV_EXAMPLE.read_text()
+        for line in text.splitlines():
+            if line.startswith("DODO_API_KEY=") or line.startswith("DODO_WEBHOOK_SECRET="):
+                value = line.split("=", 1)[1].strip()
+                assert value == "", f"unexpected non-empty placeholder: {line!r}"
+
+    def test_env_example_declares_no_real_dodo_pilot_workspace_value(self):
+        text = _ENV_EXAMPLE.read_text()
+        for line in text.splitlines():
+            if line.startswith("DODO_PILOT_WORKSPACE_ID="):
+                value = line.split("=", 1)[1].strip()
+                assert value == "", f"unexpected non-empty placeholder: {line!r}"
+
+
 class TestFailClosedProviderSelection:
     def test_paddle_without_mapping_never_returns_a_usable_adapter(self, db_session):
         from app.billing.adapters.paddle import PaddleNotConfiguredError
