@@ -26,7 +26,11 @@ from app.billing.enums import BillingInterval, BillingProvider, PlanId
 from app.billing.models import NormalizedSubscription
 from app.billing.pricing import calculate_team_monthly_price
 from app.billing.provider import CancelSubscriptionRequest, CheckoutRequest as NeutralCheckoutRequest, PortalRequest
-from app.billing.provider_routing import provider_for_checkout, provider_for_management
+from app.billing.provider_routing import (
+    dodo_pilot_override_active,
+    provider_for_checkout,
+    provider_for_management,
+)
 from app.billing.reconciliation_service import reconcile_workspace_subscription
 from app.billing.registry import get_adapter_for_provider
 from app.config import settings
@@ -249,6 +253,18 @@ def _create_plan_checkout(
     provider = provider_for_checkout(workspace_id, db)
     adapter = get_adapter_for_provider(provider, db)
 
+    if dodo_pilot_override_active(workspace_id):
+        from app.billing.audit import record_audit_event
+        from app.billing.enums import BillingAuditEventType
+
+        record_audit_event(
+            workspace_id=workspace_id,
+            event_type=BillingAuditEventType.PILOT_OVERRIDE_APPLIED,
+            provider=provider,
+            details={"reason": "dodo_pilot_workspace_override", "plan_id": plan_id.value},
+            db=db,
+        )
+
     billable_seats = calculate_billable_member_count(workspace_id, db)
     frontend_url = settings.effective_frontend_url
     request = NeutralCheckoutRequest(
@@ -263,6 +279,12 @@ def _create_plan_checkout(
         configtrace_user_id=current_user.id,
     )
     response = adapter.create_checkout(request)
+    # Commit is required here (previously a no-op omission, harmless only
+    # because no local DB write existed on this path before the pilot-
+    # override audit event above): without it, the PILOT_OVERRIDE_APPLIED
+    # row is flushed into the request's transaction but never durably
+    # committed, and is lost when the connection closes.
+    db.commit()
     return NeutralCheckoutResponse(
         provider=response.provider.value, checkout_url=response.checkout_url,
         external_reference=response.external_reference,

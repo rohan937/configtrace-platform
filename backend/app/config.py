@@ -170,6 +170,16 @@ class Settings(BaseSettings):
     # above the 20 included in the Team base price).
     DODO_TEAM_ADDITIONAL_SEAT_ADDON_ID: Optional[str] = None
 
+    # One-workspace Dodo pilot override (Dodo Payments — Live cutover
+    # preparation). NOT a secret — a plain workspace UUID. When set, ONLY
+    # this workspace's NEW checkouts route to Dodo; every other workspace
+    # keeps using the globally configured BILLING_PROVIDER. This setting
+    # NEVER changes BILLING_PROVIDER itself and is a no-op unless Dodo is
+    # also fully configured (see app.billing.provider_routing). Reversible
+    # by unsetting this one variable — see
+    # docs/deployment/dodo-live-cutover.md.
+    DODO_PILOT_WORKSPACE_ID: Optional[str] = None
+
     # ── Required for Milestone 31 (GitHub App integration) ──────────────────
     # GitHub App numeric ID — shown on the App settings page.
     GITHUB_APP_ID: Optional[str] = None
@@ -411,6 +421,23 @@ class Settings(BaseSettings):
             and self.DODO_TEAM_PRODUCT_ID
             and self.DODO_TEAM_ADDITIONAL_SEAT_ADDON_ID
         )
+
+    @property
+    def dodo_pilot_workspace_id_parsed(self):
+        """Return the configured pilot workspace as a ``uuid.UUID``, or
+        ``None`` if unset OR malformed. Never raises — a typo'd env var
+        must fail closed to "no pilot override" (falls back to the
+        globally configured provider for every workspace), never crash
+        checkout for the whole app."""
+        import uuid as _uuid
+
+        raw = (self.DODO_PILOT_WORKSPACE_ID or "").strip()
+        if not raw:
+            return None
+        try:
+            return _uuid.UUID(raw)
+        except ValueError:
+            return None
 
     @property
     def effective_frontend_url(self) -> str:

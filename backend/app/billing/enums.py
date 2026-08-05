@@ -141,3 +141,7 @@ class BillingAuditEventType(str, enum.Enum):
     ENTITLEMENT_CHANGED = "entitlement_changed"
     PROVIDER_RECONCILIATION = "provider_reconciliation"
     WEBHOOK_DUPLICATE_IGNORED = "webhook_duplicate_ignored"
+    # A one-workspace provider pilot override (e.g. DODO_PILOT_WORKSPACE_ID)
+    # routed this workspace's checkout to a non-default provider. Generic
+    # name — not Dodo-specific — so any future pilot mechanism reuses it.
+    PILOT_OVERRIDE_APPLIED = "pilot_override_applied"
