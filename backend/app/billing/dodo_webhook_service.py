@@ -46,20 +46,51 @@ from app.billing.models import NormalizedSubscription
 # mappings (app.billing.entitlements / app.billing.paddle_webhook_service)
 # — a future divergence in any provider's vocabulary never
 # cross-contaminates another.
+#
+# Idempotency entries (bug found during Test Mode verification, fixed
+# here): ``NormalizedSubscription.status`` is written as an ALREADY
+# NORMALIZED value by ``_apply_normalized_event`` below
+# (``sub.status = normalize_dodo_status(...).value``), but
+# ``app/routers/billing.py``'s ``get_current_subscription`` re-runs
+# ``normalize_dodo_status(sub.status)`` on that already-normalized value
+# every time it's read. For Stripe and Paddle this double-normalization
+# is harmlessly idempotent by coincidence — their raw provider status
+# spellings ("past_due", "canceled", "trialing", "paused") happen to be
+# spelled identically to the normalized enum values. Dodo's raw
+# vocabulary does NOT overlap ("on_hold" vs "past_due", "cancelled" vs
+# "canceled" — note the double L), so re-normalizing an
+# already-normalized "past_due" fell through to the INCOMPLETE default,
+# silently downgrading a paying, grace-period Dodo customer to
+# no-paid-access on every subscription read. The entries below make
+# ``normalize_dodo_status`` a safe no-op on every value it could ever
+# legitimately be asked to re-normalize, without changing how any RAW
+# Dodo webhook status string is mapped.
 _DODO_STATUS_MAP: dict[str, NormalizedSubscriptionStatus] = {
+    # Raw Dodo status strings (from Dodo's documented status enum).
     "pending": NormalizedSubscriptionStatus.INCOMPLETE,
     "active": NormalizedSubscriptionStatus.ACTIVE,
     "on_hold": NormalizedSubscriptionStatus.PAST_DUE,
     "cancelled": NormalizedSubscriptionStatus.CANCELED,
     "failed": NormalizedSubscriptionStatus.INCOMPLETE,
     "expired": NormalizedSubscriptionStatus.EXPIRED,
+    # Identity entries for already-normalized values (see note above) —
+    # never produced by a raw Dodo webhook, only by re-normalizing a
+    # value this module itself already wrote.
+    "trialing": NormalizedSubscriptionStatus.TRIALING,
+    "past_due": NormalizedSubscriptionStatus.PAST_DUE,
+    "grace_period": NormalizedSubscriptionStatus.GRACE_PERIOD,
+    "paused": NormalizedSubscriptionStatus.PAUSED,
+    "canceled": NormalizedSubscriptionStatus.CANCELED,
+    "incomplete": NormalizedSubscriptionStatus.INCOMPLETE,
 }
 
 
 def normalize_dodo_status(dodo_status: str) -> NormalizedSubscriptionStatus:
-    """Map a raw Dodo subscription-status string to a normalized status.
-    Unknown/unexpected strings map to INCOMPLETE rather than raising —
-    an unrecognized status must never be silently treated as ACTIVE."""
+    """Map a raw Dodo subscription-status string — OR an already
+    normalized ``NormalizedSubscriptionStatus`` value re-read from
+    storage — to a normalized status. Unknown/unexpected strings map to
+    INCOMPLETE rather than raising — an unrecognized status must never be
+    silently treated as ACTIVE."""
     return _DODO_STATUS_MAP.get(dodo_status, NormalizedSubscriptionStatus.INCOMPLETE)
 
 

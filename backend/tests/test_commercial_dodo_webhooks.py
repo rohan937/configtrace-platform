@@ -177,6 +177,31 @@ class TestStatusNormalization:
     def test_unknown_status_maps_to_incomplete(self):
         assert normalize_dodo_status("some_future_status") == NormalizedSubscriptionStatus.INCOMPLETE
 
+    @pytest.mark.parametrize(
+        "already_normalized",
+        [
+            NormalizedSubscriptionStatus.TRIALING,
+            NormalizedSubscriptionStatus.ACTIVE,
+            NormalizedSubscriptionStatus.PAST_DUE,
+            NormalizedSubscriptionStatus.GRACE_PERIOD,
+            NormalizedSubscriptionStatus.PAUSED,
+            NormalizedSubscriptionStatus.CANCELED,
+            NormalizedSubscriptionStatus.EXPIRED,
+            NormalizedSubscriptionStatus.INCOMPLETE,
+        ],
+    )
+    def test_re_normalizing_an_already_normalized_value_is_a_safe_no_op(self, already_normalized):
+        """Regression test for a real bug found during Test Mode
+        verification: app/routers/billing.py's get_current_subscription
+        re-runs normalize_dodo_status on NormalizedSubscription.status,
+        which already holds a normalized value (written by
+        _apply_normalized_event). Before this fix, re-normalizing
+        "past_due" fell through to INCOMPLETE (Dodo's raw vocabulary
+        spells it "on_hold", not "past_due"), silently revoking paid
+        access for any Dodo subscription read after being set to
+        past_due/paused/trialing/grace_period/incomplete."""
+        assert normalize_dodo_status(already_normalized.value) == already_normalized
+
 
 # ── End-to-end processing (real Postgres-backed rows) ───────────────────────
 
