@@ -2294,10 +2294,14 @@ export async function getTeamPricingPreview(
 
 /**
  * Provider-neutral Team checkout (Commercial Infrastructure message 2).
- * Routes to whichever provider is currently configured for new checkouts
- * (`BillingResponse.checkout_provider`) — the backend computes plan,
+ * Routes to whichever provider the backend decides for THIS workspace's
+ * checkout (app.billing.provider_routing.provider_for_checkout — this can
+ * differ per-workspace, e.g. a one-workspace pilot override, so the
+ * client must never pre-guess it from `BillingResponse.checkout_provider`,
+ * which only reflects the global default). The backend computes plan,
  * seat count, and pricing entirely server-side; the client never sends a
- * price ID or seat count.
+ * price ID or seat count, and decides how to complete checkout only from
+ * this response's own `provider`/`checkout_url`/`external_reference`.
  */
 export interface TeamCheckoutResponse {
   provider: string;

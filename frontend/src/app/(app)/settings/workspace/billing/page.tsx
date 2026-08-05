@@ -7,10 +7,10 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   getWorkspaceBilling,
   getTeamPricingPreview,
-  createCheckoutSession,
   createTeamCheckout,
   createProCheckout,
   createPortalSession,
+  type TeamCheckoutResponse,
   type TeamPricingBreakdown,
 } from "@/lib/api";
 import { initPaddle, isPaddleClientConfigured, openPaddleCheckout, paddleEnvironment } from "@/lib/paddle";
@@ -654,123 +654,76 @@ export default function BillingPage() {
   // checkout-creation requests at once.
   const checkoutInFlightRef = useRef(false);
 
+  // Provider-neutral checkout (fix for the frontend silently falling back
+  // to the legacy Stripe-only /billing/checkout route): Pro and Team
+  // upgrades ALWAYS call the provider-neutral /billing/checkout/pro and
+  // /billing/checkout/team routes. Those routes route via
+  // app.billing.provider_routing.provider_for_checkout on the backend,
+  // which is the ONLY place that knows about a one-workspace pilot
+  // override (DODO_PILOT_WORKSPACE_ID) — the frontend must never
+  // pre-decide the provider itself (e.g. from a stale/global
+  // `billing.checkout_provider` field) before calling anything, since
+  // that field does not reflect a per-workspace override and was the
+  // root cause of Pro/Team checkouts always landing on Stripe.
   async function handleUpgrade(plan: BillingPlan) {
     if (!selectedWorkspace || checkoutInFlightRef.current) return;
+    if (plan !== "pro" && plan !== "team") return; // upgrade is never offered for "free"
 
-    // Team + Paddle-configured checkout path (message 2).
-    if (plan === "team" && billing?.checkout_provider === "paddle") {
-      await handlePaddleTeamCheckout();
-      return;
-    }
-
-    // Pro or Team + Dodo-configured checkout path (Dodo Payments message 1,
-    // Test Mode). Dodo has no client-side SDK wired in this message — the
-    // backend-provided checkout_url is a plain hosted-page redirect, same
-    // shape as the existing Stripe path.
-    if ((plan === "pro" || plan === "team") && billing?.checkout_provider === "dodo") {
-      await handleDodoCheckout(plan);
-      return;
-    }
-
-    // Existing Stripe path — unchanged (message-1/2 compatibility).
-    if (CHECKOUT_FORCE_DISABLED || !billing?.stripe_configured) {
+    if (CHECKOUT_FORCE_DISABLED) {
       setActionError(STRIPE_UNAVAILABLE_HELPER_TEXT);
       return;
     }
-    const meta = PLAN_META[plan];
-    if (!meta.priceId) {
-      setActionError("Billing is not fully configured yet. Contact support or try again later.");
-      return;
-    }
-    checkoutInFlightRef.current = true;
-    setActionBusy(true);
-    setActionError(null);
-    try {
-      const token = await getToken();
-      const { checkout_url } = await createCheckoutSession(
-        selectedWorkspace.id,
-        meta.priceId,
-        token,
-      );
-      window.location.href = checkout_url;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to start checkout.";
-      setActionError(friendlyBillingError(msg));
-      setActionBusy(false);
-      checkoutInFlightRef.current = false;
-    }
-  }
 
-  async function handlePaddleTeamCheckout() {
-    if (!selectedWorkspace) return;
-    if (!isPaddleClientConfigured()) {
-      setActionError("Billing is not fully configured yet. Contact support or try again later.");
-      return;
-    }
     checkoutInFlightRef.current = true;
     setActionBusy(true);
     setActionError(null);
     try {
       const token = await getToken();
-      const { checkout_url, external_reference } = await createTeamCheckout(selectedWorkspace.id, token);
-      const clientToken = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN ?? "";
-      if (external_reference) {
-        try {
-          await initPaddle(paddleEnvironment(), clientToken, (event) => {
-            if (event.name === "checkout.completed") {
-              setSuccessMsg("Subscription activated! It may take a moment to reflect here.");
-              load();
-            } else if (event.name === "checkout.closed") {
-              checkoutInFlightRef.current = false;
-              setActionBusy(false);
-            }
-          });
-          openPaddleCheckout(external_reference);
-          return; // overlay stays open; do not clear actionBusy here
-        } catch {
-          // Paddle.js failed to load/initialize — fall back to the
-          // hosted checkout URL redirect below.
-        }
-      }
-      if (checkout_url) {
-        window.location.href = checkout_url;
-        return;
-      }
-      throw new Error("Paddle did not return a usable checkout.");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to start checkout.";
-      setActionError(friendlyBillingError(msg));
-      setActionBusy(false);
-      checkoutInFlightRef.current = false;
-    }
-  }
-
-  async function handleDodoCheckout(plan: "pro" | "team") {
-    if (!selectedWorkspace) return;
-    checkoutInFlightRef.current = true;
-    setActionBusy(true);
-    setActionError(null);
-    try {
-      const token = await getToken();
-      const { checkout_url } =
+      const response =
         plan === "pro"
           ? await createProCheckout(selectedWorkspace.id, token)
           : await createTeamCheckout(selectedWorkspace.id, token);
-      if (!checkout_url) {
-        throw new Error("Dodo did not return a usable checkout.");
-      }
-      // Plain hosted-page redirect — no Dodo client-side SDK is loaded in
-      // this message (Phase 6 requirement 3: no frontend SDK unless
-      // required). The overlay/inline checkout SDK remains a documented
-      // future enhancement, same as this repo's own Paddle precedent
-      // started with a redirect-first approach.
-      window.location.href = checkout_url;
+      await completeCheckout(response);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to start checkout.";
       setActionError(friendlyBillingError(msg));
       setActionBusy(false);
       checkoutInFlightRef.current = false;
     }
+  }
+
+  // The ONLY provider-specific branch left, and it is decided from the
+  // ACTUAL response the backend just returned — never guessed ahead of
+  // time. Paddle is the one provider whose checkout is a client-side
+  // overlay (Paddle.js) rather than a plain redirect; every other
+  // provider (Stripe, Dodo, or Paddle without a usable external
+  // reference) redirects straight to `checkout_url`, exactly the same
+  // way regardless of which provider actually created it.
+  async function completeCheckout(response: TeamCheckoutResponse) {
+    if (response.provider === "paddle" && response.external_reference && isPaddleClientConfigured()) {
+      const clientToken = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN ?? "";
+      try {
+        await initPaddle(paddleEnvironment(), clientToken, (event) => {
+          if (event.name === "checkout.completed") {
+            setSuccessMsg("Subscription activated! It may take a moment to reflect here.");
+            load();
+          } else if (event.name === "checkout.closed") {
+            checkoutInFlightRef.current = false;
+            setActionBusy(false);
+          }
+        });
+        openPaddleCheckout(response.external_reference);
+        return; // overlay stays open; do not clear actionBusy here
+      } catch {
+        // Paddle.js failed to load/initialize — fall back to the hosted
+        // checkout URL redirect below rather than leaving the user stuck.
+      }
+    }
+    if (response.checkout_url) {
+      window.location.href = response.checkout_url;
+      return;
+    }
+    throw new Error(`${response.provider || "Billing"} did not return a usable checkout.`);
   }
 
   async function handleManage() {
