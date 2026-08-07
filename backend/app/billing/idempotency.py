@@ -119,14 +119,35 @@ def mark_duplicate_ignored(event: BillingWebhookEvent, db: Session) -> None:
 
 def is_stale_subscription_update(
     *, candidate_occurred_at: datetime | None, subscription: NormalizedSubscription | None,
+    reference_time: datetime | None = None,
 ) -> bool:
-    """True if ``candidate_occurred_at`` is older than the subscription's
-    last-known-update time — meaning this event must NOT be applied even
-    though it just arrived (out-of-order / replayed delivery protection).
-    A candidate with no timestamp, or a subscription that doesn't exist
-    yet, is never considered stale (nothing to compare against)."""
+    """True if ``candidate_occurred_at`` is older than the reference point
+    for "the last event actually applied to this subscription" — meaning
+    this event must NOT be applied even though it just arrived
+    (out-of-order / replayed delivery protection). A candidate with no
+    timestamp, or a subscription that doesn't exist yet, is never
+    considered stale (nothing to compare against).
+
+    ``reference_time`` (optional): an explicit, caller-supplied baseline
+    — e.g. the ``occurred_at`` of the most recently PROCESSED webhook
+    event for this same subscription/customer — that takes precedence
+    over ``subscription.updated_at`` when provided. This exists because
+    ``subscription.updated_at`` is a DB WRITE-time (when ConfigTrace's
+    own transaction committed), not an event TIME (when the provider
+    says the event happened); comparing an event's own timestamp against
+    a different clock is only safe when processing latency is
+    negligible compared to the gap between successive event
+    timestamps — a real bug found in production when several Dodo
+    events arrived within ~2 seconds of each other and every event
+    after the first was wrongly judged "stale" because ConfigTrace's own
+    processing/commit latency for the first event exceeded the gap to
+    the next event's `occurred_at`. Omitting ``reference_time`` (the
+    default) preserves the exact original behavior for every existing
+    caller (e.g. Paddle's webhook service, which does not exhibit this
+    failure mode and is unmodified)."""
     if candidate_occurred_at is None or subscription is None:
         return False
-    if subscription.updated_at is None:
+    baseline = reference_time if reference_time is not None else subscription.updated_at
+    if baseline is None:
         return False
-    return candidate_occurred_at < subscription.updated_at
+    return candidate_occurred_at < baseline

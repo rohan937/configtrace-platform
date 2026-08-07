@@ -190,6 +190,22 @@ class NormalizedDodoWebhookEvent:
     workspace_id_hint: uuid.UUID | None = None
     plan_id_hint: str | None = None
     additional_seat_count_hint: int | None = None
+    # payload["data"]["product_id"] — a fallback plan-identification signal
+    # for when metadata.plan_id is absent or stale (e.g. Dodo's own
+    # subscription object metadata not yet reflecting a very recent plan
+    # change). Never trusted alone without cross-checking against the
+    # configured catalog IDs — see dodo_webhook_service._resolve_plan_id.
+    product_id_hint: str | None = None
+    # payload["data"]["previous_billing_date"] / ["next_billing_date"] —
+    # same field names already used by
+    # adapters.dodo.DodoBillingAdapter._snapshot_from_dodo_subscription
+    # for the GET /subscriptions/{id} response; the webhook's `data`
+    # object is the same subscription representation, so the same field
+    # names are used here. Parsed defensively: malformed/absent is None,
+    # never an exception, and a None hint never overwrites an existing
+    # stored date (see dodo_webhook_service._apply_normalized_event).
+    current_period_start_hint: datetime | None = None
+    current_period_end_hint: datetime | None = None
     normalized_payload: dict = field(default_factory=dict)
 
 
@@ -219,6 +235,15 @@ def _parse_metadata_additional_seat_count(metadata: dict) -> int | None:
     return value if value >= 0 else None
 
 
+def _parse_billing_date(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def normalize_dodo_event(event: dict[str, Any], *, external_event_id: str) -> NormalizedDodoWebhookEvent:
     """Normalize a verified, parsed Dodo event dict into
     ``NormalizedDodoWebhookEvent``. Only a small, allowlisted set of
@@ -244,6 +269,9 @@ def normalize_dodo_event(event: dict[str, Any], *, external_event_id: str) -> No
     subscription_ref = data.get("subscription_id") if not is_subscription_event else data.get("subscription_id")
     transaction_ref = data.get("payment_id") if is_payment_event else None
     status = data.get("status") if is_subscription_event else None
+    product_id_hint = data.get("product_id") if is_subscription_event else None
+    current_period_start_hint = _parse_billing_date(data.get("previous_billing_date")) if is_subscription_event else None
+    current_period_end_hint = _parse_billing_date(data.get("next_billing_date")) if is_subscription_event else None
 
     occurred_at = None
     if occurred_at_str:
@@ -277,5 +305,8 @@ def normalize_dodo_event(event: dict[str, Any], *, external_event_id: str) -> No
         workspace_id_hint=workspace_id_hint,
         plan_id_hint=plan_id_hint,
         additional_seat_count_hint=additional_seat_count_hint,
+        product_id_hint=product_id_hint,
+        current_period_start_hint=current_period_start_hint,
+        current_period_end_hint=current_period_end_hint,
         normalized_payload={"raw_event_name": raw_event_name, "status": status},
     )

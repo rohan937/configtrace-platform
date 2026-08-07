@@ -41,7 +41,7 @@ from app.billing.idempotency import (
     mark_failed,
     mark_processed,
 )
-from app.billing.models import NormalizedSubscription
+from app.billing.models import BillingWebhookEvent, NormalizedSubscription
 from app.billing.pricing import TEAM_INCLUDED_SEATS
 from app.models.workspace import Workspace
 
@@ -359,6 +359,64 @@ def _create_subscription_from_hint(normalized: NormalizedDodoWebhookEvent, db: S
     return sub
 
 
+def _latest_processed_dodo_event_occurred_at(
+    *, subscription_reference: str | None, customer_reference: str | None,
+    exclude_external_event_id: str, db: Session,
+) -> datetime | None:
+    """The ``occurred_at`` of the most recently PROCESSED Dodo webhook
+    event for this same subscription/customer — the correct staleness
+    baseline (see ``idempotency.is_stale_subscription_update``'s
+    ``reference_time`` docstring for the bug this fixes). Matches the
+    SAME precedence ``_find_subscription_by_dodo_reference`` uses
+    (subscription_reference first, then customer_reference), so it stays
+    correct across a plan-change/new-checkout scenario where a workspace's
+    NEW event carries a DIFFERENT subscription_reference than the row's
+    stored one but the SAME customer_reference."""
+    base_query = (
+        db.query(BillingWebhookEvent)
+        .filter(BillingWebhookEvent.provider == BillingProvider.DODO.value)
+        .filter(BillingWebhookEvent.processing_status == WebhookProcessingStatus.PROCESSED.value)
+        .filter(BillingWebhookEvent.external_event_id != exclude_external_event_id)
+        .filter(BillingWebhookEvent.occurred_at.isnot(None))
+    )
+    candidates: list[datetime] = []
+    if subscription_reference:
+        row = (
+            base_query.filter(BillingWebhookEvent.subscription_reference == subscription_reference)
+            .order_by(BillingWebhookEvent.occurred_at.desc())
+            .first()
+        )
+        if row is not None and row.occurred_at is not None:
+            candidates.append(row.occurred_at)
+    if customer_reference:
+        row = (
+            base_query.filter(BillingWebhookEvent.customer_reference == customer_reference)
+            .order_by(BillingWebhookEvent.occurred_at.desc())
+            .first()
+        )
+        if row is not None and row.occurred_at is not None:
+            candidates.append(row.occurred_at)
+    return max(candidates) if candidates else None
+
+
+def _resolve_plan_id(plan_id_hint: str | None, product_id_hint: str | None) -> str | None:
+    """Prefer the checkout-metadata plan hint; fall back to matching
+    ``product_id`` against the configured catalog when the metadata hint
+    is absent or stale (see dodo_webhooks.NormalizedDodoWebhookEvent's
+    docstring). Returns ``None`` — never guesses — when neither resolves
+    to a known plan, which the caller treats as "don't touch plan_id"."""
+    if plan_id_hint in ("pro", "team"):
+        return plan_id_hint
+    if product_id_hint:
+        from app.config import settings
+
+        if product_id_hint == settings.DODO_PRO_PRODUCT_ID:
+            return "pro"
+        if product_id_hint == settings.DODO_TEAM_PRODUCT_ID:
+            return "team"
+    return None
+
+
 def _apply_normalized_event(normalized: NormalizedDodoWebhookEvent, db: Session) -> str | None:
     """Apply one normalized event's effect on the local subscription
     state. Returns ``None`` on a legitimate outcome (state mutated, or a
@@ -386,7 +444,15 @@ def _apply_normalized_event(normalized: NormalizedDodoWebhookEvent, db: Session)
             return None
         return None
 
-    if is_stale_subscription_update(candidate_occurred_at=normalized.occurred_at, subscription=sub):
+    reference_time = _latest_processed_dodo_event_occurred_at(
+        subscription_reference=normalized.subscription_reference,
+        customer_reference=normalized.customer_reference,
+        exclude_external_event_id=normalized.external_event_id,
+        db=db,
+    )
+    if is_stale_subscription_update(
+        candidate_occurred_at=normalized.occurred_at, subscription=sub, reference_time=reference_time,
+    ):
         record_audit_event(
             workspace_id=sub.workspace_id,
             event_type=BillingAuditEventType.WEBHOOK_DUPLICATE_IGNORED,
@@ -394,7 +460,7 @@ def _apply_normalized_event(normalized: NormalizedDodoWebhookEvent, db: Session)
             details={"reason": "stale_event", "event_type": normalized.event_type.value},
             db=db,
         )
-        return
+        return None
 
     previous_status = sub.status
 
@@ -413,10 +479,81 @@ def _apply_normalized_event(normalized: NormalizedDodoWebhookEvent, db: Session)
         )
 
     elif normalized.event_type in (WebhookEventType.SUBSCRIPTION_CREATED, WebhookEventType.SUBSCRIPTION_UPDATED):
+        # Bug found in production (real Dodo Test Mode Pro -> Team
+        # checkout): this branch previously only ever touched `status`.
+        # A legitimate plan change — whether Dodo's own change-plan on
+        # the SAME subscription, or (as ConfigTrace's checkout currently
+        # produces) a brand-new Dodo subscription for the SAME
+        # customer/workspace — was silently invisible: subscription_
+        # created/updated events kept arriving and were marked
+        # "processed", but plan_id, seats, the subscription reference,
+        # and period dates were never re-derived from the event, so the
+        # workspace stayed on its old plan forever.
         if normalized.subscription_status:
             sub.status = normalize_dodo_status(normalized.subscription_status).value
+
+        previous_plan_id = sub.plan_id
+        previous_subscription_reference = sub.provider_subscription_reference
+        resolved_plan_id = _resolve_plan_id(normalized.plan_id_hint, normalized.product_id_hint)
+        # Never touch plan_id/seats when the plan can't be confidently
+        # resolved (unknown product_id, no metadata) — fails closed,
+        # keeping the workspace's existing plan rather than guessing.
+        plan_changed = resolved_plan_id is not None and resolved_plan_id != sub.plan_id
+        # A different provider_subscription_reference than the one on
+        # file — e.g. checkout created a second Dodo subscription for
+        # this customer rather than changing the existing one. This is
+        # NOT silently ignored NOR silently treated as routine: it's
+        # applied (ConfigTrace must track whichever subscription Dodo's
+        # newest event says is current) but explicitly audited below so
+        # it's never indistinguishable from an ordinary status update —
+        # see this commit's report for why the PREVIOUS subscription may
+        # still be active and billable in Dodo and require a manual
+        # cancellation there; this code does not do that automatically.
+        reference_changed = (
+            normalized.subscription_reference is not None
+            and normalized.subscription_reference != sub.provider_subscription_reference
+        )
+
+        if plan_changed:
+            sub.plan_id = resolved_plan_id
+            additional_seats = normalized.additional_seat_count_hint or 0
+            sub.billable_seats = (TEAM_INCLUDED_SEATS + additional_seats) if resolved_plan_id == "team" else 0
+            sub.additional_seat_quantity = additional_seats if resolved_plan_id == "team" else 0
+
+        if reference_changed:
+            sub.provider_subscription_reference = normalized.subscription_reference
+
+        if normalized.current_period_start_hint is not None:
+            sub.current_period_start = normalized.current_period_start_hint
+        if normalized.current_period_end_hint is not None:
+            sub.current_period_end = normalized.current_period_end_hint
+
         sub.last_provider_event = normalized.event_type.value
         sub.version += 1
+
+        if plan_changed or reference_changed:
+            details = {}
+            if plan_changed:
+                details["previous_plan_id"] = previous_plan_id
+                details["new_plan_id"] = resolved_plan_id
+                details["billable_seats"] = sub.billable_seats
+            if reference_changed:
+                details["reason"] = (
+                    "provider_subscription_reference_changed — previous Dodo "
+                    "subscription may still be active/billable; verify in the "
+                    "Dodo dashboard"
+                )
+            record_audit_event(
+                workspace_id=sub.workspace_id, event_type=BillingAuditEventType.SUBSCRIPTION_CHANGED,
+                provider=BillingProvider.DODO, details=details, db=db,
+            )
+        else:
+            logger.info(
+                "dodo_webhook supported_event_no_mutation event_type=%s workspace_id=%s "
+                "reason=%s",
+                normalized.event_type.value, sub.workspace_id,
+                "status_unchanged_and_no_resolvable_plan_or_reference_change",
+            )
 
     elif normalized.event_type == WebhookEventType.SUBSCRIPTION_CANCELED:
         sub.status = NormalizedSubscriptionStatus.CANCELED.value
