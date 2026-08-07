@@ -354,6 +354,66 @@ class DodoBillingAdapter(BillingProviderAdapter):
         client.change_plan(request.subscription_reference.external_id, body=body)
         return ProviderOperationResult(state="ok", detail=f"updated to additional_quantity={desired_additional}")
 
+    # ── Plan change on an existing subscription (double-billing fix) ────
+
+    def change_subscription_plan(
+        self, *, subscription_reference: BillingProviderReference, target_plan_id: PlanId, billable_seat_count: int,
+    ) -> ProviderOperationResult:
+        """Change an EXISTING Dodo subscription's plan/product IN PLACE
+        via the same verified ``POST /subscriptions/{id}/change-plan``
+        endpoint ``update_subscription`` above already uses for seat
+        changes — confirmed as the correct endpoint for product AND
+        add-on changes, not a new/guessed capability.
+
+        This is the fix for a confirmed production bug: a workspace
+        upgrading Pro -> Team previously went through ``create_checkout``,
+        which creates a brand-new, INDEPENDENT Dodo subscription while
+        the original stayed active and billable — resulting in two live
+        subscriptions for one customer. Calling change-plan against the
+        EXISTING subscription's ID instead means Dodo mutates that same
+        resource in place: the subscription ID is preserved (this is a
+        POST to a path keyed by the existing ``{id}``, never a resource
+        creation), and there is only ever one live subscription.
+
+        NOT part of the ``BillingProviderAdapter`` ABC — Dodo-specific.
+        The caller (``app/routers/billing.py``) only invokes this after
+        confirming, from the workspace's own stored
+        ``NormalizedSubscription`` row, that its existing provider is
+        already Dodo; Stripe and Paddle are entirely unaffected by this
+        method's existence.
+
+        Proration mirrors the exact asymmetric policy ``update_subscription``
+        above already applies to seat changes (an established, not a new,
+        policy choice in this file): moving to a higher-priced plan is
+        charged immediately (prorated); moving to a lower-priced plan
+        takes effect without an immediate credit.
+        """
+        client = self._require_configured()
+        mapping = self._catalog_mapping
+        assert mapping is not None
+
+        product_id = mapping.product_id_for_plan(target_plan_id)
+        if product_id is None:
+            raise DodoUnsupportedPlanError(f"Dodo has no catalog mapping for plan {target_plan_id!r}.")
+
+        is_upgrade_to_team = target_plan_id == PlanId.TEAM
+        proration_mode = PRORATION_MODE_SEAT_ADDED if is_upgrade_to_team else PRORATION_MODE_SEAT_REMOVED
+
+        body: dict = {"product_id": product_id, "quantity": 1, "proration_billing_mode": proration_mode}
+        if target_plan_id == PlanId.TEAM:
+            additional_quantity = calculate_desired_additional_quantity(billable_seat_count)
+            if additional_quantity > 0:
+                body["addons"] = [{"addon_id": mapping.team_seat_addon_id, "quantity": additional_quantity}]
+            else:
+                body["addons"] = []
+        else:
+            # Pro has no add-ons — explicitly clear any Team seat add-on
+            # left over from a Team -> Pro downgrade.
+            body["addons"] = []
+
+        client.change_plan(subscription_reference.external_id, body=body)
+        return ProviderOperationResult(state="ok", detail=f"changed_plan_to={target_plan_id.value}")
+
     # ── Cancellation ─────────────────────────────────────────────────────
 
     def cancel_subscription(self, request: CancelSubscriptionRequest) -> ProviderOperationResult:

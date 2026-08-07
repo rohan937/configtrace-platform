@@ -2302,10 +2302,18 @@ export async function getTeamPricingPreview(
  * seat count, and pricing entirely server-side; the client never sends a
  * price ID or seat count, and decides how to complete checkout only from
  * this response's own `provider`/`checkout_url`/`external_reference`.
+ *
+ * `checkout_url` is `null` and `requires_redirect` is `false` when this
+ * call changed an EXISTING Dodo subscription's plan in place (fix for a
+ * double-billing bug — see backend `_change_existing_dodo_plan`) rather
+ * than creating a new checkout session. In that case there is nothing to
+ * redirect to; the caller should show a success state and reload billing
+ * status instead.
  */
 export interface TeamCheckoutResponse {
   provider: string;
-  checkout_url: string;
+  checkout_url: string | null;
+  requires_redirect: boolean;
   external_reference: string | null;
 }
 

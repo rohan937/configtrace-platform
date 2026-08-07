@@ -189,6 +189,54 @@ def find_duplicate_subscriptions(db) -> list[dict]:
     return findings
 
 
+def find_multi_subscription_customers(db, *, provider: str = "dodo") -> list[dict]:
+    """Detect a SINGLE workspace/customer that has had more than one
+    distinct provider subscription_reference among its PROCESSED webhook
+    events — the signature of the double-billing bug fixed alongside this
+    diagnostic (checkout previously created a brand-new, independent
+    Dodo subscription for a customer instead of changing their existing
+    one in place, so both stayed active simultaneously).
+
+    This is intentionally DIFFERENT from ``find_duplicate_subscriptions``
+    above: that function flags one provider reference shared ACROSS
+    workspaces (a data-integrity bug), whereas this one flags multiple
+    DIFFERENT provider references for the SAME customer WITHIN one
+    workspace — invisible to the ``NormalizedSubscription`` table alone,
+    since that table holds only the single latest row per workspace
+    (unique on workspace_id) and would silently show just the most
+    recent subscription. The only place both subscription IDs are still
+    visible is the webhook event history, which this function reads —
+    read-only, no Dodo API call."""
+    from app.billing.models import BillingWebhookEvent
+
+    rows = (
+        db.query(BillingWebhookEvent)
+        .filter(
+            BillingWebhookEvent.provider == provider,
+            BillingWebhookEvent.processing_status == "processed",
+            BillingWebhookEvent.customer_reference.isnot(None),
+            BillingWebhookEvent.subscription_reference.isnot(None),
+        )
+        .all()
+    )
+    by_customer: dict[str, set[str]] = {}
+    for row in rows:
+        by_customer.setdefault(row.customer_reference, set()).add(row.subscription_reference)
+
+    findings = []
+    for customer_reference, sub_refs in by_customer.items():
+        if len(sub_refs) > 1:
+            findings.append(
+                {
+                    "kind": "multiple_subscription_references_for_one_customer",
+                    "provider": provider,
+                    "customer_reference": customer_reference,
+                    "subscription_references": sorted(sub_refs),
+                }
+            )
+    return findings
+
+
 def find_stuck_webhooks(db, *, older_than_minutes: int = 60) -> list[dict]:
     """Webhook rows still 'pending' or 'failed' older than the threshold —
     a signal that reconciliation or manual investigation is needed. Never
@@ -444,6 +492,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("duplicate-subscriptions", help="Detect duplicate provider references across workspaces.")
 
+    msc = sub.add_parser(
+        "multi-subscription-conflicts",
+        help="Detect one customer with more than one distinct subscription_reference in webhook history "
+             "(double-billing signature: two live subscriptions for one customer within one workspace).",
+    )
+    msc.add_argument("--provider", default="dodo")
+
     sw = sub.add_parser("stuck-webhooks", help="Detect pending/failed webhook events older than a threshold.")
     sw.add_argument("--older-than-minutes", type=int, default=60)
 
@@ -589,6 +644,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.command == "duplicate-subscriptions":
             findings = find_duplicate_subscriptions(db)
             _print_list_table("Duplicate provider references", findings)
+            return 1 if findings else 0
+
+        if args.command == "multi-subscription-conflicts":
+            findings = find_multi_subscription_customers(db, provider=args.provider)
+            _print_list_table(
+                f"Customers with multiple live subscription references (provider={args.provider!r})", findings
+            )
+            if findings:
+                print(
+                    "\n  Each row above is one customer with more than one distinct Dodo subscription "
+                    "ID seen in processed webhook history — check the Dodo dashboard for that customer "
+                    "and cancel whichever subscription is not the one currently reflected in "
+                    "NormalizedSubscription."
+                )
             return 1 if findings else 0
 
         if args.command == "stuck-webhooks":

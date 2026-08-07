@@ -719,6 +719,16 @@ export default function BillingPage() {
         // checkout URL redirect below rather than leaving the user stuck.
       }
     }
+    if (response.requires_redirect === false) {
+      // An existing Dodo subscription was changed in place (no new
+      // checkout session was created) — nothing to redirect to. Show
+      // success and reload billing state instead.
+      setSuccessMsg("Plan changed! It may take a moment to reflect here.");
+      setActionBusy(false);
+      checkoutInFlightRef.current = false;
+      load();
+      return;
+    }
     if (response.checkout_url) {
       window.location.href = response.checkout_url;
       return;

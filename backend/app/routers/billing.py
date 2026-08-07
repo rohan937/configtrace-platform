@@ -297,12 +297,94 @@ def create_portal(
 
 class NeutralCheckoutResponse(BaseModel):
     provider: str
-    checkout_url: str
+    # None when this call changed an EXISTING Dodo subscription in place
+    # rather than creating a new checkout session — there is nothing to
+    # redirect the browser to (see requires_redirect below).
+    checkout_url: str | None = None
+    # False when the plan change has already been applied server-side
+    # (existing Dodo subscription changed via change_subscription_plan)
+    # and the frontend must NOT navigate anywhere; it should just show a
+    # success state and reload billing status. True (the default)
+    # preserves every existing caller's behavior — a real checkout
+    # session was created and checkout_url is a redirect target, as it
+    # always has been.
+    requires_redirect: bool = True
     # Paddle transaction ID — used by the frontend to open the Paddle.js
     # overlay checkout directly (Paddle.Checkout.open({transactionId}))
     # instead of a full page redirect. None for Stripe (which uses
     # checkout_url as a redirect target, as it always has).
     external_reference: str | None = None
+
+
+# Dodo subscription statuses for which the subscription is still "live" in
+# Dodo (i.e. actually exists there and can be changed in place). A
+# canceled/expired/incomplete row has nothing to change on the Dodo side,
+# so a new checkout is the correct path — same as a workspace with no
+# NormalizedSubscription row at all.
+_DODO_LIVE_STATUSES = {"trialing", "active", "past_due", "grace_period"}
+
+
+def _change_existing_dodo_plan(
+    *, sub: NormalizedSubscription, plan_id: PlanId, workspace_id: uuid.UUID, db: Session
+) -> NeutralCheckoutResponse:
+    """Change an EXISTING, live Dodo subscription's plan in place instead
+    of creating a second, independent Dodo subscription (fix for a
+    confirmed production double-billing bug — see
+    ``DodoBillingAdapter.change_subscription_plan``'s docstring for the
+    full mechanism). Only ever called when ``sub.provider == "dodo"`` and
+    ``sub.status`` is live; Stripe and Paddle never reach this function."""
+    if sub.plan_id == plan_id.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This workspace is already on the {plan_id.value} plan.",
+        )
+    if not sub.provider_subscription_reference:
+        raise HTTPException(
+            status_code=400,
+            detail="No existing Dodo subscription reference found for this workspace.",
+        )
+
+    from app.billing.enums import ObjectType
+    from app.billing.provider import BillingProviderReference
+
+    adapter = get_adapter_for_provider(BillingProvider.DODO, db)
+    billable_seats = calculate_billable_member_count(workspace_id, db)
+    subscription_reference = BillingProviderReference(
+        provider=BillingProvider.DODO,
+        object_type=ObjectType.SUBSCRIPTION,
+        external_id=sub.provider_subscription_reference,
+        workspace_id=workspace_id,  # type: ignore[arg-type]
+    )
+    adapter.change_subscription_plan(  # type: ignore[attr-defined]
+        subscription_reference=subscription_reference,
+        target_plan_id=plan_id,
+        billable_seat_count=billable_seats,
+    )
+
+    from app.billing.audit import record_audit_event
+    from app.billing.enums import BillingAuditEventType
+
+    record_audit_event(
+        workspace_id=workspace_id,
+        event_type=BillingAuditEventType.SUBSCRIPTION_CHANGED,
+        provider=BillingProvider.DODO,
+        details={
+            "previous_plan_id": sub.plan_id,
+            "new_plan_id": plan_id.value,
+            "reason": "existing_dodo_subscription_plan_change_requested_via_checkout_endpoint",
+        },
+        db=db,
+    )
+    db.commit()
+
+    # The DB row itself is intentionally NOT mutated here — the
+    # subsequent Dodo `subscription.updated` webhook is the single
+    # source of truth for plan_id/status/period dates (same discipline
+    # every other Dodo state transition already follows). This call only
+    # ever mutates the Dodo-side subscription.
+    return NeutralCheckoutResponse(
+        provider=BillingProvider.DODO.value, checkout_url=None, requires_redirect=False,
+    )
 
 
 def _create_plan_checkout(
@@ -313,7 +395,25 @@ def _create_plan_checkout(
     that used to live inline in ``create_team_checkout``). The client never
     supplies a price ID, plan, or seat count (message-2 spec item 10);
     success/cancel URLs are built entirely server-side from
-    ``settings.effective_frontend_url``, never accepted from the client."""
+    ``settings.effective_frontend_url``, never accepted from the client.
+
+    Double-billing fix: before creating any new checkout, check whether
+    this workspace already has a LIVE Dodo subscription. If so, this is a
+    plan change on an existing customer, not a new sign-up — routing it
+    through ``adapter.create_checkout`` would create a second,
+    independent Dodo subscription while the original stays active and
+    billable (the exact bug confirmed in production). Stripe and Paddle
+    workspaces are entirely unaffected: nothing about this check changes
+    their behavior, since the branch only triggers when
+    ``sub.provider == "dodo"``."""
+    existing_sub = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == workspace_id)
+        .first()
+    )
+    if existing_sub is not None and existing_sub.provider == "dodo" and existing_sub.status in _DODO_LIVE_STATUSES:
+        return _change_existing_dodo_plan(sub=existing_sub, plan_id=plan_id, workspace_id=workspace_id, db=db)
+
     provider = provider_for_checkout(workspace_id, db)
     adapter = get_adapter_for_provider(provider, db)
 
