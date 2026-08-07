@@ -24,12 +24,26 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.integration import Integration
 from app.models.sync_run import SyncRun
 
 logger = logging.getLogger(__name__)
+
+
+class SyncAlreadyInProgressError(Exception):
+    """Raised when the DB-level in-flight guard rejects a duplicate SyncRun.
+
+    ``has_in_flight_sync()`` is a plain SELECT with no lock — two callers
+    racing each other (a manual "Sync Now" against a Beat tick, a
+    double-click, two Beat workers) can both pass that check before either
+    commits. The ``uq_sync_runs_one_in_flight_per_integration`` partial
+    unique index (mig037) is the actual guard; this exception is what
+    ``create_sync_run`` raises when that index rejects the insert, so
+    callers can treat it exactly like the ``has_in_flight_sync()`` case.
+    """
 
 # Status values that count as "still in flight" for duplicate-prevention.
 # When a scheduled sync would pick an integration that already has one of
@@ -84,6 +98,15 @@ def create_sync_run(
         triggered_by:   ``"manual"`` (the default — preserves the M21/M22
                         behaviour of ``POST /syncs``) or ``"scheduled"``
                         (used by the M23 Celery Beat task).
+
+    Raises:
+        SyncAlreadyInProgressError: The DB-level in-flight guard
+            (``uq_sync_runs_one_in_flight_per_integration``, mig037)
+            rejected this insert because a ``pending``/``running`` SyncRun
+            already exists for *integration_id*. Callers should treat this
+            identically to a ``has_in_flight_sync()`` pre-check failure —
+            it exists specifically to catch the race that pre-check alone
+            cannot close.
     """
     sync_run = SyncRun(
         integration_id=integration_id,
@@ -92,7 +115,13 @@ def create_sync_run(
         status="pending",
     )
     db.add(sync_run)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise SyncAlreadyInProgressError(
+            f"A sync is already in progress for integration {integration_id}"
+        ) from None
     db.refresh(sync_run)  # populates server-default fields (started_at)
     return sync_run
 
@@ -381,12 +410,26 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
                 )
                 continue
 
-            sync_run = create_sync_run(
-                user_id=integration.user_id,
-                integration_id=integration.id,
-                db=db,
-                triggered_by="scheduled",
-            )
+            try:
+                sync_run = create_sync_run(
+                    user_id=integration.user_id,
+                    integration_id=integration.id,
+                    db=db,
+                    triggered_by="scheduled",
+                )
+            except SyncAlreadyInProgressError:
+                # The has_in_flight_sync() check above raced with another
+                # inserter (a manual Sync Now, or a second Beat worker) and
+                # lost — the DB-level guard caught it. Same outcome as the
+                # pre-check catching it: skip this tick.
+                skipped_in_flight += 1
+                logger.info(
+                    "scheduled_sync skipped — lost race to another "
+                    "in-flight-sync inserter  integration_id=%s user_id=%s",
+                    integration.id,
+                    integration.user_id,
+                )
+                continue
             sync_integration.delay(
                 sync_run_id=str(sync_run.id),
                 integration_id=str(integration.id),

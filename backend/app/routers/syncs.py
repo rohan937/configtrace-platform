@@ -92,11 +92,23 @@ def create_sync(
             ),
         )
 
-    sync_run = sync_service.create_sync_run(
-        user_id=current_user.id,
-        integration_id=body.integration_id,
-        db=db,
-    )
+    try:
+        sync_run = sync_service.create_sync_run(
+            user_id=current_user.id,
+            integration_id=body.integration_id,
+            db=db,
+        )
+    except sync_service.SyncAlreadyInProgressError:
+        # has_in_flight_sync() above raced with another inserter (a Beat
+        # tick, or a second concurrent request) and lost — the DB-level
+        # guard (mig037) caught it. Same response as the pre-check case.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A sync is already in progress for this integration. "
+                "Wait for it to complete before triggering another."
+            ),
+        ) from None
 
     # Import deferred to avoid circular imports at module load time and to
     # ensure the SyncRun is committed before the task is enqueued.
