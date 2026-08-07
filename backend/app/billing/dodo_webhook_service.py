@@ -19,6 +19,7 @@ reading it off the parsed event dict.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -486,3 +487,179 @@ def _grace_period_days() -> int:
     from app.config import settings
 
     return settings.BILLING_GRACE_PERIOD_DAYS
+
+
+# ── Read-only reconciliation fallback (webhook-delivery-independent) ───────
+#
+# Webhook processing above remains the SOLE AUTOMATIC source of truth —
+# nothing here is invoked by any webhook, scheduled job, or request
+# handler. This exists only for the explicit, operator-invoked command
+# ``scripts/dodo_live_cutover.py reconcile-from-dodo``, for exactly the
+# situation this module's diagnostics were built to investigate: a real
+# Dodo subscription exists and is genuinely paid, but the webhook that
+# should have told ConfigTrace about it never arrived (or was delayed) —
+# root-caused, in the incident this function was added for, to Dodo
+# itself never attempting delivery of the real subscription/payment
+# events (confirmed via Dodo's own webhook Activity log showing zero
+# delivery attempts for the affected transactions — a Dodo-dashboard
+# configuration/platform issue, not a ConfigTrace defect; see the
+# investigation report for this commit).
+
+
+class DodoReconciliationError(Exception):
+    """Raised for any reconciliation precondition that fails closed —
+    never for a successful outcome. Never carries a secret, a full raw
+    payload, or PII — only a short, structural reason string."""
+
+
+def reconcile_workspace_from_dodo_subscription(
+    *, workspace_id: uuid.UUID, dodo_subscription_id: str, db: Session, apply: bool, live: bool = False,
+) -> dict:
+    """Fetch the ACTUAL current state of a real Dodo subscription (a
+    single read-only ``GET /subscriptions/{id}`` call — Test or Live,
+    whichever ``DODO_ENVIRONMENT`` is configured for, gated the same way
+    ``scripts/dodo_live_cutover.py catalog-verify`` gates Live access) and,
+    only when ``apply=True``, create the first ``NormalizedSubscription``
+    row for it — the same "first row" creation the webhook path performs
+    in ``_create_subscription_from_hint``, just triggered by an
+    operator-supplied subscription ID instead of a webhook delivery.
+
+    Fails closed (raises ``DodoReconciliationError`` with a specific,
+    safe reason) for every unsafe condition:
+      * the workspace doesn't exist,
+      * a ``NormalizedSubscription`` row already exists for this
+        workspace under ANY provider — this can NEVER overwrite an
+        existing Stripe/Paddle/Dodo row; the operator must remove it
+        first via a separate, deliberate action if that's genuinely
+        intended,
+      * Dodo is not configured, or the requested environment doesn't
+        match ``DODO_ENVIRONMENT`` (mirrors ``catalog-verify``'s
+        Live/Test mismatch guard — an accidental default invocation can
+        never touch Live),
+      * the Dodo subscription ID doesn't resolve to a real object,
+      * the Dodo subscription's own ``data.metadata.workspace_id`` (if
+        present on the raw response) does NOT match the workspace_id
+        given — cross-checking Dodo's own record against the operator's
+        claim; never trusting either side alone,
+      * the subscription's ``product_id`` doesn't map to a known plan in
+        the configured catalog.
+
+    Never grants access from a bare payment/transaction state — this
+    function only ever reads a *subscription* object, never a payment or
+    transaction; a workspace with only successful payments and no real
+    Dodo subscription object has nothing for this function to reconcile
+    from, by construction.
+
+    Returns a dict describing what was found (and, when ``apply=True``,
+    what was written) — ``created: False`` for a dry run.
+    """
+    from app.billing.adapters.dodo import DodoBillingAdapter, DodoCatalogMapping
+    from app.billing.enums import ObjectType
+    from app.billing.provider import BillingProviderReference
+    from app.config import settings
+
+    workspace = db.get(Workspace, workspace_id)
+    if workspace is None:
+        raise DodoReconciliationError("workspace_not_found")
+
+    existing = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == workspace_id)
+        .first()
+    )
+    if existing is not None:
+        raise DodoReconciliationError(f"workspace_already_has_subscription:provider={existing.provider}")
+
+    if not settings.is_dodo_configured:
+        raise DodoReconciliationError("dodo_not_configured")
+
+    resolved_env = settings.dodo_environment_normalized
+    if resolved_env not in ("test", "live"):
+        raise DodoReconciliationError("dodo_environment_not_configured")
+    if resolved_env == "live" and not live:
+        raise DodoReconciliationError("refused_live_without_explicit_flag")
+    if resolved_env == "test" and live:
+        raise DodoReconciliationError("refused_live_flag_but_configured_environment_is_test")
+
+    mapping = DodoCatalogMapping(
+        environment=resolved_env,
+        pro_product_id=settings.DODO_PRO_PRODUCT_ID,
+        team_product_id=settings.DODO_TEAM_PRODUCT_ID,
+        team_seat_addon_id=settings.DODO_TEAM_ADDITIONAL_SEAT_ADDON_ID,
+    )
+    client = adapter_client_for(resolved_env, settings.DODO_API_KEY)
+    adapter = DodoBillingAdapter(mapping, client)
+
+    try:
+        data = client.get_subscription(dodo_subscription_id)
+    except Exception as exc:  # DodoAPIError subclasses — already-sanitized messages, safe to surface
+        raise DodoReconciliationError(f"dodo_api_error:{exc}") from exc
+
+    if not data:
+        raise DodoReconciliationError("dodo_subscription_not_found")
+
+    raw_metadata = data.get("metadata")
+    if isinstance(raw_metadata, dict) and raw_metadata.get("workspace_id"):
+        try:
+            echoed_workspace_id = uuid.UUID(str(raw_metadata["workspace_id"]))
+        except (ValueError, TypeError):
+            echoed_workspace_id = None
+        if echoed_workspace_id is not None and echoed_workspace_id != workspace_id:
+            raise DodoReconciliationError("workspace_mismatch_with_dodo_metadata")
+
+    snapshot = adapter._snapshot_from_dodo_subscription(data, workspace_id)
+    product_id = data.get("product_id", "")
+    if product_id not in (mapping.pro_product_id, mapping.team_product_id):
+        raise DodoReconciliationError("unknown_product_id")
+
+    plan_id = snapshot.plan_id.value
+    additional_seats = max(0, snapshot.billable_seats - TEAM_INCLUDED_SEATS) if plan_id == "team" else 0
+    normalized_status = normalize_dodo_status(snapshot.status).value
+
+    result = {
+        "workspace_id": str(workspace_id),
+        "dodo_subscription_id": dodo_subscription_id,
+        "plan_id": plan_id,
+        "status": normalized_status,
+        "billable_seats": snapshot.billable_seats,
+        "created": False,
+    }
+
+    if not apply:
+        return result
+
+    sub = NormalizedSubscription(
+        workspace_id=workspace_id,
+        provider=BillingProvider.DODO.value,
+        provider_customer_reference=snapshot.customer_reference.external_id or None,
+        provider_subscription_reference=snapshot.subscription_reference.external_id or None,
+        plan_id=plan_id,
+        billing_interval=snapshot.billing_interval.value,
+        status=normalized_status,
+        billable_seats=snapshot.billable_seats,
+        additional_seat_quantity=additional_seats,
+        current_period_start=snapshot.current_period_start,
+        current_period_end=snapshot.current_period_end,
+        cancel_at_period_end=snapshot.cancel_at_period_end,
+        last_provider_event="reconciled_from_dodo",
+        version=0,
+    )
+    db.add(sub)
+    db.flush()
+
+    record_audit_event(
+        workspace_id=workspace_id, event_type=BillingAuditEventType.PROVIDER_RECONCILIATION,
+        provider=BillingProvider.DODO,
+        details={"plan_id": plan_id, "billing_interval": snapshot.billing_interval.value, "billable_seats": snapshot.billable_seats},
+        db=db,
+    )
+    result["created"] = True
+    return result
+
+
+def adapter_client_for(environment: str, api_key: str | None):
+    """Small factory kept separate so tests can monkeypatch the client
+    construction without touching the reconciliation logic itself."""
+    from app.billing.dodo_client import DodoAPIClient, DodoClientConfig
+
+    return DodoAPIClient(DodoClientConfig(environment=environment, api_key=api_key or ""))

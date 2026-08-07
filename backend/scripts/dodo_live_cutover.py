@@ -13,18 +13,21 @@ prints the exact value to set/unset by hand.
 Safety rules enforced throughout this file:
   * Never print a secret value (DODO_API_KEY, DODO_WEBHOOK_SECRET,
     STRIPE_*, PADDLE_*, etc.) — only whether a variable IS SET.
-  * Read-only by default — the only network call anywhere in this file is
-    a GET (catalog-verify's read-only product lookup). No POST/PATCH ever.
-  * ``catalog-verify`` (the one subcommand that calls the real Dodo API)
-    refuses to run against a Live-mode configuration unless the operator
-    passes ``--live`` explicitly — an accidental default invocation can
-    never touch the Live catalog.
-  * There is no Live-*mutating* command in this file (nothing here calls a
-    POST/PATCH Dodo endpoint or writes BILLING_PROVIDER/DODO_PILOT_WORKSPACE_ID
-    anywhere) — by design, this script cannot perform the cutover itself,
-    only verify preconditions and report state. ``pilot-override`` still
-    requires ``--yes`` and always prints its target before that gate, in
-    the same spirit, since it hands the operator a value to apply by hand.
+  * Read-only by default — every network call in this file is a GET
+    (catalog-verify's product lookup; reconcile-from-dodo's subscription
+    lookup). No POST/PATCH is ever sent to Dodo anywhere in this file.
+  * ``catalog-verify`` and ``reconcile-from-dodo`` (the only two
+    subcommands that call the real Dodo API) refuse to run against a
+    Live-mode configuration unless the operator passes ``--live``
+    explicitly — an accidental default invocation can never touch Live.
+  * ``reconcile-from-dodo`` is the ONE command in this file that can
+    write to the local database — and only when the operator passes
+    ``--yes``; without it, it only prints a dry-run preview of what
+    would be created. It can never overwrite an existing subscription
+    row (any provider), never touch a workspace other than the one
+    named, and never switch BILLING_PROVIDER or
+    DODO_PILOT_WORKSPACE_ID. Every other command in this file remains
+    fully read-only.
   * No script may switch the global provider automatically.
 
 Usage
@@ -44,6 +47,8 @@ Usage
     python scripts/dodo_live_cutover.py stuck-webhooks --older-than-minutes 60
     python scripts/dodo_live_cutover.py unresolved-events
     python scripts/dodo_live_cutover.py health-check
+    python scripts/dodo_live_cutover.py reconcile-from-dodo "Acme Inc" sub_xxx           # dry run
+    python scripts/dodo_live_cutover.py reconcile-from-dodo "Acme Inc" sub_xxx --yes     # actually creates the row
 """
 
 from __future__ import annotations
@@ -450,6 +455,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("health-check", help="Composite, read-only, offline post-cutover health snapshot.")
 
+    rfd = sub.add_parser(
+        "reconcile-from-dodo",
+        help="Fallback for a missed/delayed webhook: fetch a real Dodo subscription and create the first "
+             "NormalizedSubscription row from it. Dry-run by default.",
+    )
+    rfd.add_argument("workspace", help="Workspace display name or UUID.")
+    rfd.add_argument("dodo_subscription_id", help="Real Dodo subscription ID (sub_...) from the Dodo dashboard.")
+    rfd.add_argument("--yes", action="store_true", help="Actually create the row (default: dry-run preview only).")
+    rfd.add_argument("--live", action="store_true", help="Explicitly confirm running against Live Mode.")
+
     return p
 
 
@@ -607,6 +622,47 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"  duplicate_subscriptions_count = {report['duplicate_subscriptions_count']}")
             print(f"  unresolved_workspace_events_count = {report['unresolved_workspace_events_count']}")
             return 0 if report["healthy"] else 1
+
+        if args.command == "reconcile-from-dodo":
+            from app.billing.dodo_webhook_service import (
+                DodoReconciliationError,
+                reconcile_workspace_from_dodo_subscription,
+            )
+
+            try:
+                workspace = resolve_workspace(args.workspace, db)
+            except (LookupError, ValueError) as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+
+            print(f"\n  TARGET workspace: {workspace.name!r} ({workspace.id})")
+            print(f"  TARGET Dodo subscription: {args.dodo_subscription_id!r}")
+            if args.yes:
+                print("  MODE: APPLY — this will create a NormalizedSubscription row if all checks pass.")
+            else:
+                print("  MODE: dry run — pass --yes to actually create the row.")
+
+            try:
+                result = reconcile_workspace_from_dodo_subscription(
+                    workspace_id=workspace.id,
+                    dodo_subscription_id=args.dodo_subscription_id,
+                    db=db,
+                    apply=args.yes,
+                    live=args.live,
+                )
+            except DodoReconciliationError as exc:
+                print(f"\n  REFUSED: {exc}", file=sys.stderr)
+                return 1
+
+            _print_kv_table("Dodo reconciliation result", result)
+            if result["created"]:
+                db.commit()
+                print("\n  Committed.")
+            elif args.yes:
+                print("\n  Nothing was created (see result above).")
+            else:
+                print("\n  (dry run only — no row was created; rerun with --yes to apply)")
+            return 0
 
         parser.error(f"Unknown command: {args.command}")
         return 2
