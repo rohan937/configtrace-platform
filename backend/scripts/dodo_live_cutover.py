@@ -49,6 +49,8 @@ Usage
     python scripts/dodo_live_cutover.py health-check
     python scripts/dodo_live_cutover.py reconcile-from-dodo "Acme Inc" sub_xxx           # dry run
     python scripts/dodo_live_cutover.py reconcile-from-dodo "Acme Inc" sub_xxx --yes     # actually creates the row
+    python scripts/dodo_live_cutover.py prepare-live-pilot "Acme Inc" --expected-test-subscription sub_xxx           # dry run
+    python scripts/dodo_live_cutover.py prepare-live-pilot "Acme Inc" --expected-test-subscription sub_xxx --yes     # applies
 """
 
 from __future__ import annotations
@@ -533,6 +535,21 @@ def _build_parser() -> argparse.ArgumentParser:
     rfd.add_argument("--yes", action="store_true", help="Actually create the row (default: dry-run preview only).")
     rfd.add_argument("--live", action="store_true", help="Explicitly confirm running against Live Mode.")
 
+    plp = sub.add_parser(
+        "prepare-live-pilot",
+        help="Test->Live pilot cutover: mark a workspace's active Dodo TEST subscription obsolete/canceled "
+             "locally (never a Dodo API call, Test or Live) so it stops blocking/granting entitlement once "
+             "DODO_ENVIRONMENT is switched to Live and becomes eligible for a fresh Live checkout. Dry-run "
+             "by default.",
+    )
+    plp.add_argument("workspace", help="Workspace display name or UUID.")
+    plp.add_argument(
+        "--expected-test-subscription", required=True,
+        help="The exact Dodo Test subscription ID (sub_...) currently stored on this workspace's row — "
+             "must match exactly or the command refuses.",
+    )
+    plp.add_argument("--yes", action="store_true", help="Actually apply the transition (default: dry-run preview only).")
+
     return p
 
 
@@ -758,6 +775,57 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print("\n  Nothing was created or replaced (see result above).")
             else:
                 print("\n  (dry run only — no row was created/replaced; rerun with --yes to apply)")
+            return 0
+
+        if args.command == "prepare-live-pilot":
+            from app.billing.dodo_webhook_service import (
+                DodoLivePilotPreparationError,
+                prepare_dodo_workspace_for_live_pilot,
+            )
+
+            try:
+                workspace = resolve_workspace(args.workspace, db)
+            except (LookupError, ValueError) as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+
+            print(f"\n  TARGET workspace: {workspace.name!r} ({workspace.id})")
+            print(f"  EXPECTED existing Test subscription: {args.expected_test_subscription!r}")
+            print("  This command makes NO Dodo API call (Test or Live) — pure local database operation.")
+            if args.yes:
+                print(
+                    "  MODE: APPLY — if all checks pass, this will mark the existing Dodo row obsolete "
+                    "(status=canceled, references cleared) in place. The row and its full audit/webhook "
+                    "history are preserved — never deleted."
+                )
+            else:
+                print("  MODE: dry run — pass --yes to actually apply the transition.")
+
+            try:
+                result = prepare_dodo_workspace_for_live_pilot(
+                    workspace_id=workspace.id,
+                    expected_test_subscription_reference=args.expected_test_subscription,
+                    db=db,
+                    apply=args.yes,
+                )
+            except DodoLivePilotPreparationError as exc:
+                print(f"\n  REFUSED: {exc}", file=sys.stderr)
+                return 1
+
+            _print_kv_table("Live-pilot preparation result", result)
+            if result.get("already_prepared"):
+                print("\n  Already prepared for Live cutover — no-op.")
+            elif result["prepared"]:
+                db.commit()
+                print(
+                    f"\n  Committed. Previous Test subscription reference was "
+                    f"{result.get('previous_subscription_reference')!r}. The workspace is now eligible for "
+                    f"a fresh Dodo checkout (not change-plan) the next time Pro/Team is clicked."
+                )
+            elif args.yes:
+                print("\n  Nothing was changed (see result above).")
+            else:
+                print("\n  (dry run only — no row was changed; rerun with --yes to apply)")
             return 0
 
         parser.error(f"Unknown command: {args.command}")

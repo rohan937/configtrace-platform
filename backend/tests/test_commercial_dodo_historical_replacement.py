@@ -441,9 +441,32 @@ class TestTargetAlreadyAttachedToAnotherWorkspaceRefuses:
             )
 
 
-# Existing row with no stored reference at all cannot be safety-verified
-class TestExistingRowWithoutReferenceRefuses:
-    def test_refuses_when_existing_row_has_no_subscription_reference(self, db_session, workspace, monkeypatch):
+# Existing row with no stored reference: trust the locally recorded
+# status (nothing to re-verify against) — needed so a workspace prepared
+# via prepare_dodo_workspace_for_live_pilot (which deliberately clears
+# the reference) can still be repaired by reconciliation without any
+# Dodo call for the existing row.
+class TestExistingRowWithoutReferenceTrustsLocalStatus:
+    def test_refuses_when_locally_recorded_status_is_still_live(self, db_session, workspace, monkeypatch):
+        _configure_dodo(monkeypatch)
+        sub = NormalizedSubscription(
+            workspace_id=workspace.id, provider="dodo", plan_id="pro", status="active",
+            provider_subscription_reference=None,
+        )
+        db_session.add(sub)
+        db_session.commit()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("must never call Dodo for the existing row when there is no reference to query")
+
+        monkeypatch.setattr("app.billing.dodo_webhook_service.adapter_client_for", lambda env, key: _mock_client(handler))
+
+        with pytest.raises(DodoReconciliationError, match="existing_dodo_subscription_still_live"):
+            reconcile_workspace_from_dodo_subscription(
+                workspace_id=workspace.id, dodo_subscription_id="sub_new_team", db=db_session, apply=True,
+            )
+
+    def test_succeeds_when_locally_recorded_status_is_canceled(self, db_session, workspace, monkeypatch):
         _configure_dodo(monkeypatch)
         sub = NormalizedSubscription(
             workspace_id=workspace.id, provider="dodo", plan_id="pro", status="canceled",
@@ -452,12 +475,64 @@ class TestExistingRowWithoutReferenceRefuses:
         db_session.add(sub)
         db_session.commit()
 
+        handler = _router_handler({
+            "sub_new_team": _sub_body(
+                subscription_id="sub_new_team", status="active", product_id="prod_team_test",
+                workspace_id=workspace.id, plan_id="team",
+            ),
+        })
+        monkeypatch.setattr("app.billing.dodo_webhook_service.adapter_client_for", lambda env, key: _mock_client(handler))
+
+        result = reconcile_workspace_from_dodo_subscription(
+            workspace_id=workspace.id, dodo_subscription_id="sub_new_team", db=db_session, apply=True,
+        )
+        db_session.commit()
+        assert result["replaced"] is True
+        db_session.refresh(sub)
+        assert sub.plan_id == "team"
+        assert sub.provider_subscription_reference == "sub_new_team"
+
+
+# Existing row whose stored reference no longer exists in the CURRENTLY
+# CONFIGURED environment (confirmed 404) — the Test->Live cutover
+# signature: an old Test-mode subscription ID genuinely does not exist in
+# the Live API. Safe to replace without requiring a cleared reference.
+class TestExistingReferenceNotFoundInCurrentEnvironmentIsSafeToReplace:
+    def test_404_on_existing_reference_allows_replacement(self, db_session, workspace, monkeypatch):
+        _configure_dodo(monkeypatch)
+        _existing_row(db_session, workspace, status="active", subscription_id="sub_old_test_only")
+
+        from app.billing.dodo_client import DodoAPIError
+
         def handler(request: httpx.Request) -> httpx.Response:
-            raise AssertionError("must never call Dodo without an existing reference to verify")
+            if "sub_old_test_only" in str(request.url):
+                return httpx.Response(404, json={"message": "not found"})
+            return httpx.Response(
+                200,
+                json=_sub_body(
+                    subscription_id="sub_new_team", status="active", product_id="prod_team_test",
+                    workspace_id=workspace.id, plan_id="team",
+                ),
+            )
 
         monkeypatch.setattr("app.billing.dodo_webhook_service.adapter_client_for", lambda env, key: _mock_client(handler))
 
-        with pytest.raises(DodoReconciliationError, match="existing_subscription_has_no_reference_to_verify"):
+        result = reconcile_workspace_from_dodo_subscription(
+            workspace_id=workspace.id, dodo_subscription_id="sub_new_team", db=db_session, apply=True,
+        )
+        db_session.commit()
+        assert result["replaced"] is True
+
+    def test_non_404_error_on_existing_reference_still_refuses(self, db_session, workspace, monkeypatch):
+        _configure_dodo(monkeypatch)
+        _existing_row(db_session, workspace, status="active", subscription_id="sub_old")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, json={"message": "server error"})
+
+        monkeypatch.setattr("app.billing.dodo_webhook_service.adapter_client_for", lambda env, key: _mock_client(handler))
+
+        with pytest.raises(DodoReconciliationError, match="existing_subscription_status_unverifiable"):
             reconcile_workspace_from_dodo_subscription(
                 workspace_id=workspace.id, dodo_subscription_id="sub_new_team", db=db_session, apply=True,
             )

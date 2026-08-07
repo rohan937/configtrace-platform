@@ -770,22 +770,54 @@ def reconcile_workspace_from_dodo_subscription(
     if replacing_existing:
         # Re-verify the EXISTING row's status directly against Dodo right
         # now — never trust the possibly-stale locally-stored status to
-        # decide whether it's safe to replace. A subscription reference
-        # missing entirely, or a lookup failure, is refused rather than
-        # assumed obsolete.
+        # decide whether it's safe to replace, EXCEPT for the two narrow
+        # carve-outs below (both needed for the Test->Live pilot cutover
+        # to be repairable without hand-editing the database):
+        #
+        # 1. No stored reference at all (e.g. a workspace prepared via
+        #    ``prepare_dodo_workspace_for_live_pilot``, which deliberately
+        #    clears the reference so a stray webhook can never re-match
+        #    this row) — nothing to query, so the locally-recorded
+        #    NORMALIZED status is trusted instead. That status can only
+        #    have gotten here through our own audited webhook/
+        #    reconciliation/pilot-preparation code paths, never organic
+        #    drift, so trusting it here is safe.
+        # 2. The stored reference resolves to a real HTTP 404 in the
+        #    CURRENTLY CONFIGURED environment — i.e. it definitively does
+        #    not exist there right now. This is exactly what a Test-mode
+        #    subscription ID looks like once ``DODO_ENVIRONMENT`` has been
+        #    switched to Live (separate ID spaces per environment): it
+        #    cannot possibly be a live, entitlement-granting subscription
+        #    in the environment we're now querying, so it's safe to
+        #    proceed with replacement. Any OTHER API error (auth failure,
+        #    network error, 5xx, rate limit) still refuses — only a
+        #    confirmed "does not exist here" is treated as safe.
         if not existing.provider_subscription_reference:
-            raise DodoReconciliationError("existing_subscription_has_no_reference_to_verify")
-        try:
-            existing_data = client.get_subscription(existing.provider_subscription_reference)
-        except Exception as exc:
-            raise DodoReconciliationError(f"existing_subscription_status_unverifiable:{exc}") from exc
-        if not existing_data:
-            raise DodoReconciliationError("existing_subscription_status_unverifiable:not_found")
-        existing_raw_status = existing_data.get("status", "")
-        if existing_raw_status in _DODO_RAW_LIVE_STATUSES:
-            raise DodoReconciliationError(f"existing_dodo_subscription_still_live:status={existing_raw_status}")
-        if existing_raw_status not in _DODO_RAW_REPLACEABLE_STATUSES:
-            raise DodoReconciliationError(f"existing_dodo_subscription_status_unrecognized:status={existing_raw_status}")
+            if existing.status not in ("canceled", "expired", "incomplete"):
+                raise DodoReconciliationError(f"existing_dodo_subscription_still_live:status={existing.status}")
+        else:
+            from app.billing.dodo_client import DodoAPIError
+
+            existing_data: dict | None
+            try:
+                existing_data = client.get_subscription(existing.provider_subscription_reference)
+            except DodoAPIError as exc:
+                if exc.status_code == 404:
+                    existing_data = None  # confirmed nonexistent in the current environment — safe
+                else:
+                    raise DodoReconciliationError(f"existing_subscription_status_unverifiable:{exc}") from exc
+            except Exception as exc:
+                raise DodoReconciliationError(f"existing_subscription_status_unverifiable:{exc}") from exc
+
+            if existing_data:
+                existing_raw_status = existing_data.get("status", "")
+                if existing_raw_status in _DODO_RAW_LIVE_STATUSES:
+                    raise DodoReconciliationError(f"existing_dodo_subscription_still_live:status={existing_raw_status}")
+                if existing_raw_status not in _DODO_RAW_REPLACEABLE_STATUSES:
+                    raise DodoReconciliationError(
+                        f"existing_dodo_subscription_status_unrecognized:status={existing_raw_status}"
+                    )
+            # else: empty/not-found response — treated as confirmed nonexistent, safe to replace.
 
     try:
         data = client.get_subscription(dodo_subscription_id)
@@ -908,6 +940,176 @@ def reconcile_workspace_from_dodo_subscription(
         db=db,
     )
     result["created"] = True
+    return result
+
+
+class DodoLivePilotPreparationError(Exception):
+    """Raised for any precondition failure in
+    ``prepare_dodo_workspace_for_live_pilot`` — never for a successful
+    outcome. Never carries a secret, a full raw payload, or PII."""
+
+
+def prepare_dodo_workspace_for_live_pilot(
+    *, workspace_id: uuid.UUID, expected_test_subscription_reference: str, db: Session, apply: bool,
+) -> dict:
+    """Test->Live pilot cutover preparation — a PURE LOCAL DATABASE
+    operation, never a Dodo API call of any kind (Test or Live), so it is
+    always safe to run regardless of which environment ``DODO_ENVIRONMENT``
+    is currently pointed at.
+
+    Root problem this repairs: a pilot workspace's ``NormalizedSubscription``
+    row still references an active Dodo TEST subscription. Once
+    ``DODO_ENVIRONMENT`` is switched to Live, two things go wrong if this
+    row is left as-is:
+      1. ``_create_plan_checkout`` (app/routers/billing.py) sees the row's
+         status is still "live" (active/trialing/past_due/grace_period)
+         and routes a Pro/Team click to ``change_subscription_plan``
+         against the OLD TEST subscription ID using the NEW LIVE
+         credentials — Dodo Live has no such subscription, so the call
+         fails and the first real Live checkout is blocked entirely.
+      2. Even if that were bypassed, entitlement would still nominally be
+         "granted" from a subscription that no longer represents a real,
+         current Live payment relationship.
+
+    This function marks the existing row's TEST subscription obsolete —
+    status becomes ``canceled`` (immediately denies paid entitlement via
+    ``decide_entitlements``, which only grants access for
+    trialing/active/past_due/grace_period), and BOTH
+    ``provider_subscription_reference`` and ``provider_customer_reference``
+    are cleared to ``None``. Clearing (rather than leaving the old Test
+    IDs in place) is a deliberate defense-in-depth choice: it guarantees
+    NO future webhook delivery — including a stray, late-arriving Test
+    webhook retry — can ever re-match this row via
+    ``_find_subscription_by_dodo_reference`` and silently revive stale
+    Test-mode entitlement. The row itself, and its full webhook/audit
+    history, are preserved — never deleted (message requirement: prefer
+    an audited state transition over deletion). ``version`` is
+    incremented and ``last_provider_event`` is set to
+    ``"prepared_for_live_cutover"`` so this transition is unambiguous in
+    any future inspection.
+
+    After preparation, the workspace's ``NormalizedSubscription`` no
+    longer matches ``_DODO_LIVE_STATUSES``, so the next Pro/Team click
+    correctly falls through to a FRESH ``adapter.create_checkout`` call —
+    a normal new Dodo (now Live) checkout, exactly like a workspace that
+    never had a subscription. Because the row still exists (deliberately
+    preserved, not deleted), the resulting Live webhook's
+    ``_create_subscription_from_hint`` will decline to auto-create a
+    second row (its "workspace already has a subscription" guard) — by
+    design, this makes the FIRST Live subscription's activation an
+    explicit operator action via ``reconcile-from-dodo <workspace>
+    <new_live_sub_id> --live --yes`` (which already knows how to replace
+    an obsolete Dodo row in place — see
+    ``reconcile_workspace_from_dodo_subscription``'s replace path, which
+    trusts a cleared reference's locally-recorded ``canceled`` status
+    without any further Dodo call). This is intentional, not a bug:
+    activating the very first real-money Live subscription for the pilot
+    should never happen silently.
+
+    Fails closed for every unsafe condition:
+      * the workspace doesn't exist,
+      * no ``NormalizedSubscription`` row exists for the workspace,
+      * the row's provider is not ``dodo`` (Stripe/Paddle rows are never
+        touched by this function, unconditionally),
+      * the row's stored ``provider_subscription_reference`` does not
+        exactly match the operator-supplied
+        ``expected_test_subscription_reference`` — this is the core
+        safety check: the operator must prove they know exactly which
+        subscription they intend to obsolete, so a copy-paste mistake
+        (wrong workspace, stale expectation) can never silently cancel
+        the wrong subscription's entitlement.
+
+    Idempotent: if the row was already prepared (``last_provider_event ==
+    "prepared_for_live_cutover"``), re-running is a safe no-op
+    (``already_prepared: True``) regardless of the expected-reference
+    argument — the reference is already cleared, so there's nothing left
+    to compare it against.
+
+    Returns a dict describing the current/would-be state. ``prepared`` is
+    ``False`` for a dry run or for the idempotent-no-op case.
+    """
+    workspace = db.get(Workspace, workspace_id)
+    if workspace is None:
+        raise DodoLivePilotPreparationError("workspace_not_found")
+
+    sub = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == workspace_id)
+        .first()
+    )
+    if sub is None:
+        raise DodoLivePilotPreparationError("no_subscription_found")
+
+    if sub.provider != BillingProvider.DODO.value:
+        raise DodoLivePilotPreparationError(f"not_a_dodo_subscription:provider={sub.provider}")
+
+    if sub.last_provider_event == "prepared_for_live_cutover":
+        return {
+            "workspace_id": str(workspace_id),
+            "provider": sub.provider,
+            "plan_id": sub.plan_id,
+            "status": sub.status,
+            "provider_subscription_reference": sub.provider_subscription_reference,
+            "already_prepared": True,
+            "prepared": False,
+            "eligible_for_live_checkout": True,
+        }
+
+    if sub.provider_subscription_reference != expected_test_subscription_reference:
+        raise DodoLivePilotPreparationError(
+            f"expected_subscription_mismatch:stored={sub.provider_subscription_reference!r}"
+        )
+
+    result = {
+        "workspace_id": str(workspace_id),
+        "provider": sub.provider,
+        "plan_id": sub.plan_id,
+        "status": sub.status,
+        "provider_subscription_reference": sub.provider_subscription_reference,
+        "already_prepared": False,
+        "prepared": False,
+        "eligible_for_live_checkout": False,
+    }
+
+    if not apply:
+        result["would_prepare"] = True
+        result["action"] = (
+            "mark status=canceled, clear provider_subscription_reference and "
+            "provider_customer_reference, preserve the row and all history"
+        )
+        return result
+
+    previous_status = sub.status
+    previous_subscription_reference = sub.provider_subscription_reference
+    previous_customer_reference = sub.provider_customer_reference
+
+    sub.status = "canceled"
+    sub.provider_subscription_reference = None
+    sub.provider_customer_reference = None
+    sub.last_provider_event = "prepared_for_live_cutover"
+    sub.version += 1
+    db.flush()
+
+    record_audit_event(
+        workspace_id=workspace_id,
+        event_type=BillingAuditEventType.SUBSCRIPTION_CHANGED,
+        provider=BillingProvider.DODO,
+        details={
+            "previous_status": previous_status,
+            "new_status": "canceled",
+            "reason": (
+                f"prepared_for_live_pilot_cutover:previous_test_subscription="
+                f"{previous_subscription_reference}:previous_customer={previous_customer_reference}"
+            ),
+        },
+        db=db,
+    )
+
+    result["status"] = "canceled"
+    result["provider_subscription_reference"] = None
+    result["prepared"] = True
+    result["eligible_for_live_checkout"] = True
+    result["previous_subscription_reference"] = previous_subscription_reference
     return result
 
 
