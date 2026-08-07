@@ -204,7 +204,15 @@ class TestExistingSubscriptionNeverOverwritten:
                 workspace_id=workspace.id, dodo_subscription_id="sub_recon_1", db=db_session, apply=True,
             )
 
-    def test_workspace_with_existing_dodo_subscription_is_refused(self, db_session, workspace, monkeypatch):
+    def test_workspace_with_existing_live_dodo_subscription_is_refused(self, db_session, workspace, monkeypatch):
+        """Historical-recovery message extended this: a DODO existing row
+        is no longer an unconditional refusal — it is now re-verified
+        live against Dodo, and refused only if that live check shows it's
+        still active/on_hold/pending. See
+        test_commercial_dodo_historical_replacement.py for the full
+        replace-when-obsolete matrix; this test keeps the "still live"
+        refusal case covered here since it directly supersedes the old
+        unconditional-refusal test this replaces."""
         _configure_dodo(monkeypatch)
         existing = NormalizedSubscription(
             workspace_id=workspace.id, provider="dodo", plan_id="pro", status="active",
@@ -214,13 +222,16 @@ class TestExistingSubscriptionNeverOverwritten:
         db_session.commit()
 
         def handler(request: httpx.Request) -> httpx.Response:
-            raise AssertionError("must never call Dodo when a subscription row already exists")
+            # The existing subscription is re-verified live and found
+            # still active — must refuse without ever fetching the target.
+            assert "sub_already_on_file" in str(request.url)
+            return httpx.Response(200, json=_subscription_response(subscription_id="sub_already_on_file", status="active"))
 
         monkeypatch.setattr(
             "app.billing.dodo_webhook_service.adapter_client_for", lambda env, key: _mock_client(handler)
         )
 
-        with pytest.raises(DodoReconciliationError, match="workspace_already_has_subscription"):
+        with pytest.raises(DodoReconciliationError, match="existing_dodo_subscription_still_live"):
             reconcile_workspace_from_dodo_subscription(
                 workspace_id=workspace.id, dodo_subscription_id="sub_recon_1", db=db_session, apply=True,
             )
@@ -297,7 +308,17 @@ class TestLiveModeGuard:
 
 
 class TestReconciliationIsIdempotent:
-    def test_second_reconciliation_attempt_is_refused_not_duplicated(self, db_session, workspace, monkeypatch):
+    def test_second_reconciliation_attempt_with_same_subscription_is_idempotent_noop(
+        self, db_session, workspace, monkeypatch
+    ):
+        """Historical-recovery message extended this: re-running
+        reconciliation with the EXACT subscription ID already on file is
+        now a safe idempotent no-op (``already_reconciled: True``) rather
+        than an error — required so an operator can safely re-run the
+        same reconcile-from-dodo command without it erroring out. A
+        DIFFERENT target subscription with an existing DODO row is a
+        separate case, covered in
+        test_commercial_dodo_historical_replacement.py."""
         _configure_dodo(monkeypatch)
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -313,10 +334,12 @@ class TestReconciliationIsIdempotent:
         db_session.commit()
         assert first["created"] is True
 
-        with pytest.raises(DodoReconciliationError, match="workspace_already_has_subscription"):
-            reconcile_workspace_from_dodo_subscription(
-                workspace_id=workspace.id, dodo_subscription_id="sub_recon_1", db=db_session, apply=True,
-            )
+        second = reconcile_workspace_from_dodo_subscription(
+            workspace_id=workspace.id, dodo_subscription_id="sub_recon_1", db=db_session, apply=True,
+        )
+        assert second["already_reconciled"] is True
+        assert second["created"] is False
+        assert second.get("replaced") is False
 
         rows = (
             db_session.query(NormalizedSubscription)

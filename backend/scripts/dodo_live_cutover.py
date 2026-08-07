@@ -197,6 +197,17 @@ def find_multi_subscription_customers(db, *, provider: str = "dodo") -> list[dic
     Dodo subscription for a customer instead of changing their existing
     one in place, so both stayed active simultaneously).
 
+    IMPORTANT — this reads webhook HISTORY only, never a live Dodo status
+    (deliberately no Dodo API call: read-only, works offline, no Live/Test
+    gating needed). It reports every distinct subscription_reference ever
+    SEEN for a customer, which includes subscriptions that have since been
+    legitimately canceled (e.g. the old, now-obsolete side of an already-
+    repaired duplicate). A finding here means "historically, more than one
+    subscription existed for this customer" — NOT "more than one is
+    currently active." Check each reference's CURRENT status via
+    ``subscription <workspace>`` (reads the stored row) or the Dodo
+    dashboard before treating a finding as an open billing risk.
+
     This is intentionally DIFFERENT from ``find_duplicate_subscriptions``
     above: that function flags one provider reference shared ACROSS
     workspaces (a data-integrity bug), whereas this one flags multiple
@@ -228,7 +239,7 @@ def find_multi_subscription_customers(db, *, provider: str = "dodo") -> list[dic
         if len(sub_refs) > 1:
             findings.append(
                 {
-                    "kind": "multiple_subscription_references_for_one_customer",
+                    "kind": "multiple_subscription_references_seen_historically_for_one_customer",
                     "provider": provider,
                     "customer_reference": customer_reference,
                     "subscription_references": sorted(sub_refs),
@@ -494,8 +505,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     msc = sub.add_parser(
         "multi-subscription-conflicts",
-        help="Detect one customer with more than one distinct subscription_reference in webhook history "
-             "(double-billing signature: two live subscriptions for one customer within one workspace).",
+        help="Detect one customer with more than one distinct subscription_reference seen historically in "
+             "webhook history (the double-billing signature). Reports what was SEEN, not current live status "
+             "— check each reference's current status separately before treating a finding as an open risk.",
     )
     msc.add_argument("--provider", default="dodo")
 
@@ -512,8 +524,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     rfd = sub.add_parser(
         "reconcile-from-dodo",
-        help="Fallback for a missed/delayed webhook: fetch a real Dodo subscription and create the first "
-             "NormalizedSubscription row from it. Dry-run by default.",
+        help="Fallback for a missed/delayed webhook, or for repairing a historical duplicate-subscription "
+             "row: fetch a real Dodo subscription and create the first NormalizedSubscription row from it, "
+             "or replace an existing OBSOLETE/CANCELED Dodo row for the same workspace with it. Dry-run by default.",
     )
     rfd.add_argument("workspace", help="Workspace display name or UUID.")
     rfd.add_argument("dodo_subscription_id", help="Real Dodo subscription ID (sub_...) from the Dodo dashboard.")
@@ -649,14 +662,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.command == "multi-subscription-conflicts":
             findings = find_multi_subscription_customers(db, provider=args.provider)
             _print_list_table(
-                f"Customers with multiple live subscription references (provider={args.provider!r})", findings
+                f"Customers with multiple subscription references seen historically (provider={args.provider!r})",
+                findings,
             )
             if findings:
                 print(
                     "\n  Each row above is one customer with more than one distinct Dodo subscription "
-                    "ID seen in processed webhook history — check the Dodo dashboard for that customer "
-                    "and cancel whichever subscription is not the one currently reflected in "
-                    "NormalizedSubscription."
+                    "ID seen in processed webhook history — this reports what was SEEN, not current live "
+                    "status. Some or all of these may already be correctly canceled (e.g. after a "
+                    "reconcile-from-dodo repair). Check the Dodo dashboard, or run "
+                    "`subscription <workspace>` for the current NormalizedSubscription state, before "
+                    "treating a row as an open double-billing risk."
                 )
             return 1 if findings else 0
 
@@ -707,9 +723,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"\n  TARGET workspace: {workspace.name!r} ({workspace.id})")
             print(f"  TARGET Dodo subscription: {args.dodo_subscription_id!r}")
             if args.yes:
-                print("  MODE: APPLY — this will create a NormalizedSubscription row if all checks pass.")
+                print(
+                    "  MODE: APPLY — this will create a NormalizedSubscription row, or REPLACE an "
+                    "existing obsolete/canceled Dodo row in place, if all checks pass."
+                )
             else:
-                print("  MODE: dry run — pass --yes to actually create the row.")
+                print("  MODE: dry run — pass --yes to actually create/replace the row.")
 
             try:
                 result = reconcile_workspace_from_dodo_subscription(
@@ -724,13 +743,21 @@ def main(argv: Optional[list[str]] = None) -> int:
                 return 1
 
             _print_kv_table("Dodo reconciliation result", result)
-            if result["created"]:
+            if result.get("already_reconciled"):
+                print("\n  Already reconciled to this exact subscription — no-op.")
+            elif result["created"]:
                 db.commit()
-                print("\n  Committed.")
+                print("\n  Committed (new row created).")
+            elif result.get("replaced"):
+                db.commit()
+                print(
+                    f"\n  Committed (existing row replaced — previous subscription reference was "
+                    f"{result.get('previous_subscription_reference')!r})."
+                )
             elif args.yes:
-                print("\n  Nothing was created (see result above).")
+                print("\n  Nothing was created or replaced (see result above).")
             else:
-                print("\n  (dry run only — no row was created; rerun with --yes to apply)")
+                print("\n  (dry run only — no row was created/replaced; rerun with --yes to apply)")
             return 0
 
         parser.error(f"Unknown command: {args.command}")

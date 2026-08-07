@@ -649,6 +649,16 @@ class DodoReconciliationError(Exception):
     payload, or PII — only a short, structural reason string."""
 
 
+# Raw Dodo subscription statuses (docs.dodopayments.com's documented
+# subscription-status enum) considered "still live" — an existing row
+# backed by one of these must never be silently replaced by reconciliation.
+_DODO_RAW_LIVE_STATUSES = {"active", "on_hold", "pending"}
+# Raw Dodo statuses that make a subscription safe to treat as OBSOLETE and
+# therefore replaceable — the exact set the historical-recovery edge case
+# (old checkout bug leaving a stray canceled subscription behind) needs.
+_DODO_RAW_REPLACEABLE_STATUSES = {"cancelled", "canceled", "failed", "expired"}
+
+
 def reconcile_workspace_from_dodo_subscription(
     *, workspace_id: uuid.UUID, dodo_subscription_id: str, db: Session, apply: bool, live: bool = False,
 ) -> dict:
@@ -656,39 +666,54 @@ def reconcile_workspace_from_dodo_subscription(
     single read-only ``GET /subscriptions/{id}`` call — Test or Live,
     whichever ``DODO_ENVIRONMENT`` is configured for, gated the same way
     ``scripts/dodo_live_cutover.py catalog-verify`` gates Live access) and,
-    only when ``apply=True``, create the first ``NormalizedSubscription``
-    row for it — the same "first row" creation the webhook path performs
-    in ``_create_subscription_from_hint``, just triggered by an
-    operator-supplied subscription ID instead of a webhook delivery.
+    only when ``apply=True``, either create the first ``NormalizedSubscription``
+    row for it, OR — the historical-recovery edge case — REPLACE an
+    existing, obsolete/canceled Dodo row IN PLACE with this verified
+    active Dodo subscription for the SAME workspace (fix for stray rows
+    left behind by the old checkout-creates-a-second-subscription bug;
+    see ``DodoBillingAdapter.change_subscription_plan``'s docstring for
+    the original bug this is repairing residue from).
 
     Fails closed (raises ``DodoReconciliationError`` with a specific,
     safe reason) for every unsafe condition:
       * the workspace doesn't exist,
       * a ``NormalizedSubscription`` row already exists for this
-        workspace under ANY provider — this can NEVER overwrite an
-        existing Stripe/Paddle/Dodo row; the operator must remove it
-        first via a separate, deliberate action if that's genuinely
-        intended,
+        workspace under a DIFFERENT provider (Stripe/Paddle) — this can
+        NEVER overwrite a non-Dodo row,
+      * an existing Dodo row is still live (its CURRENT, freshly
+        re-fetched Dodo status is active/on_hold/pending) — only an
+        obsolete row (canceled/failed/expired) may ever be replaced,
       * Dodo is not configured, or the requested environment doesn't
         match ``DODO_ENVIRONMENT`` (mirrors ``catalog-verify``'s
         Live/Test mismatch guard — an accidental default invocation can
         never touch Live),
-      * the Dodo subscription ID doesn't resolve to a real object,
-      * the Dodo subscription's own ``data.metadata.workspace_id`` (if
-        present on the raw response) does NOT match the workspace_id
+      * the target Dodo subscription ID doesn't resolve to a real object,
+      * the target Dodo subscription's own ``data.metadata.workspace_id``
+        (if present on the raw response) does NOT match the workspace_id
         given — cross-checking Dodo's own record against the operator's
         claim; never trusting either side alone,
-      * the subscription's ``product_id`` doesn't map to a known plan in
-        the configured catalog.
+      * the target subscription's ``product_id`` doesn't map to a known
+        plan in the configured catalog,
+      * the target subscription's own current status is not ``active``,
+      * (replace case only) the target subscription belongs to a
+        different Dodo customer than the existing row's stored customer
+        reference — ambiguous ownership, never assumed,
+      * (replace case only) the target subscription is already attached
+        to a DIFFERENT workspace's ``NormalizedSubscription`` row.
 
     Never grants access from a bare payment/transaction state — this
-    function only ever reads a *subscription* object, never a payment or
+    function only ever reads *subscription* objects, never a payment or
     transaction; a workspace with only successful payments and no real
     Dodo subscription object has nothing for this function to reconcile
     from, by construction.
 
+    Idempotent: re-running with the exact subscription ID already stored
+    on the workspace's row is a safe no-op (``already_reconciled: True``),
+    never an error and never a second write.
+
     Returns a dict describing what was found (and, when ``apply=True``,
-    what was written) — ``created: False`` for a dry run.
+    what was written) — ``created``/``replaced`` are both ``False`` for a
+    dry run.
     """
     from app.billing.adapters.dodo import DodoBillingAdapter, DodoCatalogMapping
     from app.billing.enums import ObjectType
@@ -704,7 +729,22 @@ def reconcile_workspace_from_dodo_subscription(
         .filter(NormalizedSubscription.workspace_id == workspace_id)
         .first()
     )
-    if existing is not None:
+
+    # Idempotent no-op: already reconciled to exactly this subscription.
+    if existing is not None and existing.provider_subscription_reference == dodo_subscription_id:
+        return {
+            "workspace_id": str(workspace_id),
+            "dodo_subscription_id": dodo_subscription_id,
+            "plan_id": existing.plan_id,
+            "status": existing.status,
+            "billable_seats": existing.billable_seats,
+            "created": False,
+            "replaced": False,
+            "already_reconciled": True,
+        }
+
+    replacing_existing = existing is not None
+    if replacing_existing and existing.provider != BillingProvider.DODO.value:
         raise DodoReconciliationError(f"workspace_already_has_subscription:provider={existing.provider}")
 
     if not settings.is_dodo_configured:
@@ -727,6 +767,26 @@ def reconcile_workspace_from_dodo_subscription(
     client = adapter_client_for(resolved_env, settings.DODO_API_KEY)
     adapter = DodoBillingAdapter(mapping, client)
 
+    if replacing_existing:
+        # Re-verify the EXISTING row's status directly against Dodo right
+        # now — never trust the possibly-stale locally-stored status to
+        # decide whether it's safe to replace. A subscription reference
+        # missing entirely, or a lookup failure, is refused rather than
+        # assumed obsolete.
+        if not existing.provider_subscription_reference:
+            raise DodoReconciliationError("existing_subscription_has_no_reference_to_verify")
+        try:
+            existing_data = client.get_subscription(existing.provider_subscription_reference)
+        except Exception as exc:
+            raise DodoReconciliationError(f"existing_subscription_status_unverifiable:{exc}") from exc
+        if not existing_data:
+            raise DodoReconciliationError("existing_subscription_status_unverifiable:not_found")
+        existing_raw_status = existing_data.get("status", "")
+        if existing_raw_status in _DODO_RAW_LIVE_STATUSES:
+            raise DodoReconciliationError(f"existing_dodo_subscription_still_live:status={existing_raw_status}")
+        if existing_raw_status not in _DODO_RAW_REPLACEABLE_STATUSES:
+            raise DodoReconciliationError(f"existing_dodo_subscription_status_unrecognized:status={existing_raw_status}")
+
     try:
         data = client.get_subscription(dodo_subscription_id)
     except Exception as exc:  # DodoAPIError subclasses — already-sanitized messages, safe to surface
@@ -734,6 +794,10 @@ def reconcile_workspace_from_dodo_subscription(
 
     if not data:
         raise DodoReconciliationError("dodo_subscription_not_found")
+
+    target_raw_status = data.get("status", "")
+    if target_raw_status != "active":
+        raise DodoReconciliationError(f"target_subscription_not_active:status={target_raw_status}")
 
     raw_metadata = data.get("metadata")
     if isinstance(raw_metadata, dict) and raw_metadata.get("workspace_id"):
@@ -749,6 +813,23 @@ def reconcile_workspace_from_dodo_subscription(
     if product_id not in (mapping.pro_product_id, mapping.team_product_id):
         raise DodoReconciliationError("unknown_product_id")
 
+    if replacing_existing and existing.provider_customer_reference:
+        target_customer_id = snapshot.customer_reference.external_id or None
+        if target_customer_id and target_customer_id != existing.provider_customer_reference:
+            raise DodoReconciliationError("customer_mismatch_with_existing_subscription")
+
+    if replacing_existing:
+        conflicting = (
+            db.query(NormalizedSubscription)
+            .filter(
+                NormalizedSubscription.provider_subscription_reference == dodo_subscription_id,
+                NormalizedSubscription.workspace_id != workspace_id,
+            )
+            .first()
+        )
+        if conflicting is not None:
+            raise DodoReconciliationError("target_subscription_already_attached_to_another_workspace")
+
     plan_id = snapshot.plan_id.value
     additional_seats = max(0, snapshot.billable_seats - TEAM_INCLUDED_SEATS) if plan_id == "team" else 0
     normalized_status = normalize_dodo_status(snapshot.status).value
@@ -760,9 +841,45 @@ def reconcile_workspace_from_dodo_subscription(
         "status": normalized_status,
         "billable_seats": snapshot.billable_seats,
         "created": False,
+        "replaced": False,
     }
 
     if not apply:
+        result["would_replace"] = replacing_existing
+        return result
+
+    if replacing_existing:
+        previous_plan_id = existing.plan_id
+        previous_subscription_reference = existing.provider_subscription_reference
+        existing.provider_subscription_reference = snapshot.subscription_reference.external_id or None
+        existing.provider_customer_reference = snapshot.customer_reference.external_id or existing.provider_customer_reference
+        existing.plan_id = plan_id
+        existing.billing_interval = snapshot.billing_interval.value
+        existing.status = normalized_status
+        existing.billable_seats = snapshot.billable_seats
+        existing.additional_seat_quantity = additional_seats
+        existing.current_period_start = snapshot.current_period_start
+        existing.current_period_end = snapshot.current_period_end
+        existing.cancel_at_period_end = snapshot.cancel_at_period_end
+        existing.last_provider_event = "reconciled_from_dodo"
+        existing.version += 1
+        db.flush()
+
+        record_audit_event(
+            workspace_id=workspace_id, event_type=BillingAuditEventType.PROVIDER_RECONCILIATION,
+            provider=BillingProvider.DODO,
+            details={
+                "previous_plan_id": previous_plan_id, "new_plan_id": plan_id,
+                "billing_interval": snapshot.billing_interval.value, "billable_seats": snapshot.billable_seats,
+                "reason": (
+                    f"replaced_obsolete_dodo_subscription:{previous_subscription_reference}"
+                    ":historical_duplicate_subscription_recovery"
+                ),
+            },
+            db=db,
+        )
+        result["replaced"] = True
+        result["previous_subscription_reference"] = previous_subscription_reference
         return result
 
     sub = NormalizedSubscription(
