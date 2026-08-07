@@ -42,6 +42,7 @@ Usage
     python scripts/dodo_live_cutover.py subscription "Acme Inc"
     python scripts/dodo_live_cutover.py duplicate-subscriptions
     python scripts/dodo_live_cutover.py stuck-webhooks --older-than-minutes 60
+    python scripts/dodo_live_cutover.py unresolved-events
     python scripts/dodo_live_cutover.py health-check
 """
 
@@ -213,6 +214,39 @@ def find_stuck_webhooks(db, *, older_than_minutes: int = 60) -> list[dict]:
     ]
 
 
+def find_unresolved_workspace_events(db, *, provider: str = "dodo", limit: int = 50) -> list[dict]:
+    """Webhook events that verified and parsed correctly but could NOT be
+    associated with any ConfigTrace workspace — ``processing_status ==
+    "failed"`` with ``error_category == "unknown_reference"`` (see
+    ``app.billing.dodo_webhook_service.process_dodo_webhook`` /
+    ``_apply_normalized_event``). This is a distinct, previously-invisible
+    category: before this diagnostic existed, an event like this could
+    only be found by noticing a subscription that should exist but
+    doesn't — this surfaces it directly. Read-only."""
+    from app.billing.models import BillingWebhookEvent
+
+    rows = (
+        db.query(BillingWebhookEvent)
+        .filter(BillingWebhookEvent.provider == provider)
+        .filter(BillingWebhookEvent.processing_status == "failed")
+        .filter(BillingWebhookEvent.error_category == "unknown_reference")
+        .order_by(BillingWebhookEvent.received_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": str(row.id),
+            "external_event_id": row.external_event_id,
+            "event_type": row.event_type,
+            "customer_reference": row.customer_reference,
+            "subscription_reference": row.subscription_reference,
+            "received_at": row.received_at.isoformat() if row.received_at else None,
+        }
+        for row in rows
+    ]
+
+
 def list_webhook_events(db, *, provider: Optional[str] = None, status: Optional[str] = None, limit: int = 20) -> list[dict]:
     """Most recent webhook events, optionally filtered. Read-only."""
     from app.billing.models import BillingWebhookEvent
@@ -334,14 +368,16 @@ def run_health_check(settings, db) -> dict:
     counts = build_subscription_counts(db)
     stuck = find_stuck_webhooks(db, older_than_minutes=60)
     duplicates = find_duplicate_subscriptions(db)
+    unresolved = find_unresolved_workspace_events(db, provider="dodo")
 
-    healthy = readiness.all_present and not stuck and not duplicates
+    healthy = readiness.all_present and not stuck and not duplicates and not unresolved
     return {
         "healthy": healthy,
         "readiness": readiness.as_dict(),
         "subscription_counts": counts,
         "stuck_webhooks_count": len(stuck),
         "duplicate_subscriptions_count": len(duplicates),
+        "unresolved_workspace_events_count": len(unresolved),
         "billing_provider": settings.BILLING_PROVIDER or "stripe",
     }
 
@@ -405,6 +441,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sw = sub.add_parser("stuck-webhooks", help="Detect pending/failed webhook events older than a threshold.")
     sw.add_argument("--older-than-minutes", type=int, default=60)
+
+    uwe = sub.add_parser(
+        "unresolved-events",
+        help="Detect webhook events that verified but could not be matched to any workspace (error_category=unknown_reference).",
+    )
+    uwe.add_argument("--provider", default="dodo")
 
     sub.add_parser("health-check", help="Composite, read-only, offline post-cutover health snapshot.")
 
@@ -539,6 +581,20 @@ def main(argv: Optional[list[str]] = None) -> int:
             _print_list_table(f"Stuck webhooks (older than {args.older_than_minutes}m)", stuck)
             return 1 if stuck else 0
 
+        if args.command == "unresolved-events":
+            unresolved = find_unresolved_workspace_events(db, provider=args.provider)
+            _print_list_table(
+                f"Unresolved-workspace events (provider={args.provider!r}, error_category=unknown_reference)",
+                unresolved,
+            )
+            if unresolved:
+                print(
+                    "\n  These events verified and parsed correctly but could not be matched to any "
+                    "ConfigTrace workspace — check the checkout metadata.workspace_id sent for the "
+                    "customer/subscription reference above against the `workspaces` table."
+                )
+            return 1 if unresolved else 0
+
         if args.command == "health-check":
             report = run_health_check(settings, db)
             _print_kv_table("Health check", {"healthy": report["healthy"], "billing_provider": report["billing_provider"]})
@@ -549,6 +605,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             _print_kv_table("Subscription counts", report["subscription_counts"])
             print(f"\n  stuck_webhooks_count        = {report['stuck_webhooks_count']}")
             print(f"  duplicate_subscriptions_count = {report['duplicate_subscriptions_count']}")
+            print(f"  unresolved_workspace_events_count = {report['unresolved_workspace_events_count']}")
             return 0 if report["healthy"] else 1
 
         parser.error(f"Unknown command: {args.command}")

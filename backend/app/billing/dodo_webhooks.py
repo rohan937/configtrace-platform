@@ -52,6 +52,7 @@ import hashlib
 import hmac
 import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -179,7 +180,43 @@ class NormalizedDodoWebhookEvent:
     subscription_reference: str | None
     transaction_reference: str | None
     subscription_status: str | None
+    # Explicit ConfigTrace identity ConfigTrace itself sent at checkout time
+    # (adapters.dodo.DodoBillingAdapter.create_checkout's `metadata` dict)
+    # and Dodo echoes back onto the resulting object — NEVER inferred from
+    # `idempotency_reference` or any other opaque reference. Each is parsed
+    # defensively: a missing/malformed value is `None`, never an exception
+    # — the caller (dodo_webhook_service) is responsible for treating a
+    # missing/invalid hint as "workspace unresolved", never for guessing.
+    workspace_id_hint: uuid.UUID | None = None
+    plan_id_hint: str | None = None
+    additional_seat_count_hint: int | None = None
     normalized_payload: dict = field(default_factory=dict)
+
+
+def _parse_metadata_workspace_id(metadata: dict) -> uuid.UUID | None:
+    raw = metadata.get("workspace_id")
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _parse_metadata_plan_id(metadata: dict) -> str | None:
+    raw = metadata.get("plan_id")
+    if raw in ("pro", "team"):
+        return raw
+    return None
+
+
+def _parse_metadata_additional_seat_count(metadata: dict) -> int | None:
+    raw = metadata.get("additional_seat_count")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
 
 
 def normalize_dodo_event(event: dict[str, Any], *, external_event_id: str) -> NormalizedDodoWebhookEvent:
@@ -215,6 +252,18 @@ def normalize_dodo_event(event: dict[str, Any], *, external_event_id: str) -> No
         except ValueError:
             occurred_at = None
 
+    # ConfigTrace's own checkout metadata (workspace_id, plan_id,
+    # additional_seat_count, configtrace_user_id, idempotency_reference —
+    # see adapters.dodo.DodoBillingAdapter.create_checkout), echoed back by
+    # Dodo on the subscription/payment object. Never trusted blindly: each
+    # value is parsed and validated by the caller before ever being used
+    # to create or match a workspace's subscription row.
+    metadata = data.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    workspace_id_hint = _parse_metadata_workspace_id(metadata)
+    plan_id_hint = _parse_metadata_plan_id(metadata)
+    additional_seat_count_hint = _parse_metadata_additional_seat_count(metadata)
+
     return NormalizedDodoWebhookEvent(
         provider=BillingProvider.DODO,
         external_event_id=external_event_id,
@@ -225,5 +274,8 @@ def normalize_dodo_event(event: dict[str, Any], *, external_event_id: str) -> No
         subscription_reference=subscription_ref,
         transaction_reference=transaction_ref,
         subscription_status=status,
+        workspace_id_hint=workspace_id_hint,
+        plan_id_hint=plan_id_hint,
+        additional_seat_count_hint=additional_seat_count_hint,
         normalized_payload={"raw_event_name": raw_event_name, "status": status},
     )

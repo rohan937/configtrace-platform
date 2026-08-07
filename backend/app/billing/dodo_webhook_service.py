@@ -26,6 +26,7 @@ from app.billing.audit import record_audit_event
 from app.billing.dodo_webhooks import NormalizedDodoWebhookEvent, normalize_dodo_event
 from app.billing.enums import (
     BillingAuditEventType,
+    BillingInterval,
     BillingProvider,
     NormalizedSubscriptionStatus,
     WebhookEventType,
@@ -39,6 +40,8 @@ from app.billing.idempotency import (
     mark_processed,
 )
 from app.billing.models import NormalizedSubscription
+from app.billing.pricing import TEAM_INCLUDED_SEATS
+from app.models.workspace import Workspace
 
 # Dodo subscription status strings, verified from the documented PATCH
 # /subscriptions/{id} `status` enum: pending | active | on_hold |
@@ -104,10 +107,25 @@ def process_dodo_webhook(event: dict, external_event_id: str, db: Session) -> st
     """Process one verified, parsed Dodo webhook event.
 
     Returns a short status string: "processed" | "duplicate_ignored" |
-    "unknown_event_acknowledged". Raises ``DodoWebhookProcessingError`` on
-    failure (caller should mark the delivery failed and allow Dodo's
-    natural retry — up to 8 attempts over ~10 hours, per Dodo's documented
-    retry schedule).
+    "unknown_event_acknowledged" | "unresolved_workspace". Raises
+    ``DodoWebhookProcessingError`` on failure (caller should mark the
+    delivery failed and allow Dodo's natural retry — up to 8 attempts
+    over ~10 hours, per Dodo's documented retry schedule).
+
+    "unresolved_workspace" (bug found during Test Mode production
+    verification, fixed here) is a DISTINCT outcome from "processed": it
+    means the signature verified and the event was well-formed, but a
+    subscription-lifecycle event (subscription.active/updated/etc.)
+    could not be matched OR safely used to create a
+    ``NormalizedSubscription`` row — e.g. the workspace_id metadata was
+    missing/malformed, or named a workspace that doesn't exist. The
+    underlying ``BillingWebhookEvent`` row is marked ``failed`` with
+    ``error_category="unknown_reference"`` (not ``processed``), so it is
+    visible via ``scripts/dodo_live_cutover.py webhook-events --status
+    failed`` / ``unresolved-events`` instead of silently looking
+    successful — this is exactly the gap that let a real Dodo Test Mode
+    Pro subscription report "processed" while no NormalizedSubscription
+    row was ever created for its workspace.
     """
     normalized = normalize_dodo_event(event, external_event_id=external_event_id)
 
@@ -136,7 +154,11 @@ def process_dodo_webhook(event: dict, external_event_id: str, db: Session) -> st
             mark_processed(webhook_row, db)
             return "unknown_event_acknowledged"
 
-        _apply_normalized_event(normalized, db)
+        unresolved_reason = _apply_normalized_event(normalized, db)
+        if unresolved_reason is not None:
+            mark_failed(webhook_row, unresolved_reason, db)
+            return "unresolved_workspace"
+
         mark_processed(webhook_row, db)
         return "processed"
     except Exception as exc:
@@ -159,15 +181,121 @@ def _find_subscription_by_dodo_reference(
     return None
 
 
-def _apply_normalized_event(normalized: NormalizedDodoWebhookEvent, db: Session) -> None:
+# Event types that represent a subscription's own lifecycle (as opposed to
+# a payment/transaction event) — the ONLY event types allowed to CREATE the
+# first NormalizedSubscription row for a workspace. A payment.succeeded
+# arriving with no matching row must never grant access by itself; it is
+# a safe, silent no-op exactly as before this fix (see module docstring
+# on process_dodo_webhook and the module docstring's design rationale).
+_SUBSCRIPTION_LIFECYCLE_EVENT_TYPES = (
+    WebhookEventType.SUBSCRIPTION_CREATED,
+    WebhookEventType.SUBSCRIPTION_UPDATED,
+    WebhookEventType.SUBSCRIPTION_CANCELED,
+    WebhookEventType.SUBSCRIPTION_PAUSED,
+)
+
+
+def _create_subscription_from_hint(normalized: NormalizedDodoWebhookEvent, db: Session) -> NormalizedSubscription | None:
+    """Create the FIRST ``NormalizedSubscription`` row for a workspace
+    from a Dodo subscription-lifecycle event, using the explicit
+    ``workspace_id`` ConfigTrace itself sent in checkout metadata
+    (``adapters.dodo.DodoBillingAdapter.create_checkout``) and Dodo echoes
+    back onto the resulting object — NEVER inferred from
+    ``idempotency_reference`` or any other opaque reference.
+
+    Returns ``None`` (never raises) for any condition that makes creation
+    unsafe — this function fails closed:
+      * the event isn't a subscription-lifecycle type,
+      * the workspace_id/plan_id metadata is missing or malformed,
+      * no workspace with that ID exists (never trust arbitrary
+        customer-provided metadata without validating it against a real
+        workspace),
+      * the event carries no subscription status to record,
+      * a ``NormalizedSubscription`` row already exists for this
+        workspace under ANY provider (never silently reassign an
+        existing subscription's provider — mirrors the
+        ``WorkspaceCustomerMismatchError`` discipline in
+        ``reconciliation_service.py``; the unique constraint on
+        ``workspace_id`` would reject a second row anyway).
+    """
+    if normalized.event_type not in _SUBSCRIPTION_LIFECYCLE_EVENT_TYPES:
+        return None
+    if normalized.workspace_id_hint is None or normalized.plan_id_hint is None:
+        return None
+    if not normalized.subscription_status:
+        return None
+
+    workspace = db.get(Workspace, normalized.workspace_id_hint)
+    if workspace is None:
+        return None
+
+    already_exists = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == normalized.workspace_id_hint)
+        .first()
+    )
+    if already_exists is not None:
+        return None
+
+    plan_id = normalized.plan_id_hint  # "pro" | "team" — already validated by normalize_dodo_event
+    additional_seats = normalized.additional_seat_count_hint or 0
+    billable_seats = (TEAM_INCLUDED_SEATS + additional_seats) if plan_id == "team" else 0
+
+    sub = NormalizedSubscription(
+        workspace_id=normalized.workspace_id_hint,
+        provider=BillingProvider.DODO.value,
+        provider_customer_reference=normalized.customer_reference,
+        provider_subscription_reference=normalized.subscription_reference,
+        plan_id=plan_id,
+        billing_interval=BillingInterval.MONTH.value,
+        status=normalize_dodo_status(normalized.subscription_status).value,
+        billable_seats=billable_seats,
+        additional_seat_quantity=additional_seats if plan_id == "team" else 0,
+        last_provider_event=normalized.event_type.value,
+        version=0,
+    )
+    db.add(sub)
+    db.flush()
+
+    record_audit_event(
+        workspace_id=sub.workspace_id, event_type=BillingAuditEventType.SUBSCRIPTION_ACTIVATED,
+        provider=BillingProvider.DODO,
+        details={
+            "plan_id": plan_id,
+            "billing_interval": BillingInterval.MONTH.value,
+            "billable_seats": billable_seats,
+        },
+        db=db,
+    )
+    return sub
+
+
+def _apply_normalized_event(normalized: NormalizedDodoWebhookEvent, db: Session) -> str | None:
+    """Apply one normalized event's effect on the local subscription
+    state. Returns ``None`` on a legitimate outcome (state mutated, or a
+    safe intentional no-op), or an ``error_category`` string (currently
+    only ``"unknown_reference"``) when a subscription-lifecycle event
+    could not be associated with any workspace — the caller
+    (``process_dodo_webhook``) marks the webhook row ``failed`` with that
+    category instead of ``processed`` in that case."""
     sub = _find_subscription_by_dodo_reference(normalized.subscription_reference, normalized.customer_reference, db)
 
     if sub is None:
-        # No local row yet — safely acknowledged without mutation, same
-        # documented behavior as the existing Paddle webhook service
-        # (app.billing.paddle_webhook_service._apply_normalized_event).
-        # Never fabricate a workspace_id.
-        return
+        sub = _create_subscription_from_hint(normalized, db)
+        if sub is None:
+            if normalized.event_type in _SUBSCRIPTION_LIFECYCLE_EVENT_TYPES:
+                # A subscription-lifecycle event that SHOULD represent a
+                # real workspace's subscription, but couldn't be matched
+                # to an existing row or safely used to create one — this
+                # is the exact condition that must never be reported as
+                # "processed" (see process_dodo_webhook's docstring).
+                return "unknown_reference"
+            # A payment/transaction event with no matching row yet — safe,
+            # intentional no-op (same documented behavior as the existing
+            # Paddle webhook service). Never fabricate a workspace_id, and
+            # never let a bare payment event grant access by itself.
+            return None
+        return None
 
     if is_stale_subscription_update(candidate_occurred_at=normalized.occurred_at, subscription=sub):
         record_audit_event(
@@ -262,6 +390,8 @@ def _apply_normalized_event(normalized: NormalizedDodoWebhookEvent, db: Session)
             provider=BillingProvider.DODO,
             details={"previous_status": previous_status, "new_status": sub.status}, db=db,
         )
+
+    return None
 
 
 def _grace_period_days() -> int:

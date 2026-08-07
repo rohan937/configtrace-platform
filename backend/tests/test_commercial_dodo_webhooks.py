@@ -307,12 +307,22 @@ class TestOutOfOrderEventIgnored:
         assert sub.status == "cancelled"  # unchanged — stale event ignored
 
 
-class TestUnknownSubscriptionReferenceSafeNoOp:
-    def test_event_for_unknown_subscription_reference_is_a_safe_no_op(self, db_session, e2e_workspace):
+class TestUnknownSubscriptionReferenceWithoutMetadataFailsClosed:
+    def test_lifecycle_event_for_unknown_subscription_reference_and_no_metadata_is_unresolved(
+        self, db_session, e2e_workspace
+    ):
+        """A lifecycle event (subscription.updated) that matches no
+        existing row AND carries no checkout-metadata workspace_id hint
+        can never be associated with a workspace — this must be reported
+        as "unresolved_workspace" (BillingWebhookEvent processing_status
+        = failed / error_category = unknown_reference), never silently
+        "processed", per the production bug this fixes: a real Dodo
+        subscription.active/updated reported "processed" while no
+        NormalizedSubscription row was ever created."""
         event = dict(SUBSCRIPTION_UPDATED)
         event["data"] = {**event["data"], "subscription_id": "sub_completely_unknown"}
         status = process_dodo_webhook(event, "msg_unknown_sub", db_session)
-        assert status == "processed"  # acknowledged; no row to mutate
+        assert status == "unresolved_workspace"
 
 
 class TestPaymentFailureAndRecovery:
