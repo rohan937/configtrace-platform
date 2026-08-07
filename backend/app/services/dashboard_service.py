@@ -2,10 +2,23 @@
 
 Aggregates integration health, resource counts, change activity, risk
 distribution, provider distribution, recent high/critical changes, and
-recent sync failures for a single user.
+recent sync failures for the authenticated user's WORKSPACES.
 
-All queries are user-scoped via the ``user_id`` parameter.  No data from
-other users is ever included.
+Scoping (fixed post-audit; see commit 2bcd639 and the follow-up
+collaboration-completion milestone): every query is scoped by
+``get_user_workspace_ids`` — a workspace-linked integration/resource/change
+is visible if it belongs to ANY workspace the requesting user is a member
+of, regardless of which teammate originally connected it. A legacy row
+whose integration predates workspace linking (``workspace_id IS NULL``)
+falls back to strict ``user_id`` ownership, unchanged from before. This
+mirrors the exact pattern already used by changes_service and
+resources_service — no new authorization system introduced.
+
+Before the fix, every query here filtered by ``Integration.user_id`` /
+``Resource.user_id`` / ``Change.user_id`` / ``SyncRun.user_id`` alone, so
+an invited teammate who didn't personally connect anything saw an
+all-zero dashboard even after gaining correct visibility into Changes and
+Resources.
 
 Performance note: all aggregations use COUNT/GROUP BY SQL so we don't load
 large record sets into Python memory.  At MVP scale (single user, tens of
@@ -23,7 +36,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.failure_classifier import NEEDS_ATTENTION_THRESHOLD
@@ -44,10 +57,21 @@ from app.schemas.dashboard import (
 )
 from app.services import changes_service
 from app.services.integration_service import get_latest_sync_run_summary
+from app.services.workspace_service import get_user_workspace_ids
+
+
+def _integration_accessible(user_id: uuid.UUID, workspace_ids: list[uuid.UUID]):
+    """Filter expression for Integration: workspace member OR (legacy
+    fallback) the row's own creator."""
+    return or_(
+        Integration.workspace_id.in_(workspace_ids),
+        Integration.user_id == user_id,
+    )
 
 
 def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryResponse:
-    """Compute and return the full dashboard summary for *user_id*.
+    """Compute and return the full dashboard summary for *user_id*, across
+    every workspace they're a member of.
 
     Args:
         user_id: The authenticated user's UUID.
@@ -59,12 +83,13 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
     now = datetime.now(timezone.utc)
     since_24h = now - timedelta(hours=24)
     since_7d  = now - timedelta(days=7)
+    workspace_ids = get_user_workspace_ids(user_id, db)
 
     # ── 1. Integration health ─────────────────────────────────────────────────
     integrations = (
         db.query(Integration)
         .filter(
-            Integration.user_id == user_id,
+            _integration_accessible(user_id, workspace_ids),
             Integration.status != "deleted",
         )
         .all()
@@ -81,12 +106,31 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
         1 for i in integrations if (i.consecutive_failure_count or 0) > 0
     )
 
+    # SyncRun queries below are scoped by this already-accessible
+    # integration_id set rather than re-deriving workspace membership —
+    # one accessible set, reused consistently, and it naturally includes
+    # the legacy-fallback rows too since `integrations` above was already
+    # filtered that way.
+    accessible_integration_ids = [i.id for i in integrations]
+
+    # Resource/Change queries deliberately use a SEPARATE accessible set
+    # that does NOT exclude deleted integrations — preserving prior
+    # behavior (a deleted integration's historical resources/changes were
+    # always still counted; see integrations.py's DELETE docstring:
+    # "Historical changes, resources, and snapshots are preserved").
+    all_accessible_integration_ids = [
+        row[0]
+        for row in db.query(Integration.id)
+        .filter(_integration_accessible(user_id, workspace_ids))
+        .all()
+    ]
+
     # Count integrations that have at least one failed SyncRun in the last 24h
     failed_integration_ids_24h: set[uuid.UUID] = set()
     failed_runs_24h = (
         db.query(SyncRun.integration_id)
         .filter(
-            SyncRun.user_id == user_id,
+            SyncRun.integration_id.in_(accessible_integration_ids),
             SyncRun.status == "failed",
             SyncRun.started_at >= since_24h,
         )
@@ -109,7 +153,7 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
     # ── 2. Resource counts ────────────────────────────────────────────────────
     resource_rows = (
         db.query(Resource.is_active, func.count(Resource.id))
-        .filter(Resource.user_id == user_id)
+        .filter(Resource.integration_id.in_(all_accessible_integration_ids))
         .group_by(Resource.is_active)
         .all()
     )
@@ -124,26 +168,32 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
     # ── 3. Change activity ────────────────────────────────────────────────────
     total_changes = (
         db.query(func.count(Change.id))
-        .filter(Change.user_id == user_id)
+        .filter(Change.integration_id.in_(all_accessible_integration_ids))
         .scalar()
     ) or 0
 
     changes_24h = (
         db.query(func.count(Change.id))
-        .filter(Change.user_id == user_id, Change.created_at >= since_24h)
+        .filter(
+            Change.integration_id.in_(all_accessible_integration_ids),
+            Change.created_at >= since_24h,
+        )
         .scalar()
     ) or 0
 
     changes_7d = (
         db.query(func.count(Change.id))
-        .filter(Change.user_id == user_id, Change.created_at >= since_7d)
+        .filter(
+            Change.integration_id.in_(all_accessible_integration_ids),
+            Change.created_at >= since_7d,
+        )
         .scalar()
     ) or 0
 
     high_critical_7d = (
         db.query(func.count(Change.id))
         .filter(
-            Change.user_id == user_id,
+            Change.integration_id.in_(all_accessible_integration_ids),
             Change.created_at >= since_7d,
             Change.risk_level.in_(["high", "critical"]),
         )
@@ -152,7 +202,7 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
 
     last_change_row = (
         db.query(Change.created_at)
-        .filter(Change.user_id == user_id)
+        .filter(Change.integration_id.in_(all_accessible_integration_ids))
         .order_by(Change.created_at.desc())
         .first()
     )
@@ -171,7 +221,7 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
     # ── 4. Risk distribution ──────────────────────────────────────────────────
     risk_rows = (
         db.query(Change.risk_level, func.count(Change.id))
-        .filter(Change.user_id == user_id)
+        .filter(Change.integration_id.in_(all_accessible_integration_ids))
         .group_by(Change.risk_level)
         .all()
     )
@@ -201,8 +251,7 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
         db.query(Integration.provider, func.count(Change.id))
         .join(Change, Change.integration_id == Integration.id)
         .filter(
-            Integration.user_id == user_id,
-            Change.user_id == user_id,
+            Change.integration_id.in_(all_accessible_integration_ids),
             Change.created_at >= since_7d,
         )
         .group_by(Integration.provider)
@@ -231,7 +280,7 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
     recent_hc_rows = (
         db.query(Change)
         .filter(
-            Change.user_id == user_id,
+            Change.integration_id.in_(all_accessible_integration_ids),
             Change.risk_level.in_(["high", "critical"]),
         )
         .order_by(Change.created_at.desc())
@@ -265,7 +314,7 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
     recent_failed_integrations = (
         db.query(Integration)
         .filter(
-            Integration.user_id == user_id,
+            _integration_accessible(user_id, workspace_ids),
             Integration.status != "deleted",
             Integration.last_failure_at >= since_7d,
         )

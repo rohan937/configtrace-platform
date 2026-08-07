@@ -373,6 +373,7 @@ class TestIsChangeSnoozedByRule:
 class TestGetNeedsReviewChanges:
     def _mock_query_result(self, db, items, count=None):
         q = MagicMock()
+        q.join.return_value = q  # workspace-collaboration fix (2bcd639): always joins Integration now
         q.outerjoin.return_value = q
         q.filter.return_value = q
         q.order_by.return_value = q
@@ -389,7 +390,8 @@ class TestGetNeedsReviewChanges:
         db = MagicMock()
         self._mock_query_result(db, changes)
 
-        items, total = get_needs_review_changes(user_id, db, page=1, page_size=50)
+        with patch("app.services.changes_service.get_user_workspace_ids", return_value=[]):
+            items, total = get_needs_review_changes(user_id, db, page=1, page_size=50)
         assert items == changes
         assert total == 1
 
@@ -398,7 +400,8 @@ class TestGetNeedsReviewChanges:
 
         db = MagicMock()
         self._mock_query_result(db, [], 0)
-        items, total = get_needs_review_changes(_uuid(), db)
+        with patch("app.services.changes_service.get_user_workspace_ids", return_value=[]):
+            items, total = get_needs_review_changes(_uuid(), db)
         assert items == []
         assert total == 0
 
@@ -411,6 +414,7 @@ class TestGetNeedsReviewChanges:
 class TestCountNeedsReview:
     def _mock_count(self, db, n):
         q = MagicMock()
+        q.join.return_value = q  # workspace-collaboration fix (2bcd639): always joins Integration now
         q.outerjoin.return_value = q
         q.filter.return_value = q
         q.count.return_value = n
@@ -421,7 +425,8 @@ class TestCountNeedsReview:
 
         db = MagicMock()
         self._mock_count(db, 7)
-        result = count_needs_review(_uuid(), db)
+        with patch("app.services.changes_service.get_user_workspace_ids", return_value=[]):
+            result = count_needs_review(_uuid(), db)
         assert result == 7
 
     def test_count_needs_review_by_risk(self):
@@ -429,7 +434,8 @@ class TestCountNeedsReview:
 
         db = MagicMock()
         self._mock_count(db, 3)
-        result = count_needs_review_by_risk(_uuid(), "critical", db)
+        with patch("app.services.changes_service.get_user_workspace_ids", return_value=[]):
+            result = count_needs_review_by_risk(_uuid(), "critical", db)
         assert result == 3
 
 
