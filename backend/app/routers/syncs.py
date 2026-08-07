@@ -37,9 +37,12 @@ def create_sync(
     The Celery task runs in the background and updates the sync run status
     through ``pending → running → completed | failed``.
     """
-    integration = integration_service.get_integration_by_id(
+    # Any workspace member may trigger a sync (M51 workspace scoping) —
+    # matches GET /integrations/{id}'s viewer-level access; only
+    # management actions (update/delete/reconnect) require admin+.
+    integration = integration_service.get_integration_for_viewer(
         integration_id=body.integration_id,
-        user_id=current_user.id,
+        actor_user_id=current_user.id,
         db=db,
     )
     if integration is None:

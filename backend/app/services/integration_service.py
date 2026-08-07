@@ -3371,13 +3371,21 @@ def get_recent_sync_runs(
     The *total* reflects the count **after** any applied filters so the
     frontend can render "Page N of M" correctly.
 
-    Both ``integration_id`` and ``user_id`` are filtered for defence-in-depth:
-    the caller should have already verified ownership, but we filter here too
-    so a mis-wired call cannot leak cross-user data.
+    Access to ``integration_id`` itself must already have been verified by
+    the caller (e.g. via ``get_integration_for_viewer``) — this function no
+    longer additionally filters by ``user_id``. It used to (defence-in-
+    depth), but that was actively wrong for workspace collaboration: a
+    SyncRun's ``user_id`` records WHO triggered it (the acting user, or the
+    integration owner for scheduled runs), not "who may view it" — filtering
+    on it hid a teammate's own manually-triggered runs from every OTHER
+    workspace member, including the integration's original owner. The
+    ``user_id`` parameter is kept for backward-compatible call signatures
+    but is intentionally unused as a filter now.
 
     Args:
-        integration_id: The integration whose runs are requested.
-        user_id:        Must match the integration's owner.
+        integration_id: The integration whose runs are requested — the
+                         caller must have already authorized this.
+        user_id:        Unused (kept for signature compatibility).
         limit:          Legacy: if set, return at most this many runs (page=1).
         page:           1-indexed page number (ignored when *limit* is set).
         page_size:      Rows per page.
@@ -3389,10 +3397,7 @@ def get_recent_sync_runs(
 
     q = (
         db.query(SyncRun)
-        .filter(
-            SyncRun.integration_id == integration_id,
-            SyncRun.user_id == user_id,
-        )
+        .filter(SyncRun.integration_id == integration_id)
     )
     if status_filter is not None:
         q = q.filter(SyncRun.status == status_filter)

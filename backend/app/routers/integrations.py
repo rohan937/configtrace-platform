@@ -521,10 +521,11 @@ def get_integration_sync_runs(
 
     Sync run records do not contain credentials.
     """
-    # Verify ownership and non-deleted status before querying runs.
-    integration = integration_service.get_integration_by_id(
+    # Any workspace member may view sync runs (M51 workspace scoping) —
+    # matches GET /integrations/{id}'s viewer-level access.
+    integration = integration_service.get_integration_for_viewer(
         integration_id=integration_id,
-        user_id=current_user.id,
+        actor_user_id=current_user.id,
         db=db,
     )
     if integration is None:
@@ -712,9 +713,12 @@ def reconnect_integration(
     deleted, or belongs to a different user.
     """
     # Fetch integration first to determine provider (before reading token).
-    integration = integration_service.get_integration_by_id(
+    # Reconnect replaces credentials, so — like update/delete — only the
+    # owner OR a workspace admin+ may perform it (M51 workspace scoping);
+    # plain members are view-only.
+    integration = integration_service.get_integration_for_manager(
         integration_id=integration_id,
-        user_id=current_user.id,
+        actor_user_id=current_user.id,
         db=db,
     )
     if integration is None:

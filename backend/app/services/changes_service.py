@@ -2,16 +2,24 @@
 
 Responsibilities
 ----------------
-* ``get_changes``             — paginated, filtered list of changes scoped by user
-* ``get_change_by_id``        — single change scoped by user (returns None on miss/mismatch)
+* ``get_changes``             — paginated, filtered list of changes scoped by workspace
+* ``get_change_by_id``        — single change scoped by workspace (returns None on miss/mismatch)
 * ``get_needs_review_changes`` — pre-DB-filtered "Needs Review" queue (M57.3)
 
 Design decisions
 ----------------
-* Every query is scoped by ``user_id`` first, so a user cannot enumerate or
-  access another user's changes even if they know the change UUID.  Missing
-  records and unauthorised records both return ``None``; the caller (router)
-  maps that to HTTP 404 so as not to leak object existence.
+* Every query is scoped by workspace membership (``_accessible_change_filter``
+  below) so any member of a workspace can see its changes — not only the
+  user whose sync happened to create the row. This was fixed after an audit
+  found these GET read paths (unlike the POST review actions, which already
+  used workspace-membership scoping via ``changes.py``'s
+  ``_get_change_and_workspace``) filtered by ``Change.user_id`` alone,
+  meaning an invited teammate could join a workspace and see zero changes.
+  Legacy changes whose integration predates workspace linking
+  (``Integration.workspace_id IS NULL``) still fall back to strict
+  ``user_id`` ownership, preserving their original behavior exactly.
+  Missing records and unauthorised records both return ``None``/empty; the
+  caller (router) maps that to HTTP 404 so as not to leak object existence.
 
 * ``page_size`` is clamped to ``_MAX_PAGE_SIZE`` server-side so that a caller
   cannot request an unbounded result set by passing a large value.
@@ -21,9 +29,9 @@ Design decisions
   column — SQLAlchemy / psycopg2 will coerce it, but callers should send
   UTC-aware values to avoid ambiguity.
 
-* Most filters are single-table (``integration_id``, ``resource_id``, etc.).
-  The ``provider`` filter (M29) requires a JOIN to the ``Integration`` table
-  since ``provider`` is not denormalised onto the Change row.
+* Every query now joins to ``Integration`` (previously only the ``provider``
+  filter did) since the workspace-membership check itself requires reading
+  ``Integration.workspace_id``.
 """
 
 from __future__ import annotations
@@ -32,13 +40,30 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import or_, outerjoin
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, Query
 
 from app.models.change import Change
 from app.models.integration import Integration
+from app.services.workspace_service import get_user_workspace_ids
 
 _MAX_PAGE_SIZE = 100
+
+
+def _accessible_change_filter(user_id: uuid.UUID, db: Session):
+    """SQLAlchemy filter expression: a Change is visible to *user_id* if its
+    integration belongs to a workspace the user is a member of, OR (legacy
+    fallback) the change's own ``user_id`` matches — for changes from an
+    integration that predates workspace linking."""
+    workspace_ids = get_user_workspace_ids(user_id, db)
+    return or_(
+        Integration.workspace_id.in_(workspace_ids),
+        Change.user_id == user_id,
+    )
+
+
+def _with_integration_join(q: "Query") -> "Query":
+    return q.join(Integration, Change.integration_id == Integration.id)
 
 
 def get_changes(
@@ -86,15 +111,14 @@ def get_changes(
     page_size = min(max(page_size, 1), _MAX_PAGE_SIZE)
     page = max(page, 1)
 
-    q = db.query(Change).filter(Change.user_id == user_id)
+    # Always joined (not just for the provider filter): the workspace-
+    # membership authorization check itself needs Integration.workspace_id.
+    # A regular JOIN is safe because every Change row has a valid
+    # integration_id FK; soft-deleted integrations are still joined so
+    # their historical changes remain accessible.
+    q = _with_integration_join(db.query(Change)).filter(_accessible_change_filter(user_id, db))
 
     if provider is not None:
-        # JOIN to Integration to filter by provider.  Using a regular JOIN
-        # (not outer join) is safe because every Change row has a valid
-        # integration_id FK — the provider filter simply narrows to one
-        # provider's rows.  Soft-deleted integrations are still joined so
-        # their historical changes remain accessible.
-        q = q.join(Integration, Change.integration_id == Integration.id)
         q = q.filter(Integration.provider == provider)
 
     if integration_id is not None:
@@ -133,8 +157,9 @@ def get_change_by_id(
         db:        Active SQLAlchemy session.
     """
     return (
-        db.query(Change)
-        .filter(Change.id == change_id, Change.user_id == user_id)
+        _with_integration_join(db.query(Change))
+        .filter(Change.id == change_id)
+        .filter(_accessible_change_filter(user_id, db))
         .first()
     )
 
@@ -173,9 +198,9 @@ def get_needs_review_changes(
 
     # LEFT OUTER JOIN change_reviews so we can detect missing rows
     q = (
-        db.query(Change)
+        _with_integration_join(db.query(Change))
         .outerjoin(ChangeReview, ChangeReview.change_id == Change.id)
-        .filter(Change.user_id == user_id)
+        .filter(_accessible_change_filter(user_id, db))
         .filter(
             or_(
                 ChangeReview.id.is_(None),                         # no review row
@@ -204,9 +229,9 @@ def count_needs_review(user_id: uuid.UUID, db: Session) -> int:
 
     now = datetime.now(timezone.utc)
     return (
-        db.query(Change)
+        _with_integration_join(db.query(Change))
         .outerjoin(ChangeReview, ChangeReview.change_id == Change.id)
-        .filter(Change.user_id == user_id)
+        .filter(_accessible_change_filter(user_id, db))
         .filter(
             or_(
                 ChangeReview.id.is_(None),
@@ -235,9 +260,9 @@ def count_needs_review_by_risk(
 
     now = datetime.now(timezone.utc)
     return (
-        db.query(Change)
+        _with_integration_join(db.query(Change))
         .outerjoin(ChangeReview, ChangeReview.change_id == Change.id)
-        .filter(Change.user_id == user_id, Change.risk_level == risk_level)
+        .filter(_accessible_change_filter(user_id, db), Change.risk_level == risk_level)
         .filter(
             or_(
                 ChangeReview.id.is_(None),

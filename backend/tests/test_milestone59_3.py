@@ -728,11 +728,16 @@ class TestDangerousActionWiring:
                 f"{method_name} must require admin role"
             )
 
-    def test_H3_create_sync_only_owner_path(self):
-        """POST /syncs verifies the integration belongs to current_user."""
+    def test_H3_create_sync_requires_viewer_access(self):
+        """POST /syncs verifies current_user can view the integration —
+        owner OR any member of its workspace (fixed post-audit: this used
+        to be strict owner-only via get_integration_by_id, which silently
+        broke manual "Sync Now" for every non-creator workspace member;
+        get_integration_for_viewer is the same workspace-aware check
+        GET /integrations/{id} already used)."""
         src = Path("app/routers/syncs.py").read_text()
-        assert "get_integration_by_id" in src
-        assert "user_id=current_user.id" in src
+        assert "get_integration_for_viewer" in src
+        assert "actor_user_id=current_user.id" in src
 
     def test_H4_pr_creation_route_requires_admin_at_service_layer(self):
         """POST /changes/{id}/github-pr delegates to service which calls

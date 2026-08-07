@@ -126,18 +126,43 @@ def sync_integration(
                 f"Integration {integration_id!r} not found in the database."
             )
 
-        # ── Defensive ownership check (Milestone 21) ─────────────────────────
-        # The API route already verifies that the requesting user owns this
-        # integration before enqueuing the task.  This is a belt-and-braces
-        # guard against task-queue argument tampering, replays from old runs,
-        # or a future code path that constructs sync_integration arguments
-        # without re-checking ownership.  Refuse to sync rather than read
-        # one user's data into another user's snapshots.
+        # ── Defensive access check (Milestone 21; widened for workspace
+        # collaboration after a production-readiness audit) ─────────────────
+        # The API route already verifies that the requesting user may
+        # trigger this integration's sync (owner OR workspace member) before
+        # enqueuing the task. This is a belt-and-braces guard against
+        # task-queue argument tampering, replays from old runs, or a future
+        # code path that constructs sync_integration arguments without
+        # re-checking access. Refuse to sync rather than read one user's
+        # data on another, unrelated user's behalf.
+        #
+        # This used to require exact equality with integration.user_id
+        # (the original creator) — which broke every OTHER workspace
+        # member's manual "Sync Now": the task would enqueue successfully
+        # (the API-level check already used workspace-aware
+        # get_integration_for_viewer) and then silently fail here with
+        # "Worker user_id mismatch", since the triggering teammate's ID is
+        # never equal to the creator's ID. Now any member of the
+        # integration's workspace is accepted, matching the API-level check.
         _user_uuid = uuid.UUID(user_id)
-        if integration.user_id != _user_uuid:
+        _has_access = integration.user_id == _user_uuid
+        if not _has_access and integration.workspace_id is not None:
+            from app.models.workspace import WorkspaceMember
+
+            _has_access = (
+                db.query(WorkspaceMember)
+                .filter(
+                    WorkspaceMember.workspace_id == integration.workspace_id,
+                    WorkspaceMember.user_id == _user_uuid,
+                )
+                .first()
+                is not None
+            )
+        if not _has_access:
             raise ValueError(
-                f"Worker user_id mismatch: integration {integration_id} is owned "
-                f"by a different user than {user_id}. Refusing to sync."
+                f"Worker access mismatch: integration {integration_id} is not "
+                f"owned by, nor in a workspace shared with, user {user_id}. "
+                f"Refusing to sync."
             )
 
         logger.info(

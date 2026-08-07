@@ -2,21 +2,27 @@
 
 Responsibilities
 ----------------
-* ``get_resources``         — paginated list of resources scoped by user
-* ``get_resource_by_id``    — single resource scoped by user (None on miss)
+* ``get_resources``         — paginated list of resources scoped by workspace
+* ``get_resource_by_id``    — single resource scoped by workspace (None on miss)
 * ``get_resource_snapshots`` — paginated snapshots for a verified resource
 * ``get_resource_changes``  — paginated changes for a verified resource
 
 Design decisions
 ----------------
-* Ownership is always verified before returning sub-resources.  If a caller
-  passes a resource_id that belongs to another user, ``get_resource_by_id``
+* Access is scoped by workspace membership (``_accessible_resource_filter``
+  below), not just the row's ``user_id`` — fixed after an audit found these
+  endpoints filtered strictly by ``Resource.user_id``, meaning an invited
+  teammate could join a workspace and see zero resources for integrations
+  someone else connected. Legacy resources whose integration predates
+  workspace linking (``Integration.workspace_id IS NULL``) still fall back
+  to strict ``user_id`` ownership, preserving their original behavior.
+  If a caller passes a resource_id outside their access, ``get_resource_by_id``
   returns None and the sub-resource queries return empty results.  The router
   maps None to HTTP 404 without leaking object existence.
 
 * ``get_resource_snapshots`` and ``get_resource_changes`` call
   ``get_resource_by_id`` as a gate.  This avoids a second WHERE clause on the
-  snapshot/change query while keeping the ownership check explicit.
+  snapshot/change query while keeping the access check explicit.
 
 * ``page_size`` is clamped to ``_MAX_PAGE_SIZE`` server-side regardless of what
   the caller passes.
@@ -30,13 +36,27 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.change import Change
+from app.models.integration import Integration
 from app.models.resource import Resource
 from app.models.snapshot import Snapshot
+from app.services.workspace_service import get_user_workspace_ids
 
 _MAX_PAGE_SIZE = 100
+
+
+def _accessible_resource_filter(user_id: uuid.UUID, db: Session):
+    """SQLAlchemy filter expression: a Resource is visible to *user_id* if its
+    integration belongs to a workspace the user is a member of, OR (legacy
+    fallback) the resource's own ``user_id`` matches."""
+    workspace_ids = get_user_workspace_ids(user_id, db)
+    return or_(
+        Integration.workspace_id.in_(workspace_ids),
+        Resource.user_id == user_id,
+    )
 
 
 def get_resources(
@@ -47,10 +67,11 @@ def get_resources(
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[Resource], int]:
-    """Return a page of resources scoped to *user_id* and a total row count.
+    """Return a page of resources accessible to *user_id* and a total row count.
 
     Args:
-        user_id:        Owning user — all results are scoped to this ID.
+        user_id:        Requesting user — results include every workspace
+                         they're a member of.
         db:             Active SQLAlchemy session.
         integration_id: Optional filter — restrict to one integration.
         page:           1-based page number (clamped to ≥ 1).
@@ -63,7 +84,11 @@ def get_resources(
     page_size = min(max(page_size, 1), _MAX_PAGE_SIZE)
     page = max(page, 1)
 
-    q = db.query(Resource).filter(Resource.user_id == user_id)
+    q = (
+        db.query(Resource)
+        .join(Integration, Resource.integration_id == Integration.id)
+        .filter(_accessible_resource_filter(user_id, db))
+    )
     if integration_id is not None:
         q = q.filter(Resource.integration_id == integration_id)
     q = q.order_by(Resource.created_at.desc())
@@ -78,14 +103,17 @@ def get_resource_by_id(
     user_id: uuid.UUID,
     db: Session,
 ) -> Optional[Resource]:
-    """Return a single Resource scoped to *user_id*, or ``None``.
+    """Return a single Resource accessible to *user_id*, or ``None``.
 
-    Returns ``None`` whether the resource does not exist **or** belongs to a
-    different user.  The caller should surface both as HTTP 404.
+    Returns ``None`` whether the resource does not exist **or** the user has
+    no access (not a member of its integration's workspace, and not the
+    legacy creating user).  The caller should surface both as HTTP 404.
     """
     return (
         db.query(Resource)
-        .filter(Resource.id == resource_id, Resource.user_id == user_id)
+        .join(Integration, Resource.integration_id == Integration.id)
+        .filter(Resource.id == resource_id)
+        .filter(_accessible_resource_filter(user_id, db))
         .first()
     )
 

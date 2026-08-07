@@ -56,7 +56,7 @@ class TestManualSyncDedupe:
         integ.id = body.integration_id
 
         with patch(
-            "app.services.integration_service.get_integration_by_id",
+            "app.services.integration_service.get_integration_for_viewer",
             return_value=integ,
         ), patch(
             "app.services.sync_service.has_in_flight_sync",
@@ -84,7 +84,7 @@ class TestManualSyncDedupe:
         sync_run = MagicMock(id=uuid.uuid4(), integration_id=body.integration_id,
                              status="pending", started_at=datetime.now(timezone.utc))
         with patch(
-            "app.services.integration_service.get_integration_by_id",
+            "app.services.integration_service.get_integration_for_viewer",
             return_value=integ,
         ), patch(
             "app.services.sync_service.has_in_flight_sync",
@@ -114,7 +114,7 @@ class TestManualSyncDedupe:
         integ = MagicMock()
         integ.status = "paused"
         with patch(
-            "app.services.integration_service.get_integration_by_id",
+            "app.services.integration_service.get_integration_for_viewer",
             return_value=integ,
         ):
             with pytest.raises(HTTPException) as exc:
@@ -136,7 +136,7 @@ class TestManualSyncDedupe:
         body = SyncCreateRequest(integration_id=uuid.uuid4())
         db = MagicMock()
         with patch(
-            "app.services.integration_service.get_integration_by_id",
+            "app.services.integration_service.get_integration_for_viewer",
             return_value=None,  # not owned or deleted
         ):
             with pytest.raises(HTTPException) as exc:

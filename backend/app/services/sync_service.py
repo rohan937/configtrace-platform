@@ -428,10 +428,32 @@ def get_sync_run(
     sync_run_id: uuid.UUID,
     db: Session,
 ) -> SyncRun | None:
-    """Return the sync run scoped to *user_id*, or ``None`` if not found."""
+    """Return the sync run accessible to *user_id*, or ``None`` if not found.
+
+    Accessible means: the sync run's integration belongs to a workspace the
+    user is a member of, OR (legacy fallback, no workspace link) the run's
+    own ``user_id`` matches. Previously this filtered strictly by
+    ``SyncRun.user_id`` — the triggering user, not necessarily the polling
+    user — which meant a teammate polling a sync THEY triggered via
+    ``POST /syncs`` still couldn't see their own workspace's other syncs,
+    and worse, a scheduled sync (whose ``user_id`` is the integration
+    owner) was invisible to every other member polling for it.
+    """
+    from sqlalchemy import or_
+
+    from app.services.workspace_service import get_user_workspace_ids
+
+    workspace_ids = get_user_workspace_ids(user_id, db)
     return (
         db.query(SyncRun)
-        .filter(SyncRun.id == sync_run_id, SyncRun.user_id == user_id)
+        .join(Integration, SyncRun.integration_id == Integration.id)
+        .filter(SyncRun.id == sync_run_id)
+        .filter(
+            or_(
+                Integration.workspace_id.in_(workspace_ids),
+                SyncRun.user_id == user_id,
+            )
+        )
         .first()
     )
 

@@ -227,6 +227,23 @@ def get_workspaces_for_user(
     )
 
 
+def get_user_workspace_ids(user_id: uuid.UUID, db: Session) -> list[uuid.UUID]:
+    """Return every workspace_id the user is a member of (any role).
+
+    The single canonical source for "which workspaces can this user see" —
+    used by read-path authorization across resources/changes/security
+    findings so a workspace member (not just the row's original creator)
+    can see data belonging to their own workspace. A cheap, single-column
+    query; callers should treat an empty list as "nothing visible" rather
+    than fetching unfiltered."""
+    rows = (
+        db.query(WorkspaceMember.workspace_id)
+        .filter(WorkspaceMember.user_id == user_id)
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
 def get_workspace(
     workspace_id: uuid.UUID,
     user_id: uuid.UUID,
