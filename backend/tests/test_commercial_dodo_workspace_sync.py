@@ -47,7 +47,7 @@ import pytest
 
 from app.billing.adapters.dodo import DodoBillingAdapter, DodoCatalogMapping
 from app.billing.dodo_client import DodoAPIClient, DodoClientConfig
-from app.billing.dodo_webhook_service import process_dodo_webhook
+from app.billing.dodo_webhook_service import DodoWebhookProcessingError, process_dodo_webhook
 from app.billing.enums import BillingInterval, NormalizedSubscriptionStatus, PlanId
 from app.billing.models import BillingAuditEvent, BillingWebhookEvent, NormalizedSubscription
 from app.billing.provider import CheckoutRequest
@@ -117,6 +117,14 @@ def workspace(db_session, test_user):
     yield ws
     db_session.query(BillingAuditEvent).filter(BillingAuditEvent.workspace_id == ws.id).delete()
     db_session.query(NormalizedSubscription).filter(NormalizedSubscription.workspace_id == ws.id).delete()
+    # BillingWebhookEvent has no workspace_id column (keyed by provider +
+    # external_event_id only — see app.billing.models). This file reuses
+    # a small set of literal event-id strings across tests (e.g.
+    # "evt_active_1"), so without this cleanup a rerun against this same
+    # persistent dev database collides with a prior run's already-
+    # "processed" row and gets "duplicate_ignored" instead — not a real
+    # regression, just missing test isolation for this table.
+    db_session.query(BillingWebhookEvent).filter(BillingWebhookEvent.external_event_id.like("evt_%")).delete()
     db_session.commit()
 
 
@@ -358,3 +366,91 @@ class TestBillingEndpointReflectsProAfterSuccessfulSequence:
 # part of this fix's validation rather than duplicated here, since nothing
 # in provider_routing.py or the Paddle webhook service was touched by this
 # change (only Dodo's own normalization/service files were).
+
+
+# ── Follow-up fix: an unexpected exception must not erase its own ──────────
+# ── diagnostic record (real production investigation after 2177eba) ────────
+#
+# Investigating why a REAL Dodo Test Mode checkout still showed no
+# NormalizedSubscription row (and `unresolved-events` showed nothing
+# either) after commit 2177eba found a second, independent bug in the
+# pre-existing router/service transaction boundary — not specific to the
+# workspace-sync logic itself, but exactly the kind of bug that would hide
+# ANY failure in it: app/routers/dodo_webhook.py calls db.rollback()
+# whenever process_dodo_webhook raises DodoWebhookProcessingError. Because
+# check_and_record_pending's insert, and the old mark_failed call, were
+# only db.flush()'d (never committed) within that same session, that
+# rollback silently discarded BOTH — leaving zero trace of the delivery
+# even though Dodo received HTTP 200. This affects any unexpected
+# exception in the webhook pipeline, not just ones caused by this specific
+# fix, which is exactly why it was invisible until a real, non-fixture
+# payload triggered some exception this test suite's synthetic fixtures
+# never exercised.
+
+
+class TestUnexpectedExceptionLeavesADurableFailureRecord:
+    def test_exception_inside_apply_normalized_event_survives_callers_rollback(
+        self, db_session, workspace, monkeypatch
+    ):
+        def _boom(*args, **kwargs):
+            raise RuntimeError("simulated unexpected failure")
+
+        monkeypatch.setattr(
+            "app.billing.dodo_webhook_service._create_subscription_from_hint", _boom
+        )
+
+        event = _subscription_event("subscription.active", workspace.id, plan_id="pro")
+        with pytest.raises(DodoWebhookProcessingError):
+            process_dodo_webhook(event, "evt_boom_1", db_session)
+
+        # This is the exact call app/routers/dodo_webhook.py makes in its
+        # `except DodoWebhookProcessingError` branch. Before the fix, this
+        # would erase the failure row process_dodo_webhook just wrote.
+        db_session.rollback()
+
+        row = (
+            db_session.query(BillingWebhookEvent)
+            .filter(BillingWebhookEvent.external_event_id == "evt_boom_1")
+            .first()
+        )
+        assert row is not None, "the failure record must survive the caller's rollback"
+        assert row.processing_status == "failed"
+        assert row.error_category == "unexpected"
+
+    def test_no_normalized_subscription_created_when_creation_raises(self, db_session, workspace, monkeypatch):
+        def _boom(*args, **kwargs):
+            raise RuntimeError("simulated unexpected failure")
+
+        monkeypatch.setattr(
+            "app.billing.dodo_webhook_service._create_subscription_from_hint", _boom
+        )
+
+        event = _subscription_event("subscription.active", workspace.id, plan_id="pro")
+        with pytest.raises(DodoWebhookProcessingError):
+            process_dodo_webhook(event, "evt_boom_2", db_session)
+        db_session.rollback()
+
+        assert (
+            db_session.query(NormalizedSubscription)
+            .filter(NormalizedSubscription.workspace_id == workspace.id)
+            .first()
+            is None
+        )
+
+
+class TestDiagnosticLoggingIsStructuredAndSecretFree:
+    def test_received_log_includes_expected_fields_and_no_secrets(self, db_session, workspace, caplog):
+        import logging
+
+        caplog.set_level(logging.INFO, logger="app.billing.dodo_webhook_service")
+        event = _subscription_event("subscription.active", workspace.id, plan_id="pro")
+        process_dodo_webhook(event, "evt_log_1", db_session)
+
+        received_lines = [r.getMessage() for r in caplog.records if "dodo_webhook received" in r.getMessage()]
+        assert received_lines, "expected a 'dodo_webhook received' diagnostic log line"
+        line = received_lines[0]
+        assert "workspace_hint_present=True" in line
+        assert "plan_hint=pro" in line
+        # Never a secret, card detail, or full payload — only booleans/short tokens.
+        assert "cus_prod_1" not in line
+        assert "metadata" not in line

@@ -18,6 +18,7 @@ reading it off the parsed event dict.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -42,6 +43,8 @@ from app.billing.idempotency import (
 from app.billing.models import NormalizedSubscription
 from app.billing.pricing import TEAM_INCLUDED_SEATS
 from app.models.workspace import Workspace
+
+logger = logging.getLogger(__name__)
 
 # Dodo subscription status strings, verified from the documented PATCH
 # /subscriptions/{id} `status` enum: pending | active | on_hold |
@@ -129,6 +132,25 @@ def process_dodo_webhook(event: dict, external_event_id: str, db: Session) -> st
     """
     normalized = normalize_dodo_event(event, external_event_id=external_event_id)
 
+    # Structured, secret-free diagnostic — never the raw payload, never a
+    # customer email or card detail, only booleans/short IDs already
+    # treated as non-secret elsewhere in this codebase (workspace/
+    # subscription/customer references). This is what makes it possible
+    # to tell, from Render logs alone, WHERE in the pipeline a real
+    # delivery diverged from the test fixtures' assumed payload shape —
+    # added while diagnosing why a real Dodo Test Mode checkout still
+    # didn't create a NormalizedSubscription after the first workspace-
+    # sync fix (commit 2177eba).
+    logger.info(
+        "dodo_webhook received event_type=%s workspace_hint_present=%s "
+        "plan_hint=%s subscription_reference_present=%s customer_reference_present=%s",
+        normalized.raw_event_name,
+        normalized.workspace_id_hint is not None,
+        normalized.plan_id_hint,
+        bool(normalized.subscription_reference),
+        bool(normalized.customer_reference),
+    )
+
     webhook_row = check_and_record_pending(
         provider=BillingProvider.DODO.value,
         external_event_id=normalized.external_event_id,
@@ -146,23 +168,64 @@ def process_dodo_webhook(event: dict, external_event_id: str, db: Session) -> st
         WebhookProcessingStatus.DUPLICATE_IGNORED.value,
     ):
         mark_duplicate_ignored(webhook_row, db)
+        logger.info("dodo_webhook outcome=duplicate_ignored event_type=%s", normalized.raw_event_name)
         return "duplicate_ignored"
 
     try:
         if normalized.event_type == WebhookEventType.UNKNOWN:
             # Safely acknowledged and auditable, never mutates state.
             mark_processed(webhook_row, db)
+            logger.info("dodo_webhook outcome=unknown_event_acknowledged event_type=%s", normalized.raw_event_name)
             return "unknown_event_acknowledged"
 
         unresolved_reason = _apply_normalized_event(normalized, db)
         if unresolved_reason is not None:
             mark_failed(webhook_row, unresolved_reason, db)
+            # This branch does NOT raise, so the router's normal
+            # db.commit() (not db.rollback()) applies — this row survives
+            # without any special handling. The rollback-swallows-the-row
+            # bug only affects the "except Exception" branch below, where
+            # the router instead calls db.rollback().
+            logger.info(
+                "dodo_webhook outcome=unresolved_workspace event_type=%s reason=%s",
+                normalized.raw_event_name, unresolved_reason,
+            )
             return "unresolved_workspace"
 
         mark_processed(webhook_row, db)
+        logger.info("dodo_webhook outcome=processed event_type=%s", normalized.raw_event_name)
         return "processed"
     except Exception as exc:
+        # Bug found during real Dodo Test Mode verification (fixed here):
+        # app/routers/dodo_webhook.py calls db.rollback() whenever this
+        # function raises DodoWebhookProcessingError. Since
+        # check_and_record_pending's insert above, and mark_failed below,
+        # were only db.flush()'d (never committed) within that same
+        # session/transaction, that rollback silently discarded BOTH —
+        # leaving literally zero trace of the delivery (no
+        # NormalizedSubscription row, no BillingWebhookEvent row at all,
+        # not even a failed one) even though Dodo received HTTP 200. This
+        # is exactly why `unresolved-events` and `subscription` both came
+        # back empty for a real failed delivery. Fix: roll back the
+        # failed attempt's partial mutations ourselves, re-record the
+        # pending row fresh, mark it failed, and COMMIT immediately —
+        # durably, before the exception is allowed to propagate — so the
+        # router's subsequent db.rollback() has nothing left to lose.
+        db.rollback()
+        logger.exception("dodo_webhook outcome=unexpected_error event_type=%s", normalized.raw_event_name)
+        webhook_row = check_and_record_pending(
+            provider=BillingProvider.DODO.value,
+            external_event_id=normalized.external_event_id,
+            event_type=normalized.event_type.value,
+            occurred_at=normalized.occurred_at,
+            customer_reference=normalized.customer_reference,
+            subscription_reference=normalized.subscription_reference,
+            transaction_reference=normalized.transaction_reference,
+            normalized_payload=normalized.normalized_payload,
+            db=db,
+        )
         mark_failed(webhook_row, "unexpected", db)
+        db.commit()
         raise DodoWebhookProcessingError(str(exc)) from exc
 
 
@@ -219,14 +282,30 @@ def _create_subscription_from_hint(normalized: NormalizedDodoWebhookEvent, db: S
         ``workspace_id`` would reject a second row anyway).
     """
     if normalized.event_type not in _SUBSCRIPTION_LIFECYCLE_EVENT_TYPES:
+        logger.info(
+            "dodo_create_subscription skip reason=not_a_lifecycle_event event_type=%s", normalized.raw_event_name
+        )
         return None
     if normalized.workspace_id_hint is None or normalized.plan_id_hint is None:
+        logger.info(
+            "dodo_create_subscription skip reason=missing_metadata_hint event_type=%s "
+            "workspace_hint_present=%s plan_hint_present=%s",
+            normalized.raw_event_name, normalized.workspace_id_hint is not None, normalized.plan_id_hint is not None,
+        )
         return None
     if not normalized.subscription_status:
+        logger.info(
+            "dodo_create_subscription skip reason=missing_subscription_status event_type=%s workspace_hint=%s",
+            normalized.raw_event_name, normalized.workspace_id_hint,
+        )
         return None
 
     workspace = db.get(Workspace, normalized.workspace_id_hint)
     if workspace is None:
+        logger.info(
+            "dodo_create_subscription skip reason=unknown_workspace event_type=%s workspace_hint=%s",
+            normalized.raw_event_name, normalized.workspace_id_hint,
+        )
         return None
 
     already_exists = (
@@ -235,6 +314,11 @@ def _create_subscription_from_hint(normalized: NormalizedDodoWebhookEvent, db: S
         .first()
     )
     if already_exists is not None:
+        logger.info(
+            "dodo_create_subscription skip reason=workspace_already_has_subscription event_type=%s "
+            "workspace_hint=%s existing_provider=%s",
+            normalized.raw_event_name, normalized.workspace_id_hint, already_exists.provider,
+        )
         return None
 
     plan_id = normalized.plan_id_hint  # "pro" | "team" — already validated by normalize_dodo_event
@@ -266,6 +350,10 @@ def _create_subscription_from_hint(normalized: NormalizedDodoWebhookEvent, db: S
             "billable_seats": billable_seats,
         },
         db=db,
+    )
+    logger.info(
+        "dodo_create_subscription created workspace_id=%s plan_id=%s billable_seats=%s",
+        sub.workspace_id, plan_id, billable_seats,
     )
     return sub
 
