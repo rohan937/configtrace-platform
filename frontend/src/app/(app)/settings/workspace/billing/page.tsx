@@ -10,6 +10,7 @@ import {
   createTeamCheckout,
   createProCheckout,
   createPortalSession,
+  cancelSubscription,
   type TeamCheckoutResponse,
   type TeamPricingBreakdown,
 } from "@/lib/api";
@@ -165,9 +166,15 @@ interface StatusDisplay {
   bg: string;
 }
 
-function getStatusDisplay(status: string, plan: BillingPlan): StatusDisplay {
+function getStatusDisplay(status: string, plan: BillingPlan, cancelAtPeriodEnd = false): StatusDisplay {
   if (plan === "free") {
     return { label: "Free plan", color: "#8b90a0", borderColor: "#2a2d38", bg: "#1a1d28" };
+  }
+  // A live subscription with cancellation already scheduled — distinct
+  // from a normal "Active subscription" so the customer immediately sees
+  // their plan is ending, without alarming past-due/canceled styling.
+  if (cancelAtPeriodEnd && (status === "active" || status === "trialing" || status === "past_due" || status === "grace_period")) {
+    return { label: "Cancellation scheduled", color: "#c4c8d4", borderColor: "#2a2d38", bg: "#1a1d28" };
   }
   switch (status) {
     case "active":
@@ -213,6 +220,31 @@ function getStatusBodyText(billing: WorkspaceBilling): string {
     return `Renews on ${formatDate(current_period_end)}.`;
   }
   return "";
+}
+
+// The current plan's price for display in the Current Plan card. Team's
+// price depends on member count, so it prefers the live pricing-preview
+// total (same source the plan-selection cards use) and falls back to the
+// PLAN_META formula label only while that hasn't loaded yet.
+function formatCurrentPlanPrice(plan: BillingPlan, teamPricing: TeamPricingBreakdown | null): string | null {
+  if (plan === "free") return null;
+  if (plan === "pro") return `${PLAN_META.pro.monthlyPriceUsd}/month`;
+  if (plan === "team") {
+    if (teamPricing) return `$${Math.round(teamPricing.total_amount_cents / 100)}/month`;
+    return `${PLAN_META.team.monthlyPriceUsd}/month`;
+  }
+  return null;
+}
+
+// The exact confirmation-modal / scheduled-cancellation copy — kept
+// separate from getStatusBodyText above so Stripe/Paddle's existing
+// (different, already-shipped) copy is never touched by this change.
+function dodoCancellationDateText(billing: WorkspaceBilling): string {
+  const planName = PLAN_META[billing.plan]?.name ?? billing.plan;
+  if (billing.current_period_end) {
+    return `Your ${planName} plan will remain active until ${formatDate(billing.current_period_end)}. You won't be charged again after that date.`;
+  }
+  return `Your ${planName} plan will remain active until the end of your current billing period. You won't be charged again after that date.`;
 }
 
 // ── Usage bar ─────────────────────────────────────────────────────────────────
@@ -599,6 +631,9 @@ export default function BillingPage() {
   // comes ONLY from the backend pricing-preview endpoint — never
   // recomputed client-side.
   const [teamPricing, setTeamPricing] = useState<TeamPricingBreakdown | null>(null);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelBusy, setCancelBusy]           = useState(false);
+  const [cancelError, setCancelError]         = useState<string | null>(null);
 
   // Read Stripe redirect result from query string.
   useEffect(() => {
@@ -748,6 +783,24 @@ export default function BillingPage() {
       const msg = err instanceof Error ? err.message : "Failed to open billing portal.";
       setActionError(friendlyBillingError(msg));
       setActionBusy(false);
+    }
+  }
+
+  async function handleConfirmCancel() {
+    if (!selectedWorkspace) return;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      const token = await getToken();
+      await cancelSubscription(selectedWorkspace.id, token);
+      setCancelModalOpen(false);
+      setSuccessMsg("Cancellation scheduled. Your plan stays active until the end of the current billing period.");
+      await load();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to cancel subscription.";
+      setCancelError(friendlyBillingError(msg));
+    } finally {
+      setCancelBusy(false);
     }
   }
 
@@ -910,9 +963,22 @@ export default function BillingPage() {
               }}
             >
               {(() => {
-                const sd      = getStatusDisplay(billing.status, billing.plan);
-                const bodyText = getStatusBodyText(billing);
+                const sd      = getStatusDisplay(billing.status, billing.plan, billing.cancel_at_period_end);
                 const planName = PLAN_META[billing.plan]?.name ?? billing.plan;
+                const priceLabel = formatCurrentPlanPrice(billing.plan, teamPricing);
+
+                // Dodo cancellation UI (this message): only for an
+                // existing DODO subscription — the ACTUAL provider from
+                // NormalizedSubscription, distinct from checkout_provider.
+                // Never shown for Stripe/Paddle, whose existing flows are
+                // untouched.
+                const isLiveStatus = ["active", "trialing", "past_due", "grace_period"].includes(billing.status);
+                const isDodoPaid = billing.provider === "dodo" && billing.plan !== "free";
+                const showDodoCancelAction = isDodoPaid && isLiveStatus && !billing.cancel_at_period_end;
+                const showDodoScheduledState = isDodoPaid && billing.cancel_at_period_end && isLiveStatus;
+
+                const bodyText = showDodoScheduledState ? dodoCancellationDateText(billing) : getStatusBodyText(billing);
+
                 return (
                   <>
                     <div
@@ -939,6 +1005,11 @@ export default function BillingPage() {
                         >
                           {planName}
                         </h2>
+                        {priceLabel && (
+                          <p style={{ margin: "2px 0 0", fontSize: "13px", color: "#8b90a0" }}>
+                            {priceLabel}
+                          </p>
+                        )}
                       </div>
 
                       <span
@@ -973,7 +1044,7 @@ export default function BillingPage() {
                       </p>
                     )}
 
-                    {/* Manage subscription button — inside the plan card */}
+                    {/* Manage subscription button — inside the plan card (Stripe) */}
                     {billing.stripe_subscription_id && (
                       <button
                         onClick={handleManage}
@@ -992,6 +1063,71 @@ export default function BillingPage() {
                         }}
                       >
                         {actionBusy ? "Opening portal…" : "Manage subscription →"}
+                      </button>
+                    )}
+
+                    {/* Dodo: Manage billing + Cancel subscription (active) */}
+                    {showDodoCancelAction && (
+                      <div style={{ display: "flex", gap: "10px" }}>
+                        <button
+                          onClick={handleManage}
+                          disabled={actionBusy}
+                          aria-label="Manage billing"
+                          style={{
+                            fontSize: "12px",
+                            color: "#c4c8d4",
+                            background: "none",
+                            border: "1px solid #2a2d38",
+                            borderRadius: "5px",
+                            padding: "6px 14px",
+                            cursor: actionBusy ? "not-allowed" : "pointer",
+                            opacity: actionBusy ? 0.6 : 1,
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          {actionBusy ? "Opening…" : "Manage billing"}
+                        </button>
+                        {/* Lower-emphasis on purpose — available, not promoted. */}
+                        <button
+                          onClick={() => { setCancelError(null); setCancelModalOpen(true); }}
+                          aria-label="Cancel subscription"
+                          style={{
+                            fontSize: "12px",
+                            color: "#8b90a0",
+                            background: "none",
+                            border: "none",
+                            borderRadius: "5px",
+                            padding: "6px 8px",
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            textDecoration: "underline",
+                            textUnderlineOffset: "2px",
+                          }}
+                        >
+                          Cancel subscription
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Dodo: cancellation already scheduled — Manage billing only */}
+                    {showDodoScheduledState && (
+                      <button
+                        onClick={handleManage}
+                        disabled={actionBusy}
+                        aria-label="Manage billing"
+                        style={{
+                          fontSize: "12px",
+                          color: "#c4c8d4",
+                          background: "none",
+                          border: "1px solid #2a2d38",
+                          borderRadius: "5px",
+                          padding: "6px 14px",
+                          cursor: actionBusy ? "not-allowed" : "pointer",
+                          opacity: actionBusy ? 0.6 : 1,
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        {actionBusy ? "Opening…" : "Manage billing"}
                       </button>
                     )}
                   </>
@@ -1165,6 +1301,86 @@ export default function BillingPage() {
           </>
         )}
       </div>
+
+      {/* ── Cancel-subscription confirmation modal (Dodo) ──────────────── */}
+      {cancelModalOpen && billing && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-modal-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "16px",
+          }}
+          onClick={() => { if (!cancelBusy) setCancelModalOpen(false); }}
+        >
+          <div
+            style={{
+              background: "#13151a",
+              border: "1px solid #2a2d38",
+              borderRadius: "10px",
+              padding: "24px",
+              maxWidth: "420px",
+              width: "100%",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="cancel-modal-title" style={{ margin: "0 0 10px", fontSize: "17px", fontWeight: 700, color: "#e8eaf0" }}>
+              Cancel subscription?
+            </h2>
+            <p style={{ margin: "0 0 20px", fontSize: "13px", color: "#c4c8d4", lineHeight: 1.6 }}>
+              {dodoCancellationDateText(billing)}
+            </p>
+            {cancelError && (
+              <p style={{ margin: "0 0 16px", fontSize: "12px", color: "#f87171" }}>{cancelError}</p>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                onClick={() => setCancelModalOpen(false)}
+                disabled={cancelBusy}
+                autoFocus
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "#0b0c0f",
+                  background: "#e8eaf0",
+                  border: "none",
+                  borderRadius: "6px",
+                  padding: "8px 16px",
+                  cursor: cancelBusy ? "not-allowed" : "pointer",
+                  opacity: cancelBusy ? 0.6 : 1,
+                  fontFamily: "inherit",
+                }}
+              >
+                Keep subscription
+              </button>
+              <button
+                onClick={handleConfirmCancel}
+                disabled={cancelBusy}
+                style={{
+                  fontSize: "13px",
+                  color: "#c4c8d4",
+                  background: "none",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "6px",
+                  padding: "8px 16px",
+                  cursor: cancelBusy ? "not-allowed" : "pointer",
+                  opacity: cancelBusy ? 0.6 : 1,
+                  fontFamily: "inherit",
+                }}
+              >
+                {cancelBusy ? "Canceling…" : "Cancel subscription"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

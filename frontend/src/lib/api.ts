@@ -2364,14 +2364,37 @@ export async function createCheckoutSession(
 }
 
 /**
- * Create a Stripe Billing Portal session for managing an existing subscription.
- * Returns the Stripe-hosted portal URL.
+ * Provider-neutral billing-management session for an EXISTING
+ * subscription — dispatches server-side to whichever provider the
+ * subscription actually belongs to (Stripe's Billing Portal, or Dodo/
+ * Paddle's own customer-portal equivalent via their adapters). Returns
+ * a provider-hosted management URL; never exposes provider IDs.
  */
 export async function createPortalSession(
   workspaceId: string,
   token?: string | null,
 ): Promise<{ portal_url: string }> {
-  return apiFetch(`/workspaces/${workspaceId}/billing/portal`, {
+  return apiFetch(`/workspaces/${workspaceId}/billing/management`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    token,
+  });
+}
+
+/**
+ * Cancel the workspace's current subscription — DEFAULTS to
+ * end-of-period cancellation (cancel_at_period_end=true): the customer
+ * keeps paid entitlements through the end of the current billing period
+ * and is not charged again. Provider-neutral; dispatches to whichever
+ * provider the EXISTING subscription actually belongs to. Idempotent —
+ * calling this again after cancellation is already scheduled is a safe
+ * no-op on the backend.
+ */
+export async function cancelSubscription(
+  workspaceId: string,
+  token?: string | null,
+): Promise<{ provider: string; state: string }> {
+  return apiFetch(`/workspaces/${workspaceId}/billing/cancel`, {
     method: "POST",
     body: JSON.stringify({}),
     token,

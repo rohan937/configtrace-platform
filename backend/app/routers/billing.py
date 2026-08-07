@@ -68,6 +68,13 @@ class BillingResponse(BaseModel):
     # about an EXISTING subscription's provider (see
     # app.billing.provider_routing for that rule).
     checkout_provider: str = "stripe"
+    # The ACTUAL provider of this workspace's EXISTING subscription (from
+    # its NormalizedSubscription row), or None if it has none yet —
+    # DISTINCT from checkout_provider above. The frontend uses this to
+    # decide whether an in-app "Cancel subscription" / "Manage billing"
+    # action is available for a Dodo/Paddle subscription (never exposes
+    # the underlying subscription/customer ID itself).
+    provider: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -210,6 +217,7 @@ def get_billing(
         # now. Never implies anything about THIS workspace's existing
         # subscription — see the NormalizedSubscription override above.
         checkout_provider=settings.BILLING_PROVIDER or "stripe",
+        provider=sub.provider if sub is not None else None,
     )
 
 
@@ -609,7 +617,16 @@ def cancel_current_subscription(
     current_user: User = Depends(get_current_user),
 ) -> CancelResponse:
     """Default is cancel-at-period-end (message-2 spec item 25) — access
-    is preserved through the current paid period."""
+    is preserved through the current paid period. The local row's
+    ``status`` is intentionally left untouched here (stays "active" and
+    the plan stays whatever it was) — only ``cancel_at_period_end``
+    flips. The real ``status -> canceled`` transition happens later, only
+    when Dodo/Paddle's own cancellation/expiration webhook arrives (see
+    ``dodo_webhook_service``'s ``SUBSCRIPTION_CANCELED`` handling) —
+    exactly the same discipline every other Dodo state transition in this
+    file already follows: this endpoint only ever tells the PROVIDER to
+    cancel; the provider's webhook remains the single source of truth for
+    when access actually ends."""
     _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
     provider = provider_for_management(workspace_id, db)  # type: ignore[arg-type]
 
@@ -626,6 +643,22 @@ def cancel_current_subscription(
     )
     if sub is None or not sub.provider_subscription_reference:
         raise HTTPException(status_code=400, detail="No active subscription found.")
+
+    # Idempotent short-circuit: cancellation is already scheduled — never
+    # issue a second destructive PATCH to the provider for a repeated
+    # click/request. Returns the current (already-correct) state as a
+    # success, not an error.
+    if sub.cancel_at_period_end:
+        return CancelResponse(provider=provider.value, state="already_scheduled")
+
+    # Fail closed: nothing to cancel if the subscription isn't currently
+    # in a live state (already fully canceled/expired/incomplete/paused,
+    # e.g. via a prior provider webhook) — reusing the same provider-
+    # neutral "live" status set _create_plan_checkout uses for the
+    # Dodo change-plan gate above; never re-issue a cancellation call
+    # against a provider subscription that's already gone.
+    if sub.status not in _DODO_LIVE_STATUSES:
+        raise HTTPException(status_code=400, detail="No active subscription to cancel.")
 
     from app.billing.enums import ObjectType
     from app.billing.provider import BillingProviderReference

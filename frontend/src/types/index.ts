@@ -1175,6 +1175,12 @@ export interface WorkspaceBilling {
   // provider a NEW checkout uses right now — "stripe" | "paddle" | "dodo".
   // Never implies anything about an EXISTING subscription's provider.
   checkout_provider: "stripe" | "paddle" | "dodo";
+  // The ACTUAL provider of this workspace's EXISTING subscription (from
+  // its NormalizedSubscription row), or null if it has none yet.
+  // DISTINCT from checkout_provider above — used to decide whether an
+  // in-app "Cancel subscription" action is available for a Dodo/Paddle
+  // subscription. Never a raw subscription/customer ID.
+  provider: "stripe" | "paddle" | "dodo" | null;
 }
 
 // ── M58.8: Change Notes ───────────────────────────────────────────────────────
