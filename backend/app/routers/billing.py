@@ -97,6 +97,33 @@ def _require_admin(workspace_id: uuid.UUID, user: User, db: Session) -> None:
         raise HTTPException(status_code=403, detail=str(exc))
 
 
+def _resolve_normalized_subscription_state(sub: NormalizedSubscription):
+    """Provider-neutral (plan, status, decision) for one NormalizedSubscription
+    row — the SAME normalization dispatch ``get_current_subscription`` uses,
+    factored out so ``get_billing`` (the legacy-shaped but must-stay-correct
+    endpoint the frontend actually calls) can share it exactly rather than
+    re-deriving its own copy that could drift out of sync."""
+    from app.billing.entitlements import decide_entitlements, normalize_stripe_status
+    from app.billing.paddle_webhook_service import normalize_paddle_status
+
+    if sub.provider == "paddle":
+        normalizer = normalize_paddle_status
+    elif sub.provider == "dodo":
+        from app.billing.dodo_webhook_service import normalize_dodo_status
+
+        normalizer = normalize_dodo_status
+    else:
+        normalizer = normalize_stripe_status
+    normalized_status = normalizer(sub.status)
+    decision = decide_entitlements(
+        plan_id=PlanId(sub.plan_id) if sub.plan_id in ("free", "pro", "team") else PlanId.FREE,
+        status=normalized_status,
+        grace_period_end=sub.grace_period_end,
+        source_provider=BillingProvider(sub.provider),
+    )
+    return normalized_status, decision
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -110,33 +137,67 @@ def get_billing(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> BillingResponse:
-    """Return the billing row, plan limits, and current usage for a workspace."""
+    """Return the billing row, plan limits, and current usage for a workspace.
+
+    Provider-neutral override (fix for a real production bug): a
+    ``NormalizedSubscription`` row — written by Dodo/Paddle webhook
+    processing or reconciliation, never by the legacy Stripe-only
+    ``billing_service``/``WorkspaceBilling`` path — is authoritative for
+    plan/status/period dates whenever one exists for this workspace. The
+    legacy ``WorkspaceBilling`` row was being treated as the sole source
+    of truth here regardless of provider, so a workspace with a real,
+    active Dodo (or future Paddle) subscription still read as Free: the
+    global ``BILLING_PROVIDER``/``checkout_provider`` value has NEVER
+    determined which provider's existing subscription is authoritative
+    for a given workspace (see ``app.billing.provider_routing``'s
+    stored-provider-wins invariant) — this endpoint was simply never
+    taught that rule, unlike ``get_current_subscription`` below, which
+    already got it right. No Stripe/Paddle workspace is affected by this
+    change: nothing in this codebase creates a ``NormalizedSubscription``
+    row for Stripe today, so ``sub`` is ``None`` and this endpoint's
+    behavior is byte-for-byte unchanged for every existing Stripe
+    customer.
+    """
     _require_admin(workspace_id, current_user, db)  # type: ignore[arg-type]
     billing = billing_service.get_or_create_billing(workspace_id, db)  # type: ignore[arg-type]
     db.commit()  # persist lazy-created billing row
 
-    # Show the *enforced* limits (based on effective plan, not nominal plan).
-    # This means past_due/unpaid workspaces see the free limits they're now
-    # subject to, not the pro/team limits they're nominally on.
-    effective_plan = billing_service._effective_plan(billing)
+    sub = (
+        db.query(NormalizedSubscription)
+        .filter(NormalizedSubscription.workspace_id == workspace_id)
+        .first()
+    )
+
+    if sub is not None:
+        normalized_status, decision = _resolve_normalized_subscription_state(sub)
+        effective_plan = decision.plan_id.value
+        status = normalized_status.value
+        current_period_start = sub.current_period_start
+        current_period_end = sub.current_period_end
+        cancel_at_period_end = sub.cancel_at_period_end
+    else:
+        # Show the *enforced* limits (based on effective plan, not nominal
+        # plan). This means past_due/unpaid workspaces see the free limits
+        # they're now subject to, not the pro/team limits they're
+        # nominally on.
+        effective_plan = billing_service._effective_plan(billing)
+        status = billing.status
+        current_period_start = billing.current_period_start
+        current_period_end = billing.current_period_end
+        cancel_at_period_end = billing.cancel_at_period_end
+
     limits = billing_service.get_plan_limits(effective_plan)
     usage = billing_service.get_workspace_usage(workspace_id, db)  # type: ignore[arg-type]
 
     return BillingResponse(
         workspace_id=billing.workspace_id,
-        plan=billing.plan,
-        status=billing.status,
+        plan=effective_plan,
+        status=status,
         stripe_customer_id=billing.stripe_customer_id,
         stripe_subscription_id=billing.stripe_subscription_id,
-        current_period_start=(
-            billing.current_period_start.isoformat()
-            if billing.current_period_start else None
-        ),
-        current_period_end=(
-            billing.current_period_end.isoformat()
-            if billing.current_period_end else None
-        ),
-        cancel_at_period_end=billing.cancel_at_period_end,
+        current_period_start=current_period_start.isoformat() if current_period_start else None,
+        current_period_end=current_period_end.isoformat() if current_period_end else None,
+        cancel_at_period_end=cancel_at_period_end,
         trial_end=(
             billing.trial_end.isoformat() if billing.trial_end else None
         ),
@@ -145,6 +206,9 @@ def get_billing(
         stripe_configured=settings.is_stripe_configured,
         stripe_mode=settings.stripe_mode,
         stripe_events_configured=settings.is_webhook_configured,
+        # Informational: which provider a NEW checkout would use right
+        # now. Never implies anything about THIS workspace's existing
+        # subscription — see the NormalizedSubscription override above.
         checkout_provider=settings.BILLING_PROVIDER or "stripe",
     )
 
