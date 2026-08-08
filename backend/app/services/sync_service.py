@@ -430,11 +430,32 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
                     integration.user_id,
                 )
                 continue
-            sync_integration.delay(
-                sync_run_id=str(sync_run.id),
-                integration_id=str(integration.id),
-                user_id=str(integration.user_id),
-            )
+            try:
+                sync_integration.delay(
+                    sync_run_id=str(sync_run.id),
+                    integration_id=str(integration.id),
+                    user_id=str(integration.user_id),
+                )
+            except Exception as exc:
+                # Broker unreachable at publish time. The SyncRun above
+                # already committed as 'pending' — mark it failed right
+                # away instead of leaving it for the 30-minute stale-run
+                # reaper, so has_in_flight_sync() clears immediately and
+                # this integration isn't blocked from its next tick.
+                mark_sync_failed(
+                    sync_run.id,
+                    error_message=f"Could not queue sync: {exc}",
+                    failure_category="internal_error",
+                    db=db,
+                )
+                errors += 1
+                logger.exception(
+                    "scheduled_sync: enqueue failed after SyncRun commit  "
+                    "sync_run_id=%s integration_id=%s",
+                    sync_run.id,
+                    integration.id,
+                )
+                continue
             enqueued += 1
             logger.info(
                 "scheduled_sync enqueued  sync_run_id=%s integration_id=%s "

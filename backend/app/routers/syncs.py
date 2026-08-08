@@ -114,11 +114,35 @@ def create_sync(
     # ensure the SyncRun is committed before the task is enqueued.
     from app.workers.sync_task import sync_integration  # noqa: PLC0415
 
-    sync_integration.delay(
-        sync_run_id=str(sync_run.id),
-        integration_id=str(body.integration_id),
-        user_id=str(current_user.id),
-    )
+    try:
+        sync_integration.delay(
+            sync_run_id=str(sync_run.id),
+            integration_id=str(body.integration_id),
+            user_id=str(current_user.id),
+        )
+    except Exception as exc:
+        # Broker (Redis) unreachable, or any other publish-time failure.
+        # The SyncRun row above already committed as 'pending' — if we
+        # leave it that way, has_in_flight_sync() will report this
+        # integration as permanently busy and reject every future Sync
+        # Now until an operator intervenes directly in the DB (the
+        # 30-minute stale-run reaper only runs for integrations with
+        # scheduled syncs configured, so manual-only integrations would
+        # never self-heal). Mark it failed immediately instead so the
+        # in-flight guard clears and the user can retry.
+        sync_service.mark_sync_failed(
+            sync_run.id,
+            error_message=f"Could not queue sync: {exc}",
+            failure_category="internal_error",
+            db=db,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not start the sync — the background processing "
+                "system is temporarily unavailable. Try again shortly."
+            ),
+        ) from exc
 
     return sync_run
 
