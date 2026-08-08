@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -19,6 +21,36 @@ from app.routers.paddle_webhook import router as paddle_webhook_router
 from app.routers.dodo_webhook import router as dodo_webhook_router
 from app.routers.syncs import router as syncs_router
 from app.routers.workspaces import router as workspaces_router
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_production_config() -> None:
+    """Fail fast on startup rather than serving traffic in a broken state.
+
+    ENCRYPTION_KEY has no safe fallback (see app/core/encryption.py — it
+    deliberately never derives a substitute key). Without this check,
+    production can start and pass every health check while every single
+    "connect a provider" request 500s, because credential encryption
+    raises only when first exercised, not at boot. Restricted to
+    production so local/dev/CI can keep running without every optional
+    secret configured.
+    """
+    if not settings.is_production:
+        return
+    from app.core.encryption import EncryptionKeyError, _load_key
+
+    try:
+        _load_key()
+    except EncryptionKeyError as exc:
+        raise RuntimeError(
+            "Refusing to start: ENVIRONMENT=production but ENCRYPTION_KEY "
+            f"is missing or invalid ({exc}). Every credential-encrypting "
+            "request would fail at runtime instead of at startup."
+        ) from exc
+
+
+_validate_production_config()
 
 app = FastAPI(
     title="ConfigTrace API",

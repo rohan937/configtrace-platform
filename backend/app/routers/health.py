@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 
 router = APIRouter()
@@ -46,6 +47,40 @@ def health_db(db: Session = Depends(get_db)):
             content={
                 "status": "error",
                 "database": "disconnected",
+                "detail": str(exc),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
+@router.get("/redis")
+def health_redis():
+    """Broker connectivity check.
+
+    Without this, ``/health`` and ``/health/db`` can both report healthy
+    while Redis is unreachable — every sync enqueue (manual or scheduled)
+    fails at that point, but nothing operator-visible says so until someone
+    notices syncs aren't running. A short PING with a tight timeout so this
+    check itself can't hang a load balancer probe.
+    """
+    try:
+        import redis as redis_lib
+
+        client = redis_lib.from_url(
+            settings.REDIS_URL, socket_connect_timeout=2, socket_timeout=2
+        )
+        client.ping()
+        return {
+            "status": "ok",
+            "redis": "connected",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "redis": "disconnected",
                 "detail": str(exc),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
