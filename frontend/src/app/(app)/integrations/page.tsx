@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import { getIntegrations } from "@/lib/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { getDisplayStatus } from "@/lib/integrationStatus";
 import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import PageHeader from "@/components/common/PageHeader";
@@ -1190,6 +1191,7 @@ export default function IntegrationsPage() {
   const [githubMode, setGithubMode]     = useState<GitHubMode>("app");
   const { getToken, isLoaded }          = useAuth();
   const router                          = useRouter();
+  const { refreshWorkspaces }           = useWorkspace();
 
   const fetchIntegrations = useCallback(async () => {
     setError(null);
@@ -1262,6 +1264,14 @@ export default function IntegrationsPage() {
   function handleCreated() {
     setShowForm(false);
     fetchIntegrations();
+    // A user's very first integration lazily provisions a default
+    // workspace server-side (see backend create_integration route) when
+    // no workspace_id was supplied. WorkspaceContext only loads the
+    // workspace list once on mount, so without this refresh a fresh
+    // user's sidebar/members/billing pages keep showing "no workspace"
+    // until a hard reload, even though a workspace now exists and their
+    // integration is attached to it.
+    refreshWorkspaces();
   }
 
   function handleCancel() {

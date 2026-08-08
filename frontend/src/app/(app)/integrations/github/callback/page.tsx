@@ -44,6 +44,7 @@ import type { GitHubInstallationRepo } from "@/types";
 import { completeGitHubAppInstall, getInstallationRepositories } from "@/lib/api";
 import LoadingState from "@/components/common/LoadingState";
 import GitHubRepoPicker from "@/components/integrations/GitHubRepoPicker";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 // Key used to store the state token in sessionStorage before the redirect.
 // Used for soft one-time-use cleanup only — not a hard security gate.
@@ -76,6 +77,7 @@ function CallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { getToken, isLoaded } = useAuth();
+  const { refreshWorkspaces } = useWorkspace();
 
   const [phase, setPhase] = useState<
     "loading" | "picker" | "completing" | "error" | "success"
@@ -215,6 +217,13 @@ function CallbackContent() {
         token,
       );
       setPhase("success");
+      // This may be the user's first integration, which lazily provisions
+      // a default workspace server-side. WorkspaceContext only loads the
+      // workspace list once on mount, and router.replace below is a
+      // client-side navigation that does not remount it — refresh
+      // explicitly so the sidebar/members/billing pages don't keep
+      // showing "no workspace" after landing back on /integrations.
+      refreshWorkspaces();
       // Redirect after a short pause so the user sees the success message.
       setTimeout(() => router.replace("/integrations"), 1500);
     } catch (err) {
